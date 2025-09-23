@@ -15,10 +15,52 @@ export const createVendor = async (req, res) => {
 
 export const getAllVendors = async (req, res) => {
   try {
-    const vendors = await Vendor.find();
-    res.status(200).json({ success: true, data: vendors });
+    const { search, page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+
+    const filter = {};
+    if (search?.trim()) {
+      const searchTerm = search.trim();
+      filter.$or = [
+        { businessName: { $regex: searchTerm, $options: 'i' } },
+        { name: { $regex: searchTerm, $options: 'i' } },
+        { email: { $regex: searchTerm, $options: 'i' } },
+        { contactNumber: { $regex: searchTerm, $options: 'i' } },
+        { mobile: { $regex: searchTerm, $options: 'i' } },
+        { gstNumber: { $regex: searchTerm, $options: 'i' } }
+      ];
+    }
+
+    const skip = (page - 1) * limit;
+    const sort = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
+ 
+    const [vendors, totalVendors] = await Promise.all([
+      Vendor.find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(Number(limit))
+        .select('-__v'),
+      
+      Vendor.countDocuments(filter)
+    ]);
+    
+    const totalPages = Math.ceil(totalVendors / limit);
+    
+    res.json({
+      success: true,
+      data: vendors,
+      pagination: {
+        currentPage: Number(page),
+        totalPages,
+        totalVendors,
+      }
+    });
+    
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching vendors',
+      error: error.message
+    });
   }
 };
 

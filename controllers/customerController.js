@@ -1,12 +1,10 @@
 import Customer from '../models/Customer.js';
 import Center from '../models/Center.js';
 
-// Create Customer
 export const createCustomer = async (req, res) => {
   try {
     const { username, name, mobile, email, centerId, address1, address2, city, state } = req.body;
 
-    // Validate center
     const center = await Center.findById(centerId);
     if (!center) {
       return res.status(404).json({ success: false, message: 'Center not found' });
@@ -31,24 +29,77 @@ export const createCustomer = async (req, res) => {
   }
 };
 
-// Get all customers
 export const getCustomers = async (req, res) => {
   try {
-    const customers = await Customer.find()
-      .populate({
-        path: 'center',
-        populate: [
-          { path: 'partner', select: 'partnerName' },
-          { path: 'area', select: 'areaName' },
-        ],
-      });
-    res.status(200).json({ success: true, data: customers });
+    const { search, center, page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    
+
+    const filter = {};
+
+    if (center) {
+      filter.center = center;
+    }
+
+    if (search?.trim()) {
+      const searchTerm = search.trim();
+      filter.$or = [
+        { username: { $regex: searchTerm, $options: 'i' } },
+        { name: { $regex: searchTerm, $options: 'i' } },
+        { mobile: { $regex: searchTerm, $options: 'i' } },
+        { email: { $regex: searchTerm, $options: 'i' } },
+        { city: { $regex: searchTerm, $options: 'i' } },
+        { state: { $regex: searchTerm, $options: 'i' } }
+      ];
+    }
+    
+    const skip = (page - 1) * limit;
+    const sort = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
+    
+    const [customers, totalCustomers] = await Promise.all([
+      Customer.find(filter)
+        .populate({
+          path: 'center',
+          select: 'centerName centerType area partner',
+          populate: [
+            { 
+              path: 'partner', 
+              select: 'partnerName' 
+            },
+            { 
+              path: 'area', 
+              select: 'areaName' 
+            },
+          ],
+        })
+        .sort(sort)
+        .skip(skip)
+        .limit(Number(limit))
+        .select('-__v'),
+      
+      Customer.countDocuments(filter)
+    ]);
+    
+    const totalPages = Math.ceil(totalCustomers / limit);
+    
+    res.json({
+      success: true,
+      data: customers,
+      pagination: {
+        currentPage: Number(page),
+        totalPages,
+        totalCustomers
+      }
+    });
+    
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching customers',
+      error: error.message
+    });
   }
 };
 
-// Get customer by ID
 export const getCustomerById = async (req, res) => {
   try {
     const customer = await Customer.findById(req.params.id)
@@ -68,7 +119,6 @@ export const getCustomerById = async (req, res) => {
   }
 };
 
-// Update customer
 export const updateCustomer = async (req, res) => {
   try {
     const customer = await Customer.findByIdAndUpdate(req.params.id, req.body, {
@@ -91,7 +141,7 @@ export const updateCustomer = async (req, res) => {
   }
 };
 
-// Delete customer
+
 export const deleteCustomer = async (req, res) => {
   try {
     const customer = await Customer.findByIdAndDelete(req.params.id);
