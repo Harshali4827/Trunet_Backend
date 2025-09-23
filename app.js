@@ -11,13 +11,15 @@ import areaRoutes from './routes/areaRoutes.js';
 import centerRooutes from './routes/centerRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import buildingRoutes from './routes/buildingRoutes.js';
-import controlRoomRoutes from './routes/controlRoomRoutes.js'
+import controlRoomRoutes from './routes/controlRoomRoutes.js';
+import productCategoryRoutes from './routes/productCategoryRoutes.js';
+import productRoutes from './routes/productRoutes.js';
+import vendorRoutes from './routes/vendorRoutes.js';
 dotenv.config();
 connectDB();
 
 const app = express();
 
-// Middlewares
 app.use(express.json());
 app.use(cors({ origin: ['http://localhost:3000',"http://localhost:3001"], credentials: true }));
 
@@ -27,7 +29,6 @@ app.use(helmet());
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
 app.use(limiter);
 
-// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/partners', partnerRoutes);
 app.use('/api/areas', areaRoutes);
@@ -35,7 +36,9 @@ app.use('/api/centers', centerRooutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/buildings', buildingRoutes);
 app.use('/api/controlRooms', controlRoomRoutes);
-
+app.use('/api/product-category', productCategoryRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/vendor', vendorRoutes);
 app.use(errorHandler);
 
 export default app;
