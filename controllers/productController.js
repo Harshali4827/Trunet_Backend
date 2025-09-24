@@ -2,6 +2,7 @@ import Product from "../models/Product.js";
 import ProductCategory from "../models/ProductCategory.js";
 import { validationResult } from "express-validator";
 import path from 'path';
+import fs from 'fs';
 
 const categoryCache = new Map();
 
@@ -21,8 +22,13 @@ const deleteOldImage = async (imagePath) => {
 
 export const createProduct = async (req, res) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty())
-    return res.status(400).json({ errors: errors.array() });
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ 
+      success: false, 
+      message: "Validation failed",
+      errors: errors.array() 
+    });
+  }
 
   try {
     let productImage = '';
@@ -30,22 +36,57 @@ export const createProduct = async (req, res) => {
       productImage = `uploads/products/${req.file.filename}`;
     }
 
-      console.log('Request file:', req.file); 
-    console.log('Request body:', req.body); 
-
     const productData = {
       ...req.body,
       productImage
     };
 
     const product = await Product.create(productData);
-    res.status(201).json({ success: true, data: product });
+    res.status(201).json({ 
+      success: true, 
+      message: "Product created successfully",
+      data: product 
+    });
   } catch (error) {
+ 
     if (req.file) {
       await deleteOldImage(`uploads/products/${req.file.filename}`);
     }
-    res.status(500).json({ success: false, message: error.message });
+
+    const errorResponse = handleProductError(error, req.body);
+    res.status(errorResponse.statusCode).json(errorResponse);
   }
+};
+
+
+const handleProductError = (error, bodyData = {}) => {
+  let statusCode = 500;
+  let message = "Internal server error";
+
+  if (error.code === 11000) {
+    statusCode = 409;
+    const duplicateField = Object.keys(error.keyPattern || {})[0];
+    const duplicateValue = bodyData[duplicateField];
+    
+    message = duplicateField === 'productCode' 
+      ? `Product code ${duplicateValue} is already in use. Please choose a different code.`
+      : `This ${duplicateField} already exists in the system.`;
+  } 
+  else if (error.name === 'ValidationError') {
+    statusCode = 400;
+    message = "Invalid product data provided";
+  }
+  else if (error.name === 'CastError') {
+    statusCode = 400;
+    message = "Invalid data format";
+  }
+
+  return {
+    success: false,
+    message,
+    statusCode,
+    ...(process.env.NODE_ENV === 'development' && { debug: error.message })
+  };
 };
 
 const getCategoryIdByName = async (categoryName) => {
