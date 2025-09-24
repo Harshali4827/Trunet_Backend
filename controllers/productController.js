@@ -1,8 +1,23 @@
 import Product from "../models/Product.js";
 import ProductCategory from "../models/ProductCategory.js";
 import { validationResult } from "express-validator";
+import path from 'path';
 
 const categoryCache = new Map();
+
+
+const deleteOldImage = async (imagePath) => {
+  if (imagePath && !imagePath.startsWith('http')) {
+    const fullPath = path.join(process.cwd(), imagePath);
+    try {
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+      }
+    } catch (error) {
+      console.error('Error deleting old image:', error);
+    }
+  }
+};
 
 export const createProduct = async (req, res) => {
   const errors = validationResult(req);
@@ -10,9 +25,25 @@ export const createProduct = async (req, res) => {
     return res.status(400).json({ errors: errors.array() });
 
   try {
-    const product = await Product.create(req.body);
+    let productImage = '';
+    if (req.file) {
+      productImage = `uploads/products/${req.file.filename}`;
+    }
+
+      console.log('Request file:', req.file); 
+    console.log('Request body:', req.body); 
+
+    const productData = {
+      ...req.body,
+      productImage
+    };
+
+    const product = await Product.create(productData);
     res.status(201).json({ success: true, data: product });
   } catch (error) {
+    if (req.file) {
+      await deleteOldImage(`uploads/products/${req.file.filename}`);
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -184,12 +215,37 @@ export const updateProduct = async (req, res) => {
     return res.status(400).json({ errors: errors.array() });
 
   try {
-    const product = await Product.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-    });
-    if (!product) return res.status(404).json({ message: "Product not found" });
-    res.status(200).json({ success: true, data: product });
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      if (req.file) {
+        await deleteOldImage(`uploads/products/${req.file.filename}`);
+      }
+      return res.status(404).json({ message: "Product not found" });
+    }
+    let productImage = product.productImage;
+    if (req.file) {
+      if (product.productImage) {
+        await deleteOldImage(product.productImage);
+      }
+      productImage = `uploads/products/${req.file.filename}`;
+    }
+
+    const updateData = {
+      ...req.body,
+      productImage
+    };
+
+    const updatedProduct = await Product.findByIdAndUpdate(
+      req.params.id, 
+      updateData, 
+      { new: true, runValidators: true }
+    );
+
+    res.status(200).json({ success: true, data: updatedProduct });
   } catch (error) {
+    if (req.file) {
+      await deleteOldImage(`uploads/products/${req.file.filename}`);
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };

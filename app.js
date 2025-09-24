@@ -2,6 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
+import path from 'path';
 import rateLimit from 'express-rate-limit';
 import connectDB from './config/db.js';
 import errorHandler from './middlewares/errorHandler.js';
@@ -24,6 +25,7 @@ const app = express();
 
 app.use(express.json());
 app.use(cors({ origin: ['http://localhost:3000',"http://localhost:3001"], credentials: true }));
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 app.use(helmet());
 // app.use(mongoSanitize());
