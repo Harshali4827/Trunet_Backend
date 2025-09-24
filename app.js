@@ -16,6 +16,7 @@ import productCategoryRoutes from './routes/productCategoryRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import vendorRoutes from './routes/vendorRoutes.js';
 import packageDuration from './routes/packageDurationRoutes.js';
+import wareHouse from './routes/warehouseRoutes.js';
 dotenv.config();
 connectDB();
 
@@ -41,6 +42,7 @@ app.use('/api/product-category', productCategoryRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/vendor', vendorRoutes);
 app.use('/api/packageDuration', packageDuration);
+app.use('/api/warehouse', wareHouse);
 app.use(errorHandler);
 
 export default app;
