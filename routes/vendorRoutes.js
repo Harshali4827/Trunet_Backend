@@ -7,13 +7,14 @@ import {
   deleteVendor 
 } from '../controllers/vendorController.js';
 import { createVendorValidator, updateVendorValidator } from '../validations/vendorValidator.js';
+import upload from '../config/multer.js';
 
 const router = express.Router();
 
-router.post('/', createVendorValidator, createVendor);
+router.post('/', upload.single('logo'), createVendorValidator, createVendor);
 router.get('/', getAllVendors);
 router.get('/:id', getVendorById);
-router.put('/:id', updateVendorValidator, updateVendor);
+router.put('/:id', upload.single('logo'), updateVendorValidator, updateVendor);
 router.delete('/:id', deleteVendor);
 
 export default router;
