@@ -224,7 +224,6 @@ export const updateVendor = async (req, res) => {
   try {
     const vendor = await Vendor.findById(req.params.id);
     if (!vendor) {
-      // Delete uploaded file if vendor not found
       if (req.file) {
         await deleteOldImage(`uploads/vendors/${req.file.filename}`);
       }
@@ -236,7 +235,6 @@ export const updateVendor = async (req, res) => {
 
     let vendorLogo = vendor.logo;
     if (req.file) {
-      // Delete old logo if exists
       if (vendor.logo) {
         await deleteOldImage(vendor.logo);
       }
@@ -260,7 +258,7 @@ export const updateVendor = async (req, res) => {
       data: updatedVendor 
     });
   } catch (error) {
-    // Delete uploaded file if error occurs
+
     if (req.file) {
       await deleteOldImage(`uploads/vendors/${req.file.filename}`);
     }
@@ -280,7 +278,6 @@ export const deleteVendor = async (req, res) => {
       });
     }
 
-    // Delete logo file if exists
     if (vendor.logo) {
       await deleteOldImage(vendor.logo);
     }
