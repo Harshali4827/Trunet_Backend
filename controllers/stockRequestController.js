@@ -9,8 +9,7 @@ export const createStockRequest = async (req, res) => {
       center,
       remark,
       products,
-      status = 'Draft',
-      createdBy
+      status = 'Draft'
     } = req.body;
 
     if (!warehouse || !center || !products || !Array.isArray(products) || products.length === 0) {
@@ -37,19 +36,19 @@ export const createStockRequest = async (req, res) => {
       });
     }
 
-    let userId = createdBy;
+  
+    let userId = req.user?.id;
+    
     if (!userId) {
+     
       const defaultUser = await User.findOne().sort({ createdAt: 1 });
       if (defaultUser) {
         userId = defaultUser._id;
       } else {
-        const newUser = new User({
-          name: 'System Administrator',
-          email: 'admin@system.com',
-          password: 'defaultpassword123'
+        return res.status(400).json({
+          success: false,
+          message: 'No user found to assign as creator'
         });
-        await newUser.save();
-        userId = newUser._id;
       }
     }
 
@@ -61,7 +60,27 @@ export const createStockRequest = async (req, res) => {
       });
     }
 
+    
+    const generateOrderNumber = async () => {
+      const prefix = 'SR';
+      const timestamp = Date.now().toString().slice(-6);
+      const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+      const orderNumber = `${prefix}${timestamp}${random}`;
+      
+     
+      const existingOrder = await StockRequest.findOne({ orderNumber });
+      if (existingOrder) {
+    
+        return generateOrderNumber();
+      }
+      
+      return orderNumber;
+    };
+
+    const orderNumber = await generateOrderNumber();
+
     const stockRequest = new StockRequest({
+      orderNumber, 
       warehouse,
       center,
       remark,
@@ -76,7 +95,7 @@ export const createStockRequest = async (req, res) => {
       .populate('warehouse', '_id warehouseName')
       .populate('center', '_id centerName centerCode')
       .populate('products.product', '_id productTitle productCode productImage')
-      .populate('createdBy', '_id name email');
+      .populate('createdBy', '_id fullName email'); 
 
     res.status(201).json({
       success: true,
@@ -94,9 +113,10 @@ export const createStockRequest = async (req, res) => {
     }
     
     if (error.code === 11000) {
+     
       return res.status(400).json({
         success: false,
-        message: 'Order number already exists'
+        message: 'Order number already exists. Please try again.'
       });
     }
 
@@ -104,7 +124,7 @@ export const createStockRequest = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error creating stock request',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 };
@@ -290,8 +310,7 @@ export const updateStockRequest = async (req, res) => {
       products,
       status,
       shippingInfo,
-      completionInfo,
-      updatedBy
+      completionInfo
     } = req.body;
 
     const existingRequest = await StockRequest.findById(id);
@@ -327,10 +346,13 @@ export const updateStockRequest = async (req, res) => {
       }
     }
 
-    let userId = updatedBy;
+    // Use authenticated user for updatedBy
+    const userId = req.user?.id;
     if (!userId) {
-      const defaultUser = await User.findOne().sort({ createdAt: 1 });
-      userId = defaultUser ? defaultUser._id : existingRequest.createdBy;
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
     }
 
     const updateData = {
@@ -382,8 +404,8 @@ export const updateStockRequest = async (req, res) => {
     .populate('warehouse', '_id warehouseName')
     .populate('center', '_id centerName centerCode')
     .populate('products.product', '_id productTitle productCode productImage')
-    .populate('createdBy', '_id name email')
-    .populate('updatedBy', '_id name email');
+    .populate('createdBy', '_id fullName email') // Changed to fullName
+    .populate('updatedBy', '_id fullName email'); // Changed to fullName
 
     res.status(200).json({
       success: true,
@@ -411,10 +433,11 @@ export const updateStockRequest = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error updating stock request',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 };
+
 
 export const deleteStockRequest = async (req, res) => {
   try {
@@ -459,10 +482,12 @@ export const deleteStockRequest = async (req, res) => {
   }
 };
 
+// Also update updateStockRequestStatus function similarly:
+
 export const updateStockRequestStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, updatedBy, ...additionalInfo } = req.body;
+    const { status, ...additionalInfo } = req.body;
 
     if (!status) {
       return res.status(400).json({
@@ -487,10 +512,13 @@ export const updateStockRequestStatus = async (req, res) => {
       });
     }
 
-    let userId = updatedBy;
+    // Use authenticated user
+    const userId = req.user?.id;
     if (!userId) {
-      const defaultUser = await User.findOne().sort({ createdAt: 1 });
-      userId = defaultUser ? defaultUser._id : stockRequest.createdBy;
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
     }
 
     const updateData = {
@@ -545,7 +573,7 @@ export const updateStockRequestStatus = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error updating stock request status',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 };
