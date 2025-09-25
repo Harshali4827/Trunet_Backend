@@ -11,17 +11,18 @@ import {
   validateUpdateWarehouse,
   validateWarehouseId,
 } from '../validations/warehouseValidation.js';
+import { protect } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.post('/', validateCreateWarehouse, createWarehouse);
+router.post('/', protect, validateCreateWarehouse, createWarehouse);
 
-router.get('/', getWarehouses);
+router.get('/', protect, getWarehouses);
 
-router.get('/:id', validateWarehouseId, getWarehouseById);
+router.get('/:id', protect, validateWarehouseId, getWarehouseById);
 
-router.put('/:id', validateUpdateWarehouse, updateWarehouse);
+router.put('/:id', protect, validateUpdateWarehouse, updateWarehouse);
 
-router.delete('/:id', validateWarehouseId, deleteWarehouse);
+router.delete('/:id', protect, validateWarehouseId, deleteWarehouse);
 
 export default router;

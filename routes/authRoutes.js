@@ -1,20 +1,19 @@
 import express from 'express';
-import { registerUser, loginUser } from '../controllers/authController.js';
-import { registerValidation, loginValidation } from '../validations/authValidation.js';
-import { validationResult } from 'express-validator';
+import {
+  login,
+  register,
+  getMe,
+  updatePassword,
+  logout,
+} from '../controllers/authController.js';
+import { protect } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.post('/register', registerValidation, (req, res, next) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  registerUser(req, res, next);
-});
-
-router.post('/login', loginValidation, (req, res, next) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  loginUser(req, res, next);
-});
+router.post('/login', login);
+router.post('/register', register); 
+router.get('/me', protect, getMe);
+router.put('/update-password', protect, updatePassword);
+router.post('/logout', protect, logout);
 
 export default router;

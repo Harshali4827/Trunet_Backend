@@ -7,13 +7,14 @@ import {
   deletePartner,
 } from '../controllers/partnerController.js';
 import { validateCreatePartner, validatePartnerId, validateUpdatePartner } from '../validations/partnerValidator.js';
+import { protect } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.post('/', validateCreatePartner, createPartner);
-router.get('/', getPartners);
-router.get('/:id', validatePartnerId, getPartnerById);
-router.put('/:id', validatePartnerId, validateUpdatePartner, updatePartner);
-router.delete('/:id', validatePartnerId, deletePartner);
+router.post('/',protect, validateCreatePartner, createPartner);
+router.get('/',protect, getPartners);
+router.get('/:id',protect, validatePartnerId, getPartnerById);
+router.put('/:id',protect, validatePartnerId, validateUpdatePartner, updatePartner);
+router.delete('/:id',protect, validatePartnerId, deletePartner);
 
 export default router;

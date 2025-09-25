@@ -11,13 +11,14 @@ import {
   validatePackageDurationId, 
   validateUpdatePackageDuration 
 } from '../validations/packageDurationValidation.js';
+import { protect } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.post('/', validateCreatePackageDuration, createPackageDuration);
-router.get('/', getPackageDurations);
-router.get('/:id', validatePackageDurationId, getPackageDurationById);
-router.put('/:id', validatePackageDurationId, validateUpdatePackageDuration, updatePackageDuration);
-router.delete('/:id', validatePackageDurationId, deletePackageDuration);
+router.post('/', protect, validateCreatePackageDuration, createPackageDuration);
+router.get('/', protect, getPackageDurations);
+router.get('/:id', protect, validatePackageDurationId, getPackageDurationById);
+router.put('/:id', protect, validatePackageDurationId, validateUpdatePackageDuration, updatePackageDuration);
+router.delete('/:id', protect, validatePackageDurationId, deletePackageDuration);
 
 export default router;

@@ -8,13 +8,14 @@ import {
 } from '../controllers/vendorController.js';
 import { createVendorValidator, updateVendorValidator } from '../validations/vendorValidator.js';
 import upload from '../config/multer.js';
+import { protect } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.post('/', upload.single('logo'), createVendorValidator, createVendor);
-router.get('/', getAllVendors);
-router.get('/:id', getVendorById);
-router.put('/:id', upload.single('logo'), updateVendorValidator, updateVendor);
-router.delete('/:id', deleteVendor);
+router.post('/', protect, upload.single('logo'), createVendorValidator, createVendor);
+router.get('/', protect, getAllVendors);
+router.get('/:id', protect, getVendorById);
+router.put('/:id', protect, upload.single('logo'), updateVendorValidator, updateVendor);
+router.delete('/:id', protect, deleteVendor);
 
 export default router;

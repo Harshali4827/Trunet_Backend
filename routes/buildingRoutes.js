@@ -11,13 +11,14 @@ import {
   updateBuildingValidator,
   buildingIdValidator,
 } from '../validations/buildingValidator.js';
+import { protect } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.post('/', createBuildingValidator, createBuilding);
-router.get('/', getBuildings);
-router.get('/:id', buildingIdValidator, getBuildingById);
-router.put('/:id', updateBuildingValidator, updateBuilding);
-router.delete('/:id', buildingIdValidator, deleteBuilding);
+router.post('/', protect, createBuildingValidator, createBuilding);
+router.get('/', protect, getBuildings);
+router.get('/:id', protect, buildingIdValidator, getBuildingById);
+router.put('/:id', protect, updateBuildingValidator, updateBuilding);
+router.delete('/:id', protect, buildingIdValidator, deleteBuilding);
 
 export default router;
