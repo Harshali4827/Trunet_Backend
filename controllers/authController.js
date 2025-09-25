@@ -65,6 +65,14 @@ export const register = async (req, res) => {
     
     const { role, center, fullName, email, mobile, password, confirmPassword, status } = req.body;
 
+  
+    if (!fullName || !email || !mobile || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide all required fields: fullName, email, mobile, password',
+      });
+    }
+
     if (password !== confirmPassword) {
       return res.status(400).json({
         success: false,
@@ -72,22 +80,29 @@ export const register = async (req, res) => {
       });
     }
 
-    const centerExists = await Center.findById(center);
-    if (!centerExists) {
-      return res.status(404).json({
-        success: false,
-        message: 'Center not found',
-      });
+  
+    if (center) {
+      const centerExists = await Center.findById(center);
+      if (!centerExists) {
+        return res.status(404).json({
+          success: false,
+          message: 'Center not found',
+        });
+      }
     }
 
-    const roleExists = await Role.findById(role);
-    if (!roleExists) {
-      return res.status(404).json({
-        success: false,
-        message: 'Role not found',
-      });
+
+    if (role) {
+      const roleExists = await Role.findById(role);
+      if (!roleExists) {
+        return res.status(404).json({
+          success: false,
+          message: 'Role not found',
+        });
+      }
     }
 
+  
     const existingUser = await User.findOne({
       $or: [{ email: email.toLowerCase() }, { mobile }],
     });
@@ -99,6 +114,7 @@ export const register = async (req, res) => {
       });
     }
 
+   
     const user = new User({
       role,
       center,
@@ -112,8 +128,13 @@ export const register = async (req, res) => {
 
     await user.save();
 
+   
     await user.populate('role', 'roleTitle');
     await user.populate('center', 'centerName centerCode');
+
+   
+    createSendToken(user, 201, res);
+
   } catch (error) {
     console.error('Registration error:', error);
     
@@ -123,6 +144,13 @@ export const register = async (req, res) => {
         success: false,
         message: 'Validation error',
         errors,
+      });
+    }
+    
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: 'User with this email or mobile already exists',
       });
     }
     
@@ -200,6 +228,120 @@ export const updatePassword = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error',
+    });
+  }
+};
+
+export const getAllUsers = async (req, res) => {
+  try {
+
+    const {
+      page = 1,
+      limit = 10,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+      search,
+      status,
+      role,
+      center,
+      dateFrom,
+      dateTo
+    } = req.query;
+
+    const filter = {};
+
+    if (search) {
+      filter.$or = [
+        { fullName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { mobile: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    if (status && status !== 'all') {
+      filter.status = status;
+    }
+
+    if (role && role !== 'all') {
+      filter.role = role;
+    }
+
+    if (center && center !== 'all') {
+      filter.center = center;
+    }
+
+    if (dateFrom || dateTo) {
+      filter.createdAt = {};
+      if (dateFrom) {
+        filter.createdAt.$gte = new Date(dateFrom);
+      }
+      if (dateTo) {
+        filter.createdAt.$lte = new Date(dateTo);
+      }
+    }
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const sort = {};
+    sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
+
+    const users = await User.find(filter)
+      .populate('role', 'roleTitle')
+      .populate('center', 'centerName centerCode')
+      .select('-password') 
+      .sort(sort)
+      .skip(skip)
+      .limit(limitNum)
+      .lean(); 
+
+    const totalUsers = await User.countDocuments(filter);
+    const totalPages = Math.ceil(totalUsers / limitNum);
+
+    const formattedUsers = users.map(user => ({
+      _id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      mobile: user.mobile,
+      status: user.status,
+      role: user.role,
+      center: user.center,
+      lastLogin: user.lastLogin,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        users: formattedUsers,
+        pagination: {
+          currentPage: pageNum,
+          totalPages,
+          totalUsers,
+          hasNextPage: pageNum < totalPages,
+          hasPrevPage: pageNum > 1,
+          nextPage: pageNum < totalPages ? pageNum + 1 : null,
+          prevPage: pageNum > 1 ? pageNum - 1 : null
+        },
+        filters: {
+          search: search || '',
+          status: status || 'all',
+          role: role || 'all',
+          center: center || 'all',
+          dateFrom: dateFrom || '',
+          dateTo: dateTo || ''
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get all users error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching users',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

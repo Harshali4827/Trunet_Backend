@@ -346,7 +346,6 @@ export const updateStockRequest = async (req, res) => {
       }
     }
 
-    // Use authenticated user for updatedBy
     const userId = req.user?.id;
     if (!userId) {
       return res.status(400).json({
@@ -404,8 +403,8 @@ export const updateStockRequest = async (req, res) => {
     .populate('warehouse', '_id warehouseName')
     .populate('center', '_id centerName centerCode')
     .populate('products.product', '_id productTitle productCode productImage')
-    .populate('createdBy', '_id fullName email') // Changed to fullName
-    .populate('updatedBy', '_id fullName email'); // Changed to fullName
+    .populate('createdBy', '_id fullName email') 
+    .populate('updatedBy', '_id fullName email'); 
 
     res.status(200).json({
       success: true,
@@ -482,7 +481,6 @@ export const deleteStockRequest = async (req, res) => {
   }
 };
 
-// Also update updateStockRequestStatus function similarly:
 
 export const updateStockRequestStatus = async (req, res) => {
   try {
@@ -512,7 +510,6 @@ export const updateStockRequestStatus = async (req, res) => {
       });
     }
 
-    // Use authenticated user
     const userId = req.user?.id;
     if (!userId) {
       return res.status(400).json({
