@@ -44,7 +44,7 @@ export const createVendor = async (req, res) => {
       data: vendor 
     });
   } catch (error) {
-    // Delete uploaded file if error occurs
+   
     if (req.file) {
       await deleteOldImage(`uploads/vendors/${req.file.filename}`);
     }

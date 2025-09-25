@@ -26,7 +26,6 @@ export const createBuilding = async (req, res) => {
   } catch (error) {
     console.error(error);
     
-    // Enhanced error handling
     if (error.name === 'ValidationError') {
       return res.status(400).json({ 
         success: false, 
@@ -58,7 +57,6 @@ export const getBuildings = async (req, res) => {
     
     let filter = {};
 
-    // Direct Building filters
     if (center) {
       filter.center = center;
     }
@@ -75,7 +73,6 @@ export const getBuildings = async (req, res) => {
       ];
     }
 
-    // Advanced filtering for Center-related fields
     let centerFilter = {};
     if (partner) centerFilter.partner = partner;
     if (area) centerFilter.area = area;
@@ -86,14 +83,12 @@ export const getBuildings = async (req, res) => {
 
     const skip = (page - 1) * limit;
     const sort = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
-    
-    // If we have center-related filters, we need to find centers first
+
     let centerIds = [];
     if (Object.keys(centerFilter).length > 0) {
       const centers = await Center.find(centerFilter).select('_id');
       centerIds = centers.map(center => center._id);
-      
-      // If no centers found with the filters, return empty result
+
       if (centerIds.length === 0) {
         return res.json({
           success: true,
@@ -105,14 +100,11 @@ export const getBuildings = async (req, res) => {
           }
         });
       }
-      
-      // Add center IDs to the main filter
+
       if (filter.center) {
-        // If center filter already exists, ensure it's within the filtered centers
         if (centerIds.includes(filter.center)) {
           filter.center = filter.center;
         } else {
-          // If the specific center is not in filtered centers, return empty
           return res.json({
             success: true,
             data: [],
