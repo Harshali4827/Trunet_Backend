@@ -1,6 +1,30 @@
 import StockPurchase from '../models/StockPurchase.js';
 import Product from '../models/Product.js';
 import Vendor from '../models/Vendor.js';
+import User from '../models/User.js';
+import Center from '../models/Center.js';
+
+const validateUserOutletCenter = async (userId) => {
+  if (!userId) {
+    throw new Error('User authentication required');
+  }
+
+  const user = await User.findById(userId).populate('center', 'centerName centerCode centerType');
+  
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  if (!user.center) {
+    throw new Error('User center information not found');
+  }
+
+  if (user.center.centerType !== 'Outlet') {
+    throw new Error(`Stock purchases can only be created for outlet centers. Your center type is: ${user.center.centerType}`);
+  }
+
+  return user.center.centerName; 
+};
 
 export const createStockPurchase = async (req, res) => {
   try {
@@ -14,10 +38,11 @@ export const createStockPurchase = async (req, res) => {
       cgst = 0,
       sgst = 0,
       igst = 0,
-      products,
-      status = 'draft'
+      products
     } = req.body;
 
+ 
+    const outlet = await validateUserOutletCenter(req.user?.id);
 
     if (!invoiceNo) {
       return res.status(400).json({
@@ -33,7 +58,6 @@ export const createStockPurchase = async (req, res) => {
       });
     }
 
-
     const existingInvoice = await StockPurchase.findOne({ 
       invoiceNo: { $regex: new RegExp(`^${invoiceNo}$`, 'i') } 
     });
@@ -44,6 +68,8 @@ export const createStockPurchase = async (req, res) => {
         message: `Invoice number '${invoiceNo}' already exists`
       });
     }
+
+    const processedProducts = [];
 
     for (let i = 0; i < products.length; i++) {
       const product = products[i];
@@ -69,7 +95,32 @@ export const createStockPurchase = async (req, res) => {
         });
       }
 
+      const existingPurchases = await StockPurchase.find({
+        outlet: outlet,
+        'products.product': product.product
+      });
+
+      let currentTotalAvailableStock = 0;
  
+      existingPurchases.forEach(purchase => {
+        purchase.products.forEach(prod => {
+          if (prod.product.toString() === product.product) {
+            currentTotalAvailableStock += prod.availableQuantity;
+          }
+        });
+      });
+
+      
+      const availableQuantityForThisPurchase = currentTotalAvailableStock + product.purchasedQuantity;
+
+      const processedProduct = {
+        product: product.product,
+        price: product.price,
+        purchasedQuantity: product.purchasedQuantity,
+        availableQuantity: availableQuantityForThisPurchase, 
+        serialNumbers: product.serialNumbers || []
+      };
+
       if (productDoc.trackSerialNumber === 'Yes') {
         if (!product.serialNumbers || !Array.isArray(product.serialNumbers)) {
           return res.status(400).json({
@@ -85,7 +136,6 @@ export const createStockPurchase = async (req, res) => {
           });
         }
 
-
         const serialSet = new Set(product.serialNumbers);
         if (serialSet.size !== product.serialNumbers.length) {
           return res.status(400).json({
@@ -93,17 +143,19 @@ export const createStockPurchase = async (req, res) => {
             message: `Duplicate serial numbers found for product: ${productDoc.productTitle}`
           });
         }
+        
+        processedProduct.serialNumbers = product.serialNumbers;
       } else {
-
         if (product.serialNumbers && product.serialNumbers.length > 0) {
           return res.status(400).json({
             success: false,
             message: `Product "${productDoc.productTitle}" does not require serial number tracking`
           });
         }
-   
-        product.serialNumbers = [];
+        processedProduct.serialNumbers = [];
       }
+
+      processedProducts.push(processedProduct);
     }
 
     const vendorExists = await Vendor.findById(vendor);
@@ -117,15 +169,15 @@ export const createStockPurchase = async (req, res) => {
     const stockPurchase = new StockPurchase({
       type: type || 'new',
       date: date || new Date(),
-      invoiceNo: invoiceNo.trim(), 
+      invoiceNo: invoiceNo.trim(),
       vendor,
+      outlet: outlet, 
       transportAmount,
       remark,
       cgst,
       sgst,
       igst,
-      products,
-      status
+      products: processedProducts
     });
 
     const savedPurchase = await stockPurchase.save();
@@ -142,6 +194,14 @@ export const createStockPurchase = async (req, res) => {
 
   } catch (error) {
     console.error('Error creating stock purchase:', error);
+    
+
+    if (error.message.includes('outlet centers') || error.message.includes('User authentication')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
     
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
@@ -177,7 +237,7 @@ export const getAllStockPurchases = async (req, res) => {
       limit = 10,
       type,
       vendor,
-      status,
+      outlet,
       startDate,
       endDate,
       invoiceNo,
@@ -196,12 +256,8 @@ export const getAllStockPurchases = async (req, res) => {
       filter.vendor = vendor;
     }
 
-    if (status) {
-      if (status.includes(',')) {
-        filter.status = { $in: status.split(',') };
-      } else {
-        filter.status = status;
-      }
+    if (outlet) {
+      filter.outlet = outlet;
     }
 
     if (startDate || endDate) {
@@ -217,7 +273,8 @@ export const getAllStockPurchases = async (req, res) => {
     if (search) {
       filter.$or = [
         { invoiceNo: { $regex: search, $options: 'i' } },
-        { remark: { $regex: search, $options: 'i' } }
+        { remark: { $regex: search, $options: 'i' } },
+        { outlet: { $regex: search, $options: 'i' } }
       ];
     }
 
@@ -234,21 +291,6 @@ export const getAllStockPurchases = async (req, res) => {
       .skip((page - 1) * limit);
 
     const total = await StockPurchase.countDocuments(filter);
-
-    const statusCounts = await StockPurchase.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
-    const statusStats = {};
-    statusCounts.forEach(stat => {
-      statusStats[stat._id] = stat.count;
-    });
 
     res.status(200).json({
       success: true,
@@ -271,6 +313,7 @@ export const getAllStockPurchases = async (req, res) => {
     });
   }
 };
+
 
 export const getStockPurchaseById = async (req, res) => {
   try {
@@ -318,13 +361,13 @@ export const updateStockPurchase = async (req, res) => {
       date,
       invoiceNo,
       vendor,
+      outlet,
       transportAmount,
       remark,
       cgst,
       sgst,
       igst,
-      products,
-      status
+      products
     } = req.body;
 
     const existingPurchase = await StockPurchase.findById(id);
@@ -335,15 +378,7 @@ export const updateStockPurchase = async (req, res) => {
       });
     }
 
-    if (['completed', 'cancelled'].includes(existingPurchase.status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot update completed or cancelled purchases'
-      });
-    }
-
     if (invoiceNo && invoiceNo !== existingPurchase.invoiceNo) {
-
       const existingInvoice = await StockPurchase.findOne({ 
         invoiceNo: { $regex: new RegExp(`^${invoiceNo}$`, 'i') },
         _id: { $ne: id } 
@@ -382,7 +417,9 @@ export const updateStockPurchase = async (req, res) => {
           });
         }
 
- 
+
+        product.availableQuantity = product.purchasedQuantity;
+
         if (productDoc.trackSerialNumber === 'Yes') {
           if (!product.serialNumbers || !Array.isArray(product.serialNumbers)) {
             return res.status(400).json({
@@ -398,7 +435,6 @@ export const updateStockPurchase = async (req, res) => {
             });
           }
 
-     
           const serialSet = new Set(product.serialNumbers);
           if (serialSet.size !== product.serialNumbers.length) {
             return res.status(400).json({
@@ -407,12 +443,10 @@ export const updateStockPurchase = async (req, res) => {
             });
           }
         } else {
-     
           product.serialNumbers = [];
         }
       }
     }
-
 
     if (vendor) {
       const vendorExists = await Vendor.findById(vendor);
@@ -429,13 +463,13 @@ export const updateStockPurchase = async (req, res) => {
       ...(date && { date }),
       ...(invoiceNo && { invoiceNo: invoiceNo.trim() }),
       ...(vendor && { vendor }),
+      ...(outlet && { outlet: outlet.trim() }),
       ...(transportAmount !== undefined && { transportAmount }),
       ...(remark !== undefined && { remark }),
       ...(cgst !== undefined && { cgst }),
       ...(sgst !== undefined && { sgst }),
       ...(igst !== undefined && { igst }),
-      ...(products && { products }),
-      ...(status && { status })
+      ...(products && { products })
     };
 
     const updatedPurchase = await StockPurchase.findByIdAndUpdate(
@@ -488,47 +522,6 @@ export const updateStockPurchase = async (req, res) => {
   }
 };
 
-
-export const checkInvoiceNumberAvailability = async (req, res) => {
-  try {
-    const { invoiceNo, excludeId } = req.query;
-
-    if (!invoiceNo) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invoice number is required'
-      });
-    }
-
-    const filter = { 
-      invoiceNo: { $regex: new RegExp(`^${invoiceNo}$`, 'i') } 
-    };
-
-    if (excludeId) {
-      filter._id = { $ne: excludeId };
-    }
-
-    const existingInvoice = await StockPurchase.findOne(filter);
-
-    res.status(200).json({
-      success: true,
-      available: !existingInvoice,
-      message: existingInvoice ? 
-        `Invoice number '${invoiceNo}' is already in use` : 
-        `Invoice number '${invoiceNo}' is available`
-    });
-
-  } catch (error) {
-    console.error('Error checking invoice number availability:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error checking invoice number availability',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-};
-
-
 export const deleteStockPurchase = async (req, res) => {
   try {
     const { id } = req.params;
@@ -539,13 +532,6 @@ export const deleteStockPurchase = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Stock purchase not found'
-      });
-    }
-
-    if (purchase.status !== 'draft') {
-      return res.status(400).json({
-        success: false,
-        message: 'Only draft purchases can be deleted'
       });
     }
 
@@ -568,59 +554,6 @@ export const deleteStockPurchase = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error deleting stock purchase',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-};
-
-
-export const updateStockPurchaseStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    if (!status) {
-      return res.status(400).json({
-        success: false,
-        message: 'Status is required'
-      });
-    }
-
-    const validStatuses = ['draft', 'completed', 'cancelled'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid status'
-      });
-    }
-
-    const purchase = await StockPurchase.findById(id);
-    if (!purchase) {
-      return res.status(404).json({
-        success: false,
-        message: 'Stock purchase not found'
-      });
-    }
-
-    const updatedPurchase = await StockPurchase.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true, runValidators: true }
-    )
-      .populate('vendor', 'businessName name email mobile')
-      .populate('products.product', 'productTitle productCode productPrice');
-
-    res.status(200).json({
-      success: true,
-      message: `Stock purchase status updated to ${status}`,
-      data: updatedPurchase
-    });
-
-  } catch (error) {
-    console.error('Error updating stock purchase status:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating stock purchase status',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
@@ -657,6 +590,154 @@ export const getPurchasesByVendor = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error retrieving vendor purchases',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const getPurchasesByOutlet = async (req, res) => {
+  try {
+    const { outlet } = req.params;
+    const { page = 1, limit = 10 } = req.query;
+
+    const purchases = await StockPurchase.find({ outlet: outlet })
+      .populate('vendor', 'businessName name email mobile')
+      .populate('products.product', 'productTitle productCode')
+      .sort({ date: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await StockPurchase.countDocuments({ outlet: outlet });
+
+    res.status(200).json({
+      success: true,
+      message: 'Outlet purchases retrieved successfully',
+      data: purchases,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        itemsPerPage: parseInt(limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error retrieving outlet purchases:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving outlet purchases',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const getAllProductsWithStock = async (req, res) => {
+  try {
+    const { outlet } = req.params;
+    const { page = 1, limit = 50, search, category } = req.query;
+
+    if (!outlet) {
+      return res.status(400).json({
+        success: false,
+        message: 'Outlet parameter is required'
+      });
+    }
+
+    const productFilter = {};
+    
+    if (search) {
+      productFilter.$or = [
+        { productTitle: { $regex: search, $options: 'i' } },
+        { productCode: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    if (category) {
+      productFilter.category = category;
+    }
+
+    const products = await Product.find(productFilter)
+      .select('productTitle productCode description category productPrice trackSerialNumber productImage repairable replaceable')
+      .sort({ productTitle: 1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const totalProducts = await Product.countDocuments(productFilter);
+
+    const stockData = await StockPurchase.aggregate([
+      {
+        $match: { outlet: outlet }
+      },
+      {
+        $unwind: '$products'
+      },
+      {
+        $group: {
+          _id: '$products.product',
+          totalPurchased: { $sum: '$products.purchasedQuantity' },
+          totalAvailable: { $sum: '$products.availableQuantity' },
+          purchaseCount: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const stockMap = new Map();
+    stockData.forEach(item => {
+      stockMap.set(item._id.toString(), {
+        totalPurchased: item.totalPurchased,
+        totalAvailable: item.totalAvailable,
+        purchaseCount: item.purchaseCount
+      });
+    });
+
+    const productsWithStock = products.map(product => {
+      const productId = product._id.toString();
+      const stockInfo = stockMap.get(productId) || {
+        totalPurchased: 0,
+        totalAvailable: 0,
+        purchaseCount: 0
+      };
+
+      return {
+        ...product.toObject(),
+        stock: stockInfo,
+        outlet: outlet
+      };
+    });
+
+    const categoryCounts = await Product.aggregate([
+      { $match: productFilter },
+      {
+        $group: {
+          _id: '$category',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const categoryStats = {};
+    categoryCounts.forEach(cat => {
+      categoryStats[cat._id || 'Uncategorized'] = cat.count;
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Products with stock information retrieved successfully',
+      data: productsWithStock,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalProducts / limit),
+        totalItems: totalProducts,
+        itemsPerPage: parseInt(limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error retrieving products with stock:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving products with stock information',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }

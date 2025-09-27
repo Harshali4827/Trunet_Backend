@@ -4,7 +4,7 @@ const stockPurchaseSchema = new mongoose.Schema(
   {
     type: {
       type: String,
-      enum: ['new', 'Furnished'],
+      enum: ["new", "Furnished"],
       required: true,
     },
     date: {
@@ -20,8 +20,13 @@ const stockPurchaseSchema = new mongoose.Schema(
     },
     vendor: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Vendor',
+      ref: "Vendor",
       required: true,
+    },
+    outlet: {
+      type: String,
+      required: true,
+      trim: true,
     },
     transportAmount: {
       type: Number,
@@ -31,7 +36,7 @@ const stockPurchaseSchema = new mongoose.Schema(
     remark: {
       type: String,
       trim: true,
-      default: '',
+      default: "",
     },
     cgst: {
       type: Number,
@@ -52,7 +57,7 @@ const stockPurchaseSchema = new mongoose.Schema(
       {
         product: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: 'Product',
+          ref: "Product",
           required: true,
         },
         price: {
@@ -64,6 +69,7 @@ const stockPurchaseSchema = new mongoose.Schema(
           type: Number,
           required: true,
           min: 0,
+          default: 0,
         },
         purchasedQuantity: {
           type: Number,
@@ -74,15 +80,10 @@ const stockPurchaseSchema = new mongoose.Schema(
           {
             type: String,
             trim: true,
-          }
-        ]
-      }
+          },
+        ],
+      },
     ],
-    status: {
-      type: String,
-      enum: ['draft', 'completed', 'cancelled'],
-      default: 'draft',
-    },
     totalAmount: {
       type: Number,
       default: 0,
@@ -92,15 +93,14 @@ const stockPurchaseSchema = new mongoose.Schema(
 );
 
 stockPurchaseSchema.pre('save', function(next) {
- 
   this.totalAmount = this.products.reduce((total, product) => {
     return total + (product.price * product.purchasedQuantity);
   }, 0) + this.transportAmount;
 
-  
   for (const productItem of this.products) {
+    productItem.availableQuantity = productItem.purchasedQuantity;
+    
     if (productItem.serialNumbers && productItem.serialNumbers.length > 0) {
-  
       if (productItem.serialNumbers.length !== productItem.purchasedQuantity) {
         return next(new Error(`Serial numbers count must match purchased quantity for product ${productItem.product}`));
       }
@@ -110,15 +110,12 @@ stockPurchaseSchema.pre('save', function(next) {
   next();
 });
 
-
 stockPurchaseSchema.pre('validate', async function(next) {
   try {
     for (const productItem of this.products) {
- 
       const product = await mongoose.model('Product').findById(productItem.product);
       
       if (product && product.trackSerialNumber === 'Yes') {
-      
         if (!productItem.serialNumbers || productItem.serialNumbers.length === 0) {
           return next(new Error(`Serial numbers are required for product: ${product.productTitle}`));
         }
@@ -126,14 +123,12 @@ stockPurchaseSchema.pre('validate', async function(next) {
         if (productItem.serialNumbers.length !== productItem.purchasedQuantity) {
           return next(new Error(`Number of serial numbers (${productItem.serialNumbers.length}) must match purchased quantity (${productItem.purchasedQuantity}) for product: ${product.productTitle}`));
         }
-        
 
         const serialSet = new Set(productItem.serialNumbers);
         if (serialSet.size !== productItem.serialNumbers.length) {
           return next(new Error(`Duplicate serial numbers found for product: ${product.productTitle}`));
         }
       } else if (productItem.serialNumbers && productItem.serialNumbers.length > 0) {
-   
         if (productItem.serialNumbers.length !== productItem.purchasedQuantity) {
           return next(new Error(`Serial numbers count must match purchased quantity for product ${product.productTitle}`));
         }
@@ -145,38 +140,33 @@ stockPurchaseSchema.pre('validate', async function(next) {
   }
 });
 
-
 stockPurchaseSchema.index({ date: -1 });
 stockPurchaseSchema.index({ vendor: 1 });
+stockPurchaseSchema.index({ outlet: 1 });
 stockPurchaseSchema.index({ invoiceNo: 1 }, { unique: true });
-
 
 stockPurchaseSchema.virtual('totalTax').get(function() {
   return this.cgst + this.sgst + this.igst;
 });
 
-
 stockPurchaseSchema.virtual('grandTotal').get(function() {
   return this.totalAmount + this.totalTax;
 });
 
-
 stockPurchaseSchema.methods.addProduct = function(productData) {
+  productData.availableQuantity = productData.purchasedQuantity;
   this.products.push(productData);
   return this.save();
 };
-
 
 stockPurchaseSchema.methods.removeProduct = function(productId) {
   this.products = this.products.filter(item => item.product.toString() !== productId.toString());
   return this.save();
 };
 
-
 stockPurchaseSchema.statics.findByVendor = function(vendorId) {
   return this.find({ vendor: vendorId }).populate('vendor products.product');
 };
-
 
 stockPurchaseSchema.statics.findByDateRange = function(startDate, endDate) {
   return this.find({
@@ -185,6 +175,10 @@ stockPurchaseSchema.statics.findByDateRange = function(startDate, endDate) {
       $lte: endDate
     }
   }).populate('vendor products.product');
+};
+
+stockPurchaseSchema.statics.findByOutlet = function(outlet) {
+  return this.find({ outlet: outlet }).populate('vendor products.product');
 };
 
 export default mongoose.model('StockPurchase', stockPurchaseSchema);

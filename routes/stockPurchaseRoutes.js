@@ -3,9 +3,9 @@ import {
   createStockPurchase,
   getAllStockPurchases,
   getStockPurchaseById,
+  getAllProductsWithStock,
   updateStockPurchase,
   deleteStockPurchase,
-  updateStockPurchaseStatus,
   getPurchasesByVendor
 } from '../controllers/stockPurchaseController.js';
 import { protect } from '../middlewares/authMiddleware.js';
@@ -15,9 +15,9 @@ const router = express.Router();
 router.post('/', protect, createStockPurchase);
 router.get('/', protect, getAllStockPurchases);
 router.get('/:id', protect, getStockPurchaseById);
+router.get('/products-with-stock/:outlet', protect, getAllProductsWithStock);
 router.put('/:id', protect, updateStockPurchase);
 router.delete('/:id', protect, deleteStockPurchase);
-router.patch('/:id/status', protect, updateStockPurchaseStatus);
 router.get('/vendor/:vendorId', protect, getPurchasesByVendor);
 
 export default router;

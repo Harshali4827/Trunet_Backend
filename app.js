@@ -21,6 +21,7 @@ import wareHouse from './routes/warehouseRoutes.js';
 import stockRequest from './routes/stockRequestRoutes.js'
 import userRoles from './routes/roleRoutes.js'
 import stockPurchase from './routes/stockPurchaseRoutes.js'
+import stockTransfer from './routes/stockTransferController.js'
 dotenv.config();
 connectDB();
 
@@ -51,6 +52,7 @@ app.use('/api/warehouse', wareHouse);
 app.use('/api/stockrequest', stockRequest);
 app.use('/api/role', userRoles);
 app.use('/api/stockpurchase', stockPurchase);
+app.use('/api/stocktransfer', stockTransfer);
 app.use(errorHandler);
 
 export default app;
