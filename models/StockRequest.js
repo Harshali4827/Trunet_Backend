@@ -21,7 +21,9 @@ const stockRequestSchema = new mongoose.Schema(
     
     orderNumber: {
       type: String,
+      required: [true, 'Order number is required'],
       unique: true,
+      trim: true,
     },
     
     remark: {
@@ -102,6 +104,13 @@ const stockRequestSchema = new mongoose.Schema(
       shipmentDetails: String,
       shipmentRemark: String,
       documents: [String],
+      shipmentRejected: {
+        rejectedAt: Date,
+        rejectedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+        },
+      }
     },
 
     receivingInfo: {
@@ -111,10 +120,6 @@ const stockRequestSchema = new mongoose.Schema(
       receivedBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-      },
-      receivedRemark: {
-        type: String,
-        trim: true,
       },
     },
     
@@ -148,33 +153,8 @@ const stockRequestSchema = new mongoose.Schema(
   }
 );
 
-stockRequestSchema.pre('save', async function(next) {
-  if (this.isNew && !this.orderNumber) {
-    try {
-      const center = await mongoose.model('Center').findById(this.center).select('centerCode');
-      if (!center) return next(new Error('Center not found'));
-      
-      const currentDate = new Date();
-      const year = currentDate.getFullYear().toString().slice(-2);
-      const month = (currentDate.getMonth() + 1).toString().padStart(2, '0');
-      
-      const count = await mongoose.model('StockRequest').countDocuments({
-        center: this.center,
-        createdAt: {
-          $gte: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
-          $lt: new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1)
-        }
-      });
-      
-      this.orderNumber = `${center.centerCode}/${month}${year}/${count + 1}`;
-      next();
-    } catch (error) {
-      next(error);
-    }
-  } else {
-    next();
-  }
-});
+// REMOVED: The automatic orderNumber generation pre-save hook
+// Order numbers will now be provided manually from the user interface
 
 stockRequestSchema.pre('save', function(next) {
   if (this.isModified('status')) {
@@ -210,7 +190,6 @@ stockRequestSchema.pre('save', function(next) {
 stockRequestSchema.methods.approveRequest = function(approvedBy, approvedRemark = '', productApprovals = []) {
   this.status = 'Confirmed';
   this.approvalInfo.approvedBy = approvedBy;
-  this.approvalInfo.approvedRemark = approvedRemark;
   this.approvalInfo.approvedAt = new Date();
 
   if (productApprovals.length > 0) {
@@ -223,6 +202,103 @@ stockRequestSchema.methods.approveRequest = function(approvedBy, approvedRemark 
     });
   }
   
+  return this.save();
+};
+
+
+
+stockRequestSchema.methods.updateShippingInfo = function(shippingDetails = {}) {
+  
+  if (shippingDetails.shippedDate) this.shippingInfo.shippedDate = shippingDetails.shippedDate;
+  if (shippingDetails.expectedDeliveryDate) this.shippingInfo.expectedDeliveryDate = shippingDetails.expectedDeliveryDate;
+  if (shippingDetails.shipmentDetails) this.shippingInfo.shipmentDetails = shippingDetails.shipmentDetails;
+  if (shippingDetails.shipmentRemark) this.shippingInfo.shipmentRemark = shippingDetails.shipmentRemark;
+  if (shippingDetails.documents) this.shippingInfo.documents = shippingDetails.documents;
+  
+  return this.save();
+};
+
+
+
+stockRequestSchema.methods.rejectShipment = function(rejectedBy, rejectionRemark = '') {
+  
+  const previousShippingInfo = { ...this.shippingInfo.toObject() };
+  
+  
+  this.shippingInfo = {
+    shippedAt: undefined,
+    shippedBy: undefined,
+    shippedDate: undefined,
+    expectedDeliveryDate: undefined,
+    shipmentDetails: undefined,
+    shipmentRemark: undefined,
+    documents: [],
+    
+    shipmentRejected: {
+      rejectedAt: new Date(),
+      rejectedBy: rejectedBy,
+      rejectionRemark: rejectionRemark,
+      previousShippingData: previousShippingInfo 
+    }
+  };
+  
+  
+  this.status = 'Confirmed';
+  
+  return this.save();
+};
+
+
+
+stockRequestSchema.methods.completeIncompleteRequest = function(
+  completedBy, 
+  productApprovals = [], 
+  productReceipts = [], 
+  approvedRemark = '', 
+  receivedRemark = ''
+) {
+  this.status = 'Completed';
+  
+  
+  if (approvedRemark) {
+    if (!this.approvalInfo.approvedBy) {
+      this.approvalInfo.approvedBy = completedBy;
+      this.approvalInfo.approvedAt = new Date();
+    }
+  }
+
+  
+  this.receivingInfo.receivedAt = new Date();
+  this.receivingInfo.receivedBy = completedBy;
+  
+  this.completionInfo.completedOn = new Date();
+  this.completionInfo.completedBy = completedBy;
+
+  
+  if (productApprovals.length > 0) {
+    this.products.forEach(productItem => {
+      const approval = productApprovals.find(
+        pa => pa.productId.toString() === productItem.product.toString()
+      );
+      if (approval) {
+        productItem.approvedQuantity = approval.approvedQuantity;
+        productItem.approvedRemark = approval.approvedRemark || productItem.approvedRemark || '';
+      }
+    });
+  }
+
+  if (productReceipts.length > 0) {
+    this.products.forEach(productItem => {
+      const receipt = productReceipts.find(
+        pr => pr.productId.toString() === productItem.product.toString()
+      );
+      if (receipt) {
+        productItem.receivedQuantity = receipt.receivedQuantity;
+        productItem.receivedRemark = receipt.receivedRemark || productItem.receivedRemark || '';
+      }
+    });
+  }
+
   return this.save();
 };
 
@@ -243,7 +319,6 @@ stockRequestSchema.methods.shipRequest = function(shippedBy, shippingDetails = {
 stockRequestSchema.methods.completeRequest = function(receivedBy, receivedRemark = '', productReceipts = []) {
   this.status = 'Completed';
   this.receivingInfo.receivedBy = receivedBy;
-  this.receivingInfo.receivedRemark = receivedRemark;
   this.receivingInfo.receivedAt = new Date();
   this.completionInfo.completedOn = new Date();
   this.completionInfo.completedBy = receivedBy;

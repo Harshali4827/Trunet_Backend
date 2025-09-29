@@ -26,6 +26,30 @@ const validateUserOutletCenter = async (userId) => {
   return user.center.centerName; 
 };
 
+
+const validateUserForOutletCenter = async (userId) => {
+  if (!userId) {
+    throw new Error('User authentication required');
+  }
+
+  const user = await User.findById(userId).populate('center', 'centerName centerCode centerType');
+  
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  if (!user.center) {
+    throw new Error('User center information not found');
+  }
+
+  const allowedCenterTypes = ['Outlet', 'Center'];
+  if (!allowedCenterTypes.includes(user.center.centerType)) {
+    throw new Error(`Stock purchases can only be created for outlet or center types. Your center type is: ${user.center.centerType}`);
+  }
+
+  return user.center.centerName; 
+};
+
 export const createStockPurchase = async (req, res) => {
   try {
     const {
@@ -41,7 +65,6 @@ export const createStockPurchase = async (req, res) => {
       products
     } = req.body;
 
- 
     const outlet = await validateUserOutletCenter(req.user?.id);
 
     if (!invoiceNo) {
@@ -110,7 +133,6 @@ export const createStockPurchase = async (req, res) => {
         });
       });
 
-      
       const availableQuantityForThisPurchase = currentTotalAvailableStock + product.purchasedQuantity;
 
       const processedProduct = {
@@ -195,8 +217,7 @@ export const createStockPurchase = async (req, res) => {
   } catch (error) {
     console.error('Error creating stock purchase:', error);
     
-
-    if (error.message.includes('outlet centers') || error.message.includes('User authentication')) {
+    if (error.message.includes('outlet centers') || error.message.includes('center types') || error.message.includes('User authentication')) {
       return res.status(400).json({
         success: false,
         message: error.message
@@ -633,13 +654,24 @@ export const getPurchasesByOutlet = async (req, res) => {
 
 export const getAllProductsWithStock = async (req, res) => {
   try {
-    const { outlet } = req.params;
     const { page = 1, limit = 50, search, category } = req.query;
 
-    if (!outlet) {
+    const user = req.user;
+    
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
+
+    let outlet;
+    try {
+      outlet = await validateUserForOutletCenter(req.user?.id);
+    } catch (error) {
       return res.status(400).json({
         success: false,
-        message: 'Outlet parameter is required'
+        message: error.message
       });
     }
 
@@ -725,6 +757,7 @@ export const getAllProductsWithStock = async (req, res) => {
       success: true,
       message: 'Products with stock information retrieved successfully',
       data: productsWithStock,
+      outlet: outlet,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalProducts / limit),

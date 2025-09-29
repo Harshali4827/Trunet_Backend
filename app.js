@@ -21,7 +21,7 @@ import wareHouse from './routes/warehouseRoutes.js';
 import stockRequest from './routes/stockRequestRoutes.js'
 import userRoles from './routes/roleRoutes.js'
 import stockPurchase from './routes/stockPurchaseRoutes.js'
-import stockTransfer from './routes/stockTransferController.js'
+import stockTransfer from './routes/stockTransferRoutes.js'
 dotenv.config();
 connectDB();
 
@@ -34,7 +34,7 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 app.use(helmet());
 // app.use(mongoSanitize());
 
-const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
+const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 });
 app.use(limiter);
 
 app.use('/api/auth', authRoutes);

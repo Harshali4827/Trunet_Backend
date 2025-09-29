@@ -14,8 +14,8 @@ const router = express.Router();
 
 router.post('/', protect, createStockPurchase);
 router.get('/', protect, getAllStockPurchases);
+router.get('/products-with-stock', protect, getAllProductsWithStock);
 router.get('/:id', protect, getStockPurchaseById);
-router.get('/products-with-stock/:outlet', protect, getAllProductsWithStock);
 router.put('/:id', protect, updateStockPurchase);
 router.delete('/:id', protect, deleteStockPurchase);
 router.get('/vendor/:vendorId', protect, getPurchasesByVendor);

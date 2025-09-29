@@ -84,6 +84,11 @@ const stockPurchaseSchema = new mongoose.Schema(
         ],
       },
     ],
+    
+    productAmount: {
+      type: Number,
+      default: 0,
+    },
     totalAmount: {
       type: Number,
       default: 0,
@@ -92,11 +97,20 @@ const stockPurchaseSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-stockPurchaseSchema.pre('save', function(next) {
-  this.totalAmount = this.products.reduce((total, product) => {
-    return total + (product.price * product.purchasedQuantity);
-  }, 0) + this.transportAmount;
 
+stockPurchaseSchema.pre('save', function(next) {
+  
+  this.productAmount = this.products.reduce((total, product) => {
+    return total + (product.price * product.purchasedQuantity);
+  }, 0);
+
+  
+  const totalTax = this.cgst + this.sgst + this.igst;
+
+  
+  this.totalAmount = this.productAmount + totalTax;
+
+  
   for (const productItem of this.products) {
     productItem.availableQuantity = productItem.purchasedQuantity;
     
@@ -150,7 +164,7 @@ stockPurchaseSchema.virtual('totalTax').get(function() {
 });
 
 stockPurchaseSchema.virtual('grandTotal').get(function() {
-  return this.totalAmount + this.totalTax;
+  return this.totalAmount;
 });
 
 stockPurchaseSchema.methods.addProduct = function(productData) {

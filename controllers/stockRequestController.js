@@ -2,6 +2,7 @@ import StockRequest from '../models/StockRequest.js';
 import Center from '../models/Center.js';
 import User from '../models/User.js';
 import StockPurchase from '../models/StockPurchase.js'; 
+import mongoose from 'mongoose';
 
 const validateUserCenter = async (userId) => {
   if (!userId) {
@@ -32,15 +33,34 @@ export const createStockRequest = async (req, res) => {
       warehouse,
       remark,
       products,
-      status = 'Draft'
+      status = 'Draft',
+      orderNumber 
     } = req.body;
 
     const centerId = await validateUserCenter(req.user?.id);
 
-    if (!warehouse || !products || !Array.isArray(products) || products.length === 0) {
+    
+    if (!warehouse || !products || !Array.isArray(products) || products.length === 0 || !orderNumber) {
       return res.status(400).json({
         success: false,
-        message: 'Warehouse and at least one product are required'
+        message: 'Warehouse, order number and at least one product are required'
+      });
+    }
+
+    
+    if (typeof orderNumber !== 'string' || orderNumber.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order number must be a non-empty string'
+      });
+    }
+
+    
+    const existingOrder = await StockRequest.findOne({ orderNumber: orderNumber.trim() });
+    if (existingOrder) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order number already exists. Please use a different order number.'
       });
     }
 
@@ -83,24 +103,11 @@ export const createStockRequest = async (req, res) => {
       });
     }
 
-    const generateOrderNumber = async () => {
-      const prefix = 'SR';
-      const timestamp = Date.now().toString().slice(-6);
-      const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-      const orderNumber = `${prefix}${timestamp}${random}`;
-      
-      const existingOrder = await StockRequest.findOne({ orderNumber });
-      if (existingOrder) {
-        return generateOrderNumber();
-      }
-      
-      return orderNumber;
-    };
-
-    const orderNumber = await generateOrderNumber();
+    
+    
 
     const stockRequest = new StockRequest({
-      orderNumber, 
+      orderNumber: orderNumber.trim(), 
       warehouse,
       center: centerId, 
       remark,
@@ -145,7 +152,7 @@ export const createStockRequest = async (req, res) => {
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
-        message: 'Order number already exists. Please try again.'
+        message: 'Order number already exists. Please use a different order number.'
       });
     }
 
@@ -157,7 +164,6 @@ export const createStockRequest = async (req, res) => {
     });
   }
 };
-
 
 export const getAllStockRequests = async (req, res) => {
   try {
@@ -427,7 +433,8 @@ export const updateStockRequest = async (req, res) => {
       approvalInfo,
       shippingInfo,
       receivingInfo,
-      completionInfo
+      completionInfo,
+      orderNumber 
     } = req.body;
 
     const existingRequest = await StockRequest.findById(id);
@@ -443,6 +450,28 @@ export const updateStockRequest = async (req, res) => {
         success: false,
         message: 'Cannot update completed, rejected, or incompleted stock requests'
       });
+    }
+
+    
+    if (orderNumber && orderNumber !== existingRequest.orderNumber) {
+      if (typeof orderNumber !== 'string' || orderNumber.trim().length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Order number must be a non-empty string'
+        });
+      }
+
+      
+      const existingOrder = await StockRequest.findOne({ 
+        orderNumber: orderNumber.trim(),
+        _id: { $ne: id } 
+      });
+      if (existingOrder) {
+        return res.status(400).json({
+          success: false,
+          message: 'Order number already exists. Please use a different order number.'
+        });
+      }
     }
 
     if (products && Array.isArray(products) && !['Draft', 'Submitted'].includes(existingRequest.status)) {
@@ -496,6 +525,7 @@ export const updateStockRequest = async (req, res) => {
       ...(center && { center }),
       ...(remark !== undefined && { remark }),
       ...(status && { status }),
+      ...(orderNumber && { orderNumber: orderNumber.trim() }), 
       ...(approvalInfo && { approvalInfo: { ...existingRequest.approvalInfo, ...approvalInfo } }),
       ...(shippingInfo && { shippingInfo: { ...existingRequest.shippingInfo, ...shippingInfo } }),
       ...(receivingInfo && { receivingInfo: { ...existingRequest.receivingInfo, ...receivingInfo } }),
@@ -614,6 +644,13 @@ export const updateStockRequest = async (req, res) => {
       });
     }
 
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order number already exists. Please use a different order number.'
+      });
+    }
+
     console.error('Error updating stock request:', error);
     res.status(500).json({
       success: false,
@@ -636,10 +673,10 @@ export const deleteStockRequest = async (req, res) => {
       });
     }
 
-    if (!['Draft', 'Rejected', 'Incompleted'].includes(stockRequest.status)) {
+     if (!['Submitted', 'Incompleted', 'Draft', 'Completed', 'Confirmed'].includes(stockTransfer.status)) {
       return res.status(400).json({
         success: false,
-        message: 'Only Draft, Rejected, or Incompleted stock requests can be deleted'
+        message: 'Only Submitted, Incompleted, Draft, Confirmed and Completed stock transfers can be deleted'
       });
     }
 
@@ -669,7 +706,7 @@ export const deleteStockRequest = async (req, res) => {
 export const approveStockRequest = async (req, res) => {
   try {
     const { id } = req.params;
-    const { approvedRemark, productApprovals } = req.body;
+    const { productApprovals } = req.body;
 
     if (!productApprovals || !Array.isArray(productApprovals) || productApprovals.length === 0) {
       return res.status(400).json({
@@ -722,8 +759,7 @@ export const approveStockRequest = async (req, res) => {
     }
 
     const updatedRequest = await stockRequest.approveRequest(
-      userId, 
-      approvedRemark || '', 
+      userId,  
       productApprovals
     );
 
@@ -825,6 +861,138 @@ export const shipStockRequest = async (req, res) => {
   }
 };
 
+
+export const updateShippingInfo = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { 
+      shippedDate, 
+      expectedDeliveryDate, 
+      shipmentDetails, 
+      shipmentRemark, 
+      documents 
+    } = req.body;
+
+    const stockRequest = await StockRequest.findById(id);
+    if (!stockRequest) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock request not found'
+      });
+    }
+
+    
+    if (stockRequest.status !== 'Shipped') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot update shipping information for stock request with status: ${stockRequest.status}. Status must be 'Shipped'`
+      });
+    }
+
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
+    }
+
+    const shippingDetails = {
+      ...(shippedDate && { shippedDate: new Date(shippedDate) }),
+      ...(expectedDeliveryDate && { expectedDeliveryDate: new Date(expectedDeliveryDate) }),
+      ...(shipmentDetails && { shipmentDetails }),
+      ...(shipmentRemark && { shipmentRemark }),
+      ...(documents && { documents: Array.isArray(documents) ? documents : [documents] })
+    };
+
+    
+    const updatedRequest = await stockRequest.updateShippingInfo(shippingDetails);
+    
+    
+    updatedRequest.updatedBy = userId;
+    await updatedRequest.save();
+
+    const populatedRequest = await StockRequest.findById(updatedRequest._id)
+      .populate('warehouse')
+      .populate('center', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode productImage')
+      .populate('shippingInfo.shippedBy', '_id fullName email')
+      .populate('updatedBy', '_id fullName email')
+      .populate('createdBy', '_id fullName email');
+
+    res.status(200).json({
+      success: true,
+      message: 'Shipping information updated successfully',
+      data: populatedRequest
+    });
+  } catch (error) {
+    console.error('Error updating shipping information:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating shipping information',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const rejectShipment = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const stockRequest = await StockRequest.findById(id);
+    if (!stockRequest) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock request not found'
+      });
+    }
+
+    
+    if (stockRequest.status !== 'Shipped') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot reject shipment for stock request with status: ${stockRequest.status}. Status must be 'Shipped'`
+      });
+    }
+
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
+    }
+
+    
+    const updatedRequest = await stockRequest.rejectShipment(userId);
+    
+    
+    updatedRequest.updatedBy = userId;
+    await updatedRequest.save();
+
+    const populatedRequest = await StockRequest.findById(updatedRequest._id)
+      .populate('warehouse')
+      .populate('center', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode productImage')
+      .populate('shippingInfo.shipmentRejected.rejectedBy', '_id fullName email')
+      .populate('updatedBy', '_id fullName email')
+      .populate('createdBy', '_id fullName email');
+
+    res.status(200).json({
+      success: true,
+      message: 'Shipment rejected successfully. Shipping details cleared and status reverted to Confirmed.',
+      data: populatedRequest
+    });
+  } catch (error) {
+    console.error('Error rejecting shipment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error rejecting shipment',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
 export const markAsIncomplete = async (req, res) => {
   try {
     const { id } = req.params;
@@ -894,7 +1062,7 @@ export const markAsIncomplete = async (req, res) => {
 export const completeStockRequest = async (req, res) => {
   try {
     const { id } = req.params;
-    const { receivedRemark, productReceipts, markAsIncomplete = false } = req.body;
+    const { productReceipts, markAsIncomplete = false } = req.body;
 
     if (markAsIncomplete) {
       return markAsIncomplete(req, res);
@@ -952,7 +1120,6 @@ export const completeStockRequest = async (req, res) => {
 
     const updatedRequest = await stockRequest.completeRequest(
       userId, 
-      receivedRemark || '', 
       productReceipts
     );
 
@@ -975,6 +1142,216 @@ export const completeStockRequest = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error completing stock request',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const completeIncompleteRequest = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { 
+      productApprovals, 
+      productReceipts 
+    } = req.body;
+
+    const stockRequest = await StockRequest.findById(id);
+    if (!stockRequest) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock request not found'
+      });
+    }
+
+    
+    if (stockRequest.status !== 'Incompleted') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot complete a stock request with status: ${stockRequest.status}. Status must be 'Incompleted'`
+      });
+    }
+
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
+    }
+
+    
+    if (productApprovals && Array.isArray(productApprovals)) {
+      for (const approval of productApprovals) {
+        if (!approval.productId || approval.approvedQuantity === undefined) {
+          return res.status(400).json({
+            success: false,
+            message: 'Each product approval must have productId and approvedQuantity'
+          });
+        }
+
+        const productExists = stockRequest.products.some(
+          p => p.product.toString() === approval.productId.toString()
+        );
+        
+        if (!productExists) {
+          const productDoc = await mongoose.model('Product').findById(approval.productId);
+          const productName = productDoc ? productDoc.productTitle : approval.productId;
+          return res.status(400).json({
+            success: false,
+            message: `Product "${productName}" not found in this stock request`
+          });
+        }
+
+        const existingProduct = stockRequest.products.find(
+          p => p.product.toString() === approval.productId.toString()
+        );
+        
+        
+        if (approval.approvedQuantity > existingProduct.quantity) {
+          const productDoc = await mongoose.model('Product').findById(approval.productId);
+          const productName = productDoc ? productDoc.productTitle : approval.productId;
+          return res.status(400).json({
+            success: false,
+            message: `Approved quantity (${approval.approvedQuantity}) cannot be greater than requested quantity (${existingProduct.quantity}) for product "${productName}"`
+          });
+        }
+
+        if (approval.approvedQuantity < 0) {
+          return res.status(400).json({
+            success: false,
+            message: `Approved quantity cannot be negative for product ${approval.productId}`
+          });
+        }
+      }
+    }
+
+    
+    if (productReceipts && Array.isArray(productReceipts)) {
+      for (const receipt of productReceipts) {
+        if (!receipt.productId || receipt.receivedQuantity === undefined) {
+          return res.status(400).json({
+            success: false,
+            message: 'Each product receipt must have productId and receivedQuantity'
+          });
+        }
+
+        const productExists = stockRequest.products.some(
+          p => p.product.toString() === receipt.productId.toString()
+        );
+        
+        if (!productExists) {
+          return res.status(400).json({
+            success: false,
+            message: `Product with ID ${receipt.productId} not found in this stock request`
+          });
+        }
+
+        if (receipt.receivedQuantity < 0) {
+          return res.status(400).json({
+            success: false,
+            message: `Received quantity cannot be negative for product ${receipt.productId}`
+          });
+        }
+      }
+    }
+
+    const currentDate = new Date();
+    const updateData = {
+      status: 'Completed',
+      updatedBy: userId,
+      receivingInfo: {
+        ...stockRequest.receivingInfo,
+        receivedAt: currentDate,
+        receivedBy: userId,
+      },
+      completionInfo: {
+        ...stockRequest.completionInfo,
+        completedOn: currentDate,
+        completedBy: userId
+      }
+    };
+
+    
+ 
+      updateData.approvalInfo = {
+        ...stockRequest.approvalInfo,
+        approvedBy: stockRequest.approvalInfo.approvedBy || userId,
+        approvedAt: stockRequest.approvalInfo.approvedAt || currentDate
+      };
+
+
+    
+    updateData.products = stockRequest.products.map(productItem => {
+      const productUpdate = { ...productItem.toObject() };
+
+      
+      if (productApprovals) {
+        const approval = productApprovals.find(
+          pa => pa.productId.toString() === productItem.product.toString()
+        );
+        
+        if (approval) {
+          productUpdate.approvedQuantity = approval.approvedQuantity;
+          productUpdate.approvedRemark = approval.approvedRemark || productUpdate.approvedRemark || '';
+        }
+      }
+
+      
+      if (productReceipts) {
+        const receipt = productReceipts.find(
+          pr => pr.productId.toString() === productItem.product.toString()
+        );
+        
+        if (receipt) {
+          productUpdate.receivedQuantity = receipt.receivedQuantity;
+          productUpdate.receivedRemark = receipt.receivedRemark || productUpdate.receivedRemark || '';
+        }
+      }
+
+      return productUpdate;
+    });
+
+    const updatedRequest = await StockRequest.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true, runValidators: true }
+    )
+    .populate('warehouse', '_id warehouseName')
+    .populate('center', '_id centerName centerCode')
+    .populate('products.product', '_id productTitle productCode productImage')
+    .populate('createdBy', '_id fullName email')
+    .populate('updatedBy', '_id fullName email')
+    .populate('approvalInfo.approvedBy', '_id fullName email')
+    .populate('receivingInfo.receivedBy', '_id fullName email')
+    .populate('completionInfo.completedBy', '_id fullName email');
+
+    res.status(200).json({
+      success: true,
+      message: 'Incomplete stock request completed successfully',
+      data: updatedRequest
+    });
+
+  } catch (error) {
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid stock request ID'
+      });
+    }
+
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors
+      });
+    }
+
+    console.error('Error completing incomplete stock request:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error completing incomplete stock request',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
@@ -1175,7 +1552,7 @@ export const updateStockRequestStatus = async (req, res) => {
 export const updateApprovedQuantities = async (req, res) => {
   try {
     const { id } = req.params;
-    const { productApprovals, approvedRemark } = req.body;
+    const { productApprovals } = req.body;
 
     if (!productApprovals || !Array.isArray(productApprovals) || productApprovals.length === 0) {
       return res.status(400).json({
@@ -1260,7 +1637,6 @@ export const updateApprovedQuantities = async (req, res) => {
         return {
           ...productItem.toObject(),
           approvedQuantity: approval.approvedQuantity,
-          approvedRemark: approval.approvedRemark || productItem.approvedRemark || ''
         };
       }
       return productItem;
@@ -1272,14 +1648,12 @@ export const updateApprovedQuantities = async (req, res) => {
       updatedBy: userId
     };
 
-    if (approvedRemark !== undefined) {
       updateData.approvalInfo = {
         ...stockRequest.approvalInfo,
-        approvedRemark: approvedRemark,
         approvedBy: stockRequest.approvalInfo.approvedBy || userId,
         approvedAt: stockRequest.approvalInfo.approvedAt || new Date()
       };
-    }
+
 
     if (stockRequest.status === 'Submitted') {
       updateData.status = 'Confirmed';
@@ -1334,3 +1708,37 @@ export const updateApprovedQuantities = async (req, res) => {
   }
 };
 
+
+export const getMostRecentOrderNumber = async (req, res) => {
+  try {
+    
+    const mostRecentRequest = await StockRequest.findOne()
+      .sort({ createdAt: -1 }) 
+      .select('orderNumber createdAt') 
+      .lean();
+
+    if (!mostRecentRequest) {
+      return res.status(404).json({
+        success: false,
+        message: 'No stock requests found',
+        data: null
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Most recent order number retrieved successfully',
+      data: {
+        orderNumber: mostRecentRequest.orderNumber,
+        createdAt: mostRecentRequest.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Error retrieving most recent order number:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving most recent order number',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
