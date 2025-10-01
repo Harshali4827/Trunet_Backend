@@ -7,8 +7,8 @@ export const createProductValidator = [
   body('productPrice').isNumeric().withMessage('Product price must be a number'),
   body('status')
     .optional()
-    .isIn(['Enabled', 'Disables'])
-    .withMessage('Status must be either Enabled or Disables'),
+    .isIn(['Enable', 'Disable'])
+    .withMessage('Status must be either Enable or Disable'),
   body('trackSerialNumber')
     .optional()
     .isIn(['Yes', 'No'])
@@ -30,8 +30,8 @@ export const updateProductValidator = [
   body('productPrice').optional().isNumeric(),
   body('status')
     .optional()
-    .isIn(['Enabled', 'Disables'])
-    .withMessage('Status must be either Enabled or Disables'),
+    .isIn(['Enable', 'Disable'])
+    .withMessage('Status must be either Enable or Disable'),
   body('trackSerialNumber')
     .optional()
     .isIn(['Yes', 'No'])

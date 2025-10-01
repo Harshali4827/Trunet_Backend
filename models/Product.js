@@ -36,8 +36,8 @@ const productSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['Enabled', 'Disables'],
-      default: 'Enabled',
+      enum: ['Enable', 'Disable'],
+      default: 'Enable',
     },
     description: {
       type: String,

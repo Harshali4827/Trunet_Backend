@@ -31,7 +31,7 @@ export const createCustomer = async (req, res) => {
 
 export const getCustomers = async (req, res) => {
   try {
-    const { search, center, page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    const { search, center, page = 1, limit = 1, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     
 
     const filter = {};

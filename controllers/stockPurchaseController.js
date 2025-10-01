@@ -1,53 +1,65 @@
-import StockPurchase from '../models/StockPurchase.js';
-import Product from '../models/Product.js';
-import Vendor from '../models/Vendor.js';
-import User from '../models/User.js';
-import Center from '../models/Center.js';
+import StockPurchase from "../models/StockPurchase.js";
+import OutletStock from "../models/OutletStock.js";
+import CenterStock from "../models/CenterStock.js";
+import Product from "../models/Product.js";
+import Center from "../models/Center.js";
+import User from "../models/User.js"; 
+import mongoose from "mongoose";
 
-const validateUserOutletCenter = async (userId) => {
+const getUserOutletId = async (userId) => {
   if (!userId) {
-    throw new Error('User authentication required');
+    throw new Error("User ID is required");
   }
 
-  const user = await User.findById(userId).populate('center', 'centerName centerCode centerType');
+  
+  const user = await User.findById(userId)
+    .populate('center', 'centerName centerCode centerType');
   
   if (!user) {
-    throw new Error('User not found');
+    throw new Error("User not found");
   }
 
   if (!user.center) {
-    throw new Error('User center information not found');
+    throw new Error("User center information not found");
   }
 
-  if (user.center.centerType !== 'Outlet') {
-    throw new Error(`Stock purchases can only be created for outlet centers. Your center type is: ${user.center.centerType}`);
+  if (user.center.centerType !== "Outlet") {
+    throw new Error("User does not have outlet access");
   }
 
-  return user.center.centerName; 
+  return user.center._id;
+};
+
+const validateUserOutletAccess = async (userId) => {
+  if (!userId) {
+    throw new Error("User authentication required");
+  }
+
+  
+  const user = await User.findById(userId)
+    .populate('center', 'centerName centerCode centerType');
+  
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  if (!user.center) {
+    throw new Error("User is not associated with any center");
+  }
+
+  if (user.center.centerType !== "Outlet") {
+    throw new Error("User does not have outlet access privileges");
+  }
+
+  return user.center._id;
 };
 
 
-const validateUserForOutletCenter = async (userId) => {
-  if (!userId) {
-    throw new Error('User authentication required');
-  }
-
-  const user = await User.findById(userId).populate('center', 'centerName centerCode centerType');
+const getQuickOutletId = async (userId) => {
+  const user = await User.findById(userId)
+    .populate('center', 'centerType');
   
-  if (!user) {
-    throw new Error('User not found');
-  }
-
-  if (!user.center) {
-    throw new Error('User center information not found');
-  }
-
-  const allowedCenterTypes = ['Outlet', 'Center'];
-  if (!allowedCenterTypes.includes(user.center.centerType)) {
-    throw new Error(`Stock purchases can only be created for outlet or center types. Your center type is: ${user.center.centerType}`);
-  }
-
-  return user.center.centerName; 
+  return user?.center?.centerType === "Outlet" ? user.center._id : null;
 };
 
 export const createStockPurchase = async (req, res) => {
@@ -57,197 +69,90 @@ export const createStockPurchase = async (req, res) => {
       date,
       invoiceNo,
       vendor,
+      outlet,
       transportAmount = 0,
-      remark = '',
+      remark = "",
       cgst = 0,
       sgst = 0,
       igst = 0,
-      products
+      products,
     } = req.body;
 
-    const outlet = await validateUserOutletCenter(req.user?.id);
-
-    if (!invoiceNo) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invoice number is required'
-      });
+    let outletId = outlet;
+    if (!outletId) {
+      
+      outletId = await getUserOutletId(req.user._id);
     }
 
-    if (!vendor || !products || !Array.isArray(products) || products.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Vendor and at least one product are required'
-      });
-    }
-
-    const existingInvoice = await StockPurchase.findOne({ 
-      invoiceNo: { $regex: new RegExp(`^${invoiceNo}$`, 'i') } 
-    });
-    
-    if (existingInvoice) {
-      return res.status(400).json({
-        success: false,
-        message: `Invoice number '${invoiceNo}' already exists`
-      });
-    }
-
-    const processedProducts = [];
-
-    for (let i = 0; i < products.length; i++) {
-      const product = products[i];
-      if (!product.product || !product.price || !product.purchasedQuantity) {
-        return res.status(400).json({
-          success: false,
-          message: `Product at index ${i} must have product ID, price, and purchased quantity`
-        });
-      }
-
-      if (product.purchasedQuantity < 1) {
-        return res.status(400).json({
-          success: false,
-          message: `Purchased quantity for product at index ${i} must be at least 1`
-        });
-      }
-
-      const productDoc = await Product.findById(product.product);
-      if (!productDoc) {
-        return res.status(404).json({
-          success: false,
-          message: `Product with ID ${product.product} not found`
-        });
-      }
-
-      const existingPurchases = await StockPurchase.find({
-        outlet: outlet,
-        'products.product': product.product
-      });
-
-      let currentTotalAvailableStock = 0;
- 
-      existingPurchases.forEach(purchase => {
-        purchase.products.forEach(prod => {
-          if (prod.product.toString() === product.product) {
-            currentTotalAvailableStock += prod.availableQuantity;
-          }
-        });
-      });
-
-      const availableQuantityForThisPurchase = currentTotalAvailableStock + product.purchasedQuantity;
-
+    const processedProducts = products.map((product) => {
       const processedProduct = {
         product: product.product,
         price: product.price,
         purchasedQuantity: product.purchasedQuantity,
-        availableQuantity: availableQuantityForThisPurchase, 
-        serialNumbers: product.serialNumbers || []
+        availableQuantity: product.purchasedQuantity,
+        serialNumbers: [],
       };
 
-      if (productDoc.trackSerialNumber === 'Yes') {
-        if (!product.serialNumbers || !Array.isArray(product.serialNumbers)) {
-          return res.status(400).json({
-            success: false,
-            message: `Product "${productDoc.productTitle}" requires serial numbers`
-          });
-        }
-        
-        if (product.serialNumbers.length !== product.purchasedQuantity) {
-          return res.status(400).json({
-            success: false,
-            message: `Product "${productDoc.productTitle}" requires exactly ${product.purchasedQuantity} serial numbers`
-          });
-        }
-
-        const serialSet = new Set(product.serialNumbers);
-        if (serialSet.size !== product.serialNumbers.length) {
-          return res.status(400).json({
-            success: false,
-            message: `Duplicate serial numbers found for product: ${productDoc.productTitle}`
-          });
-        }
-        
-        processedProduct.serialNumbers = product.serialNumbers;
-      } else {
-        if (product.serialNumbers && product.serialNumbers.length > 0) {
-          return res.status(400).json({
-            success: false,
-            message: `Product "${productDoc.productTitle}" does not require serial number tracking`
-          });
-        }
-        processedProduct.serialNumbers = [];
+      if (product.serialNumbers && product.serialNumbers.length > 0) {
+        processedProduct.serialNumbers = product.serialNumbers.map(
+          (serialNumber) => ({
+            serialNumber:
+              typeof serialNumber === "string"
+                ? serialNumber
+                : serialNumber.serialNumber,
+            status: "available",
+            currentLocation: outletId,
+            transferredTo: null,
+            transferDate: null,
+          })
+        );
       }
 
-      processedProducts.push(processedProduct);
-    }
-
-    const vendorExists = await Vendor.findById(vendor);
-    if (!vendorExists) {
-      return res.status(404).json({
-        success: false,
-        message: 'Vendor not found'
-      });
-    }
+      return processedProduct;
+    });
 
     const stockPurchase = new StockPurchase({
-      type: type || 'new',
+      type: type || "new",
       date: date || new Date(),
       invoiceNo: invoiceNo.trim(),
       vendor,
-      outlet: outlet, 
+      outlet: outletId,
       transportAmount,
       remark,
       cgst,
       sgst,
       igst,
-      products: processedProducts
+      products: processedProducts,
     });
 
     const savedPurchase = await stockPurchase.save();
 
+    for (const productItem of savedPurchase.products) {
+      await OutletStock.updateStock(
+        outletId,
+        productItem.product,
+        productItem.purchasedQuantity,
+        productItem.serialNumbers,
+        savedPurchase._id
+      );
+    }
+
     const populatedPurchase = await StockPurchase.findById(savedPurchase._id)
-      .populate('vendor', 'businessName name email mobile gstNumber')
-      .populate('products.product', 'productTitle productCode productPrice trackSerialNumber');
+      .populate("vendor", "businessName name email mobile gstNumber")
+      .populate("outlet", "_id centerName centerCode centerType")
+      .populate(
+        "products.product",
+        "productTitle productCode productPrice trackSerialNumber"
+      );
 
     res.status(201).json({
       success: true,
-      message: 'Stock purchase created successfully',
-      data: populatedPurchase
+      message: "Stock purchase created successfully",
+      data: populatedPurchase,
     });
-
   } catch (error) {
-    console.error('Error creating stock purchase:', error);
-    
-    if (error.message.includes('outlet centers') || error.message.includes('center types') || error.message.includes('User authentication')) {
-      return res.status(400).json({
-        success: false,
-        message: error.message
-      });
-    }
-    
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({
-        success: false,
-        message: 'Validation error',
-        errors
-      });
-    }
-    
-    if (error.code === 11000) {
-      const field = Object.keys(error.keyPattern)[0];
-      if (field === 'invoiceNo') {
-        return res.status(400).json({
-          success: false,
-          message: `Invoice number '${req.body.invoiceNo}' already exists`
-        });
-      }
-    }
-
-    res.status(500).json({
-      success: false,
-      message: 'Error creating stock purchase',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
+    console.error("Error creating stock purchase:", error);
+    handleControllerError(error, res);
   }
 };
 
@@ -258,28 +163,21 @@ export const getAllStockPurchases = async (req, res) => {
       limit = 10,
       type,
       vendor,
-      outlet,
       startDate,
       endDate,
       invoiceNo,
       search,
-      sortBy = 'createdAt',
-      sortOrder = 'desc'
+      sortBy = "createdAt",
+      sortOrder = "desc",
     } = req.query;
 
-    const filter = {};
+    
+    const outletId = await validateUserOutletAccess(req.user._id);
 
-    if (type) {
-      filter.type = type;
-    }
+    const filter = { outlet: outletId };
 
-    if (vendor) {
-      filter.vendor = vendor;
-    }
-
-    if (outlet) {
-      filter.outlet = outlet;
-    }
+    if (type) filter.type = type;
+    if (vendor) filter.vendor = vendor;
 
     if (startDate || endDate) {
       filter.date = {};
@@ -288,25 +186,33 @@ export const getAllStockPurchases = async (req, res) => {
     }
 
     if (invoiceNo) {
-      filter.invoiceNo = { $regex: invoiceNo, $options: 'i' };
+      filter.invoiceNo = { $regex: invoiceNo, $options: "i" };
     }
 
     if (search) {
       filter.$or = [
-        { invoiceNo: { $regex: search, $options: 'i' } },
-        { remark: { $regex: search, $options: 'i' } },
-        { outlet: { $regex: search, $options: 'i' } }
+        { invoiceNo: { $regex: search, $options: "i" } },
+        { remark: { $regex: search, $options: "i" } },
       ];
     }
 
     const sortOptions = {};
-    const validSortFields = ['createdAt', 'updatedAt', 'date', 'invoiceNo', 'totalAmount'];
-    const actualSortBy = validSortFields.includes(sortBy) ? sortBy : 'createdAt';
-    sortOptions[actualSortBy] = sortOrder === 'desc' ? -1 : 1;
+    const validSortFields = [
+      "createdAt",
+      "updatedAt",
+      "date",
+      "invoiceNo",
+      "totalAmount",
+    ];
+    const actualSortBy = validSortFields.includes(sortBy)
+      ? sortBy
+      : "createdAt";
+    sortOptions[actualSortBy] = sortOrder === "desc" ? -1 : 1;
 
     const purchases = await StockPurchase.find(filter)
-      .populate('vendor', 'businessName')
-      .populate('products.product', 'productTitle')
+      .populate("vendor", "businessName")
+      .populate("outlet", "_id centerName centerCode centerType")
+      .populate("products.product", "productTitle")
       .sort(sortOptions)
       .limit(limit * 1)
       .skip((page - 1) * limit);
@@ -315,168 +221,141 @@ export const getAllStockPurchases = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Stock purchases retrieved successfully',
+      message: "Stock purchases retrieved successfully",
       data: purchases,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / limit),
         totalItems: total,
-        itemsPerPage: parseInt(limit)
+        itemsPerPage: parseInt(limit),
       },
     });
-
   } catch (error) {
-    console.error('Error retrieving stock purchases:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error retrieving stock purchases',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
+    console.error("Error retrieving stock purchases:", error);
+    handleControllerError(error, res);
   }
 };
-
 
 export const getStockPurchaseById = async (req, res) => {
   try {
     const { id } = req.params;
+    
+    const outletId = await validateUserOutletAccess(req.user._id);
 
-    const purchase = await StockPurchase.findById(id)
-      .populate('vendor', 'businessName name email mobile gstNumber panNumber address1 address2 city state')
-      .populate('products.product', 'productTitle productCode productPrice productImage trackSerialNumber repairable replaceable');
+    const purchase = await StockPurchase.findOne({
+      _id: id,
+      outlet: outletId,
+    })
+      .populate("vendor", "businessName")
+      .populate("outlet", "_id centerName centerCode centerType")
+      .populate(
+        "products.product",
+        "productTitle productCode productPrice productImage"
+      );
 
     if (!purchase) {
       return res.status(404).json({
         success: false,
-        message: 'Stock purchase not found'
+        message: "Stock purchase not found or access denied",
       });
     }
 
     res.status(200).json({
       success: true,
-      message: 'Stock purchase retrieved successfully',
-      data: purchase
+      message: "Stock purchase retrieved successfully",
+      data: purchase,
     });
-
   } catch (error) {
-    if (error.name === 'CastError') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid stock purchase ID'
-      });
-    }
-
-    console.error('Error retrieving stock purchase:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error retrieving stock purchase',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
+    console.error("Error retrieving stock purchase:", error);
+    handleControllerError(error, res);
   }
 };
 
 export const updateStockPurchase = async (req, res) => {
   try {
     const { id } = req.params;
+    
+    const outletId = await validateUserOutletAccess(req.user._id);
+
     const {
       type,
       date,
       invoiceNo,
       vendor,
-      outlet,
       transportAmount,
       remark,
       cgst,
       sgst,
       igst,
-      products
+      products,
     } = req.body;
 
-    const existingPurchase = await StockPurchase.findById(id);
+    const existingPurchase = await StockPurchase.findOne({
+      _id: id,
+      outlet: outletId,
+    });
+
     if (!existingPurchase) {
       return res.status(404).json({
         success: false,
-        message: 'Stock purchase not found'
+        message: "Stock purchase not found or access denied",
       });
     }
 
-    if (invoiceNo && invoiceNo !== existingPurchase.invoiceNo) {
-      const existingInvoice = await StockPurchase.findOne({ 
-        invoiceNo: { $regex: new RegExp(`^${invoiceNo}$`, 'i') },
-        _id: { $ne: id } 
+    const hasTransfers = existingPurchase.products.some(
+      (product) => product.availableQuantity < product.purchasedQuantity
+    );
+
+    if (hasTransfers) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot update stock purchase that has transferred stock",
       });
-      
-      if (existingInvoice) {
-        return res.status(400).json({
-          success: false,
-          message: `Invoice number '${invoiceNo}' already exists`
-        });
-      }
     }
 
+    for (const productItem of existingPurchase.products) {
+      await OutletStock.findOneAndUpdate(
+        { outlet: outletId, product: productItem.product },
+        {
+          $inc: {
+            totalQuantity: -productItem.purchasedQuantity,
+            availableQuantity: -productItem.purchasedQuantity,
+          },
+          $pull: {
+            serialNumbers: { purchaseId: existingPurchase._id },
+          },
+        }
+      );
+    }
+
+    let processedProducts = existingPurchase.products;
     if (products && Array.isArray(products)) {
-      if (products.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'At least one product is required'
-        });
-      }
+      processedProducts = products.map((product) => {
+        const processedProduct = {
+          product: product.product,
+          price: product.price,
+          purchasedQuantity: product.purchasedQuantity,
+          availableQuantity: product.purchasedQuantity,
+          serialNumbers: [],
+        };
 
-      for (let i = 0; i < products.length; i++) {
-        const product = products[i];
-        if (!product.product || !product.price || !product.purchasedQuantity) {
-          return res.status(400).json({
-            success: false,
-            message: `Product at index ${i} must have product ID, price, and purchased quantity`
-          });
+        if (product.serialNumbers && product.serialNumbers.length > 0) {
+          processedProduct.serialNumbers = product.serialNumbers.map(
+            (serialNumber) => ({
+              serialNumber:
+                typeof serialNumber === "string"
+                  ? serialNumber
+                  : serialNumber.serialNumber,
+              status: "available",
+              currentLocation: outletId,
+              transferredTo: null,
+              transferDate: null,
+            })
+          );
         }
 
-        const productDoc = await Product.findById(product.product);
-        if (!productDoc) {
-          return res.status(404).json({
-            success: false,
-            message: `Product with ID ${product.product} not found`
-          });
-        }
-
-
-        product.availableQuantity = product.purchasedQuantity;
-
-        if (productDoc.trackSerialNumber === 'Yes') {
-          if (!product.serialNumbers || !Array.isArray(product.serialNumbers)) {
-            return res.status(400).json({
-              success: false,
-              message: `Product "${productDoc.productTitle}" requires serial numbers`
-            });
-          }
-          
-          if (product.serialNumbers.length !== product.purchasedQuantity) {
-            return res.status(400).json({
-              success: false,
-              message: `Product "${productDoc.productTitle}" requires exactly ${product.purchasedQuantity} serial numbers`
-            });
-          }
-
-          const serialSet = new Set(product.serialNumbers);
-          if (serialSet.size !== product.serialNumbers.length) {
-            return res.status(400).json({
-              success: false,
-              message: `Duplicate serial numbers found for product: ${productDoc.productTitle}`
-            });
-          }
-        } else {
-          product.serialNumbers = [];
-        }
-      }
-    }
-
-    if (vendor) {
-      const vendorExists = await Vendor.findById(vendor);
-      if (!vendorExists) {
-        return res.status(404).json({
-          success: false,
-          message: 'Vendor not found'
-        });
-      }
+        return processedProduct;
+      });
     }
 
     const updateData = {
@@ -484,99 +363,99 @@ export const updateStockPurchase = async (req, res) => {
       ...(date && { date }),
       ...(invoiceNo && { invoiceNo: invoiceNo.trim() }),
       ...(vendor && { vendor }),
-      ...(outlet && { outlet: outlet.trim() }),
       ...(transportAmount !== undefined && { transportAmount }),
       ...(remark !== undefined && { remark }),
       ...(cgst !== undefined && { cgst }),
       ...(sgst !== undefined && { sgst }),
       ...(igst !== undefined && { igst }),
-      ...(products && { products })
+      ...(products && { products: processedProducts }),
     };
 
-    const updatedPurchase = await StockPurchase.findByIdAndUpdate(
-      id,
+    const updatedPurchase = await StockPurchase.findOneAndUpdate(
+      { _id: id, outlet: outletId },
       updateData,
       { new: true, runValidators: true }
-    )
-      .populate('vendor', 'businessName name email mobile')
-      .populate('products.product', 'productTitle productCode productPrice');
+    );
+
+    for (const productItem of updatedPurchase.products) {
+      await OutletStock.updateStock(
+        outletId,
+        productItem.product,
+        productItem.purchasedQuantity,
+        productItem.serialNumbers,
+        updatedPurchase._id
+      );
+    }
+
+    const populatedPurchase = await StockPurchase.findById(updatedPurchase._id)
+      .populate("vendor", "businessName name email mobile")
+      .populate("outlet", "_id centerName centerCode centerType")
+      .populate("products.product", "productTitle productCode productPrice");
 
     res.status(200).json({
       success: true,
-      message: 'Stock purchase updated successfully',
-      data: updatedPurchase
+      message: "Stock purchase updated successfully",
+      data: populatedPurchase,
     });
-
   } catch (error) {
-    if (error.name === 'CastError') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid stock purchase ID'
-      });
-    }
-
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({
-        success: false,
-        message: 'Validation error',
-        errors
-      });
-    }
-
-    if (error.code === 11000) {
-      const field = Object.keys(error.keyPattern)[0];
-      if (field === 'invoiceNo') {
-        return res.status(400).json({
-          success: false,
-          message: `Invoice number '${req.body.invoiceNo}' already exists`
-        });
-      }
-    }
-
-    console.error('Error updating stock purchase:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating stock purchase',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
+    console.error("Error updating stock purchase:", error);
+    handleControllerError(error, res);
   }
 };
 
 export const deleteStockPurchase = async (req, res) => {
   try {
     const { id } = req.params;
-
-    const purchase = await StockPurchase.findById(id);
     
+    const outletId = await validateUserOutletAccess(req.user._id);
+
+    const purchase = await StockPurchase.findOne({
+      _id: id,
+      outlet: outletId,
+    });
+
     if (!purchase) {
       return res.status(404).json({
         success: false,
-        message: 'Stock purchase not found'
+        message: "Stock purchase not found or access denied",
       });
     }
 
-    await StockPurchase.findByIdAndDelete(id);
+    const hasTransfers = purchase.products.some(
+      (product) => product.availableQuantity < product.purchasedQuantity
+    );
+
+    if (hasTransfers) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete stock purchase that has transferred stock",
+      });
+    }
+
+    for (const productItem of purchase.products) {
+      await OutletStock.findOneAndUpdate(
+        { outlet: outletId, product: productItem.product },
+        {
+          $inc: {
+            totalQuantity: -productItem.purchasedQuantity,
+            availableQuantity: -productItem.purchasedQuantity,
+          },
+          $pull: {
+            serialNumbers: { purchaseId: purchase._id },
+          },
+        }
+      );
+    }
+
+    await StockPurchase.findOneAndDelete({ _id: id, outlet: outletId });
 
     res.status(200).json({
       success: true,
-      message: 'Stock purchase deleted successfully'
+      message: "Stock purchase deleted successfully",
     });
-
   } catch (error) {
-    if (error.name === 'CastError') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid stock purchase ID'
-      });
-    }
-
-    console.error('Error deleting stock purchase:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error deleting stock purchase',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
+    console.error("Error deleting stock purchase:", error);
+    handleControllerError(error, res);
   }
 };
 
@@ -584,104 +463,67 @@ export const getPurchasesByVendor = async (req, res) => {
   try {
     const { vendorId } = req.params;
     const { page = 1, limit = 10 } = req.query;
+    
+    const outletId = await validateUserOutletAccess(req.user._id);
 
-    const purchases = await StockPurchase.find({ vendor: vendorId })
-      .populate('vendor', 'businessName name email mobile')
-      .populate('products.product', 'productTitle productCode')
+    const purchases = await StockPurchase.find({
+      vendor: vendorId,
+      outlet: outletId,
+    })
+      .populate("vendor", "businessName name email mobile")
+      .populate("outlet", "_id centerName centerCode centerType")
+      .populate("products.product", "productTitle productCode")
       .sort({ date: -1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
 
-    const total = await StockPurchase.countDocuments({ vendor: vendorId });
+    const total = await StockPurchase.countDocuments({
+      vendor: vendorId,
+      outlet: outletId,
+    });
 
     res.status(200).json({
       success: true,
-      message: 'Vendor purchases retrieved successfully',
+      message: "Vendor purchases retrieved successfully",
       data: purchases,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / limit),
         totalItems: total,
-        itemsPerPage: parseInt(limit)
-      }
+        itemsPerPage: parseInt(limit),
+      },
     });
-
   } catch (error) {
-    console.error('Error retrieving vendor purchases:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error retrieving vendor purchases',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-};
-
-export const getPurchasesByOutlet = async (req, res) => {
-  try {
-    const { outlet } = req.params;
-    const { page = 1, limit = 10 } = req.query;
-
-    const purchases = await StockPurchase.find({ outlet: outlet })
-      .populate('vendor', 'businessName name email mobile')
-      .populate('products.product', 'productTitle productCode')
-      .sort({ date: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const total = await StockPurchase.countDocuments({ outlet: outlet });
-
-    res.status(200).json({
-      success: true,
-      message: 'Outlet purchases retrieved successfully',
-      data: purchases,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalItems: total,
-        itemsPerPage: parseInt(limit)
-      }
-    });
-
-  } catch (error) {
-    console.error('Error retrieving outlet purchases:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error retrieving outlet purchases',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
+    console.error("Error retrieving vendor purchases:", error);
+    handleControllerError(error, res);
   }
 };
 
 export const getAllProductsWithStock = async (req, res) => {
   try {
     const { page = 1, limit = 50, search, category } = req.query;
-
-    const user = req.user;
     
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'User not authenticated'
-      });
-    }
-
-    let outlet;
-    try {
-      outlet = await validateUserForOutletCenter(req.user?.id);
-    } catch (error) {
+    // Get user's center information
+    const user = await User.findById(req.user._id)
+      .populate('center', 'centerName centerCode centerType');
+    
+    if (!user || !user.center) {
       return res.status(400).json({
         success: false,
-        message: error.message
+        message: "User center information not found",
       });
     }
 
+    const centerId = user.center._id;
+    const centerType = user.center.centerType;
+
     const productFilter = {};
-    
+
     if (search) {
       productFilter.$or = [
-        { productTitle: { $regex: search, $options: 'i' } },
-        { productCode: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
+        { productTitle: { $regex: search, $options: "i" } },
+        { productCode: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
       ];
     }
 
@@ -690,88 +532,637 @@ export const getAllProductsWithStock = async (req, res) => {
     }
 
     const products = await Product.find(productFilter)
-      .select('productTitle productCode description category productPrice trackSerialNumber productImage repairable replaceable')
+      .select("productTitle productCode description category productPrice trackSerialNumber productImage")
       .sort({ productTitle: 1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
 
     const totalProducts = await Product.countDocuments(productFilter);
 
-    const stockData = await StockPurchase.aggregate([
-      {
-        $match: { outlet: outlet }
-      },
-      {
-        $unwind: '$products'
-      },
-      {
-        $group: {
-          _id: '$products.product',
-          totalPurchased: { $sum: '$products.purchasedQuantity' },
-          totalAvailable: { $sum: '$products.availableQuantity' },
-          purchaseCount: { $sum: 1 }
+    let stockData = [];
+    let centerDetails = null;
+
+    if (centerType === "Outlet") {
+      // For outlets, get stock from StockPurchase and OutletStock
+      centerDetails = await Center.findById(centerId).select(
+        "_id partner area centerType centerName centerCode"
+      );
+
+      stockData = await StockPurchase.aggregate([
+        {
+          $match: { outlet: centerId },
+        },
+        {
+          $unwind: "$products",
+        },
+        {
+          $group: {
+            _id: "$products.product",
+            totalPurchased: { $sum: "$products.purchasedQuantity" },
+            totalAvailable: { $sum: "$products.availableQuantity" },
+            purchaseCount: { $sum: 1 },
+          },
+        },
+      ]);
+
+      // Also get current stock status from OutletStock
+      const outletStockData = await OutletStock.aggregate([
+        {
+          $match: { outlet: centerId }
+        },
+        {
+          $group: {
+            _id: "$product",
+            currentTotalQuantity: { $sum: "$totalQuantity" },
+            currentAvailableQuantity: { $sum: "$availableQuantity" }
+          }
         }
-      }
-    ]);
+      ]);
+
+      // Merge both data sources
+      const outletStockMap = new Map();
+      outletStockData.forEach(item => {
+        outletStockMap.set(item._id.toString(), {
+          currentTotalQuantity: item.currentTotalQuantity,
+          currentAvailableQuantity: item.currentAvailableQuantity
+        });
+      });
+
+      // Update stockData with current quantities
+      stockData = stockData.map(item => {
+        const currentStock = outletStockMap.get(item._id.toString());
+        return {
+          ...item,
+          currentTotalQuantity: currentStock?.currentTotalQuantity || 0,
+          currentAvailableQuantity: currentStock?.currentAvailableQuantity || 0
+        };
+      });
+
+    } else if (centerType === "Center") {
+      // For centers, get stock from CenterStock
+      centerDetails = await Center.findById(centerId).select(
+        "_id partner area centerType centerName centerCode"
+      );
+
+      stockData = await CenterStock.aggregate([
+        {
+          $match: { center: centerId },
+        },
+        {
+          $group: {
+            _id: "$product",
+            totalQuantity: { $sum: "$totalQuantity" },
+            availableQuantity: { $sum: "$availableQuantity" },
+            stockEntries: { $sum: 1 },
+          },
+        },
+      ]);
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid center type",
+      });
+    }
 
     const stockMap = new Map();
-    stockData.forEach(item => {
-      stockMap.set(item._id.toString(), {
-        totalPurchased: item.totalPurchased,
-        totalAvailable: item.totalAvailable,
-        purchaseCount: item.purchaseCount
-      });
+    stockData.forEach((item) => {
+      if (centerType === "Outlet") {
+        stockMap.set(item._id.toString(), {
+          totalPurchased: item.totalPurchased,
+          totalAvailable: item.totalAvailable || item.currentAvailableQuantity,
+          purchaseCount: item.purchaseCount,
+          currentTotalQuantity: item.currentTotalQuantity,
+          currentAvailableQuantity: item.currentAvailableQuantity
+        });
+      } else {
+        stockMap.set(item._id.toString(), {
+          totalQuantity: item.totalQuantity,
+          availableQuantity: item.availableQuantity,
+          stockEntries: item.stockEntries,
+        });
+      }
     });
 
-    const productsWithStock = products.map(product => {
+    const productsWithStock = products.map((product) => {
       const productId = product._id.toString();
-      const stockInfo = stockMap.get(productId) || {
-        totalPurchased: 0,
-        totalAvailable: 0,
-        purchaseCount: 0
-      };
+      let stockInfo;
+
+      if (centerType === "Outlet") {
+        const stockData = stockMap.get(productId) || {
+          totalPurchased: 0,
+          totalAvailable: 0,
+          purchaseCount: 0,
+          currentTotalQuantity: 0,
+          currentAvailableQuantity: 0
+        };
+        
+        stockInfo = {
+          totalPurchased: stockData.totalPurchased,
+          totalAvailable: stockData.currentAvailableQuantity || stockData.totalAvailable,
+          purchaseCount: stockData.purchaseCount,
+          currentStock: stockData.currentAvailableQuantity || stockData.totalAvailable
+        };
+      } else {
+        const stockData = stockMap.get(productId) || {
+          totalQuantity: 0,
+          availableQuantity: 0,
+          stockEntries: 0,
+        };
+        
+        stockInfo = {
+          totalQuantity: stockData.totalQuantity,
+          availableQuantity: stockData.availableQuantity,
+          stockEntries: stockData.stockEntries,
+          currentStock: stockData.availableQuantity
+        };
+      }
 
       return {
         ...product.toObject(),
         stock: stockInfo,
-        outlet: outlet
       };
     });
 
-    const categoryCounts = await Product.aggregate([
-      { $match: productFilter },
-      {
-        $group: {
-          _id: '$category',
-          count: { $sum: 1 }
-        }
-      }
-    ]);
+    // Calculate total stock summary
+    const totalStockSummary = {
+      totalProducts: productsWithStock.length,
+      totalItemsInStock: 0,
+      totalAvailableItems: 0
+    };
 
-    const categoryStats = {};
-    categoryCounts.forEach(cat => {
-      categoryStats[cat._id || 'Uncategorized'] = cat.count;
+    productsWithStock.forEach(product => {
+      totalStockSummary.totalItemsInStock += centerType === "Outlet" 
+        ? product.stock.totalPurchased 
+        : product.stock.totalQuantity;
+      totalStockSummary.totalAvailableItems += product.stock.currentStock;
     });
 
     res.status(200).json({
       success: true,
-      message: 'Products with stock information retrieved successfully',
+      message: `Products with stock information retrieved successfully for ${centerType.toLowerCase()}`,
       data: productsWithStock,
-      outlet: outlet,
+      center: centerDetails,
+      stockSummary: {
+        centerType,
+        ...totalStockSummary
+      },
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalProducts / limit),
         totalItems: totalProducts,
-        itemsPerPage: parseInt(limit)
-      }
+        itemsPerPage: parseInt(limit),
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving products with stock:", error);
+    handleControllerError(error, res);
+  }
+};
+
+export const getAvailableStock = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    
+    const outletId = await getUserOutletId(req.user._id);
+
+    const outletStock = await OutletStock.findOne({
+      outlet: outletId,
+      product: productId,
+    })
+      .populate("product", "productTitle productCode trackSerialNumber")
+      .populate("outlet", "centerName centerCode centerType address");
+
+    if (!outletStock) {
+      const product = await Product.findById(productId).select(
+        "productTitle productCode trackSerialNumber"
+      );
+      const outlet = await Center.findById(outletId).select(
+        "centerName centerCode centerType address"
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Available stock retrieved successfully",
+        data: {
+          product,
+          outlet,
+          totalAvailable: 0,
+          availableByPurchase: [],
+        },
+      });
+    }
+
+    const stockByPurchase = await StockPurchase.aggregate([
+      {
+        $match: {
+          outlet: new mongoose.Types.ObjectId(outletId),
+          "products.product": new mongoose.Types.ObjectId(productId),
+          "products.availableQuantity": { $gt: 0 },
+        },
+      },
+      { $unwind: "$products" },
+      {
+        $match: {
+          "products.product": new mongoose.Types.ObjectId(productId),
+          "products.availableQuantity": { $gt: 0 },
+        },
+      },
+      {
+        $project: {
+          purchaseId: "$_id",
+          date: 1,
+          invoiceNo: 1,
+          availableQuantity: "$products.availableQuantity",
+          serialNumbers: {
+            $filter: {
+              input: "$products.serialNumbers",
+              as: "serial",
+              cond: { $eq: ["$$serial.status", "available"] },
+            },
+          },
+        },
+      },
+      { $sort: { date: 1 } },
+    ]);
+
+    const availableByPurchase = stockByPurchase.map((purchase) => ({
+      purchaseId: purchase.purchaseId,
+      availableQuantity: purchase.availableQuantity,
+      serials: purchase.serialNumbers.map((sn) => sn.serialNumber),
+      purchaseDate: purchase.date,
+      invoiceNo: purchase.invoiceNo,
+    }));
+
+    res.status(200).json({
+      success: true,
+      message: "Available stock retrieved successfully",
+      data: {
+        product: outletStock.product,
+        outlet: outletStock.outlet,
+        totalAvailable: outletStock.availableQuantity,
+        availableByPurchase,
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving available stock:", error);
+    handleControllerError(error, res);
+  }
+};
+
+export const getOutletStockSummary = async (req, res) => {
+  try {
+    
+    const outletId = await getUserOutletId(req.user._id);
+
+    const outlet = await Center.findById(outletId).select(
+      "centerName centerCode centerType address phone email"
+    );
+
+    if (!outlet) {
+      return res.status(404).json({
+        success: false,
+        message: "Outlet not found",
+      });
+    }
+
+    const stockSummary = await OutletStock.find({ outlet: outletId })
+      .populate(
+        "product",
+        "productTitle productCode category trackSerialNumber productImage"
+      )
+      .populate("outlet", "centerName centerCode centerType")
+      .sort({ "product.productTitle": 1 });
+
+    const totalProducts = stockSummary.length;
+    const totalQuantity = stockSummary.reduce(
+      (sum, item) => sum + item.totalQuantity,
+      0
+    );
+    const availableQuantity = stockSummary.reduce(
+      (sum, item) => sum + item.availableQuantity,
+      0
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Outlet stock summary retrieved successfully",
+      data: {
+        outlet,
+        summary: {
+          totalProducts,
+          totalQuantity,
+          availableQuantity,
+          inTransitQuantity: totalQuantity - availableQuantity,
+        },
+        products: stockSummary,
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving outlet stock summary:", error);
+    handleControllerError(error, res);
+  }
+};
+
+export const getCenterStockSummary = async (req, res) => {
+  try {
+    const { centerId } = req.params;
+
+    const center = await Center.findById(centerId).select(
+      "centerName centerCode centerType address phone email"
+    );
+
+    if (!center) {
+      return res.status(404).json({
+        success: false,
+        message: "Center not found",
+      });
+    }
+
+    const stockSummary = await CenterStock.getCenterStockSummary(centerId);
+
+    const responseData = Array.isArray(stockSummary)
+      ? stockSummary.map((item) => ({
+          ...item,
+          center: center,
+        }))
+      : stockSummary;
+
+    res.status(200).json({
+      success: true,
+      message: "Center stock summary retrieved successfully",
+      data: {
+        center,
+        stockSummary: responseData,
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving center stock summary:", error);
+    handleControllerError(error, res);
+  }
+};
+
+export const getOutletSerialNumbers = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    
+    const outletId = await getUserOutletId(req.user._id);
+
+    const outletStock = await OutletStock.findOne({
+      outlet: outletId,
+      product: productId,
+    })
+      .populate("outlet", "centerName centerCode centerType")
+      .populate("product", "productTitle productCode trackSerialNumber");
+
+    if (!outletStock) {
+      return res.status(200).json({
+        success: true,
+        message: "No stock found for the specified product",
+        data: {
+          outlet: await Center.findById(outletId).select(
+            "centerName centerCode centerType"
+          ),
+          product: await Product.findById(productId).select(
+            "productTitle productCode trackSerialNumber"
+          ),
+          availableSerials: [],
+          totalAvailable: 0,
+        },
+      });
+    }
+
+    const availableSerials = outletStock.serialNumbers
+      .filter((sn) => sn.status === "available")
+      .map((sn) => ({
+        serialNumber: sn.serialNumber,
+        purchaseId: sn.purchaseId,
+        currentLocation: sn.currentLocation,
+        status: sn.status,
+      }));
+
+    res.status(200).json({
+      success: true,
+      message: "Available serial numbers retrieved successfully",
+      data: {
+        outletStock: {
+          _id: outletStock._id,
+          outlet: outletStock.outlet,
+          product: outletStock.product,
+          totalQuantity: outletStock.totalQuantity,
+          availableQuantity: outletStock.availableQuantity,
+        },
+        availableSerials,
+        totalAvailable: availableSerials.length,
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving outlet serial numbers:", error);
+    handleControllerError(error, res);
+  }
+};
+
+export const updateOutletSerialNumber = async (req, res) => {
+  try {
+    const { productId, serialNumber } = req.params;
+    const { newSerialNumber } = req.body;
+    
+    const outletId = await getUserOutletId(req.user._id);
+
+    const outletStock = await OutletStock.findOne({
+      outlet: outletId,
+      product: productId,
     });
 
+    if (!outletStock) {
+      return res.status(404).json({
+        success: false,
+        message: "Outlet stock not found for the specified product",
+      });
+    }
+
+    const serialIndex = outletStock.serialNumbers.findIndex(
+      (sn) => sn.serialNumber === serialNumber && sn.status === "available"
+    );
+
+    if (serialIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: "Serial number not found or not available",
+      });
+    }
+
+    const oldSerialNumber = outletStock.serialNumbers[serialIndex].serialNumber;
+    outletStock.serialNumbers[serialIndex].serialNumber = newSerialNumber;
+    outletStock.lastUpdated = new Date();
+
+    await outletStock.save();
+
+    await StockPurchase.updateOne(
+      {
+        outlet: outletId,
+        "products.product": productId,
+        "products.serialNumbers.serialNumber": oldSerialNumber,
+      },
+      {
+        $set: {
+          "products.$[product].serialNumbers.$[serial].serialNumber":
+            newSerialNumber,
+        },
+      },
+      {
+        arrayFilters: [
+          { "product.product": new mongoose.Types.ObjectId(productId) },
+          { "serial.serialNumber": oldSerialNumber },
+        ],
+      }
+    );
+
+    const updatedStock = await OutletStock.findById(outletStock._id)
+      .populate("outlet", "centerName centerCode centerType")
+      .populate("product", "productTitle productCode trackSerialNumber");
+
+    res.status(200).json({
+      success: true,
+      message: "Serial number updated successfully",
+      data: {
+        outletStock: updatedStock,
+        oldSerialNumber,
+        newSerialNumber,
+        updatedAt: outletStock.lastUpdated,
+      },
+    });
   } catch (error) {
-    console.error('Error retrieving products with stock:', error);
-    res.status(500).json({
+    console.error("Error updating outlet serial number:", error);
+    handleControllerError(error, res);
+  }
+};
+
+export const deleteOutletSerialNumber = async (req, res) => {
+  try {
+    const { productId, serialNumber } = req.params;
+    
+    const outletId = await getUserOutletId(req.user._id);
+
+    const outletStock = await OutletStock.findOne({
+      outlet: outletId,
+      product: productId,
+    });
+
+    if (!outletStock) {
+      return res.status(404).json({
+        success: false,
+        message: "Outlet stock not found for the specified product",
+      });
+    }
+
+    const serialIndex = outletStock.serialNumbers.findIndex(
+      (sn) => sn.serialNumber === serialNumber && sn.status === "available"
+    );
+
+    if (serialIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: "Serial number not found or not available",
+      });
+    }
+
+    outletStock.serialNumbers.splice(serialIndex, 1);
+    outletStock.totalQuantity -= 1;
+    outletStock.availableQuantity -= 1;
+    outletStock.lastUpdated = new Date();
+
+    await outletStock.save();
+
+    await StockPurchase.updateOne(
+      {
+        outlet: outletId,
+        "products.product": productId,
+        "products.serialNumbers.serialNumber": serialNumber,
+      },
+      {
+        $pull: {
+          "products.$[product].serialNumbers": { serialNumber: serialNumber },
+        },
+        $inc: {
+          "products.$[product].availableQuantity": -1,
+          "products.$[product].purchasedQuantity": -1,
+        },
+      },
+      {
+        arrayFilters: [
+          { "product.product": new mongoose.Types.ObjectId(productId) },
+        ],
+      }
+    );
+
+    const updatedStock = await OutletStock.findById(outletStock._id)
+      .populate("outlet", "centerName centerCode centerType")
+      .populate("product", "productTitle productCode trackSerialNumber");
+
+    res.status(200).json({
+      success: true,
+      message: "Serial number deleted and stock adjusted successfully",
+      data: {
+        outletStock: updatedStock,
+        deletedSerialNumber: serialNumber,
+        stockAdjustment: {
+          totalQuantity: -1,
+          availableQuantity: -1,
+        },
+        updatedAt: outletStock.lastUpdated,
+      },
+    });
+  } catch (error) {
+    console.error("Error deleting outlet serial number:", error);
+    handleControllerError(error, res);
+  }
+};
+
+const handleControllerError = (error, res) => {
+  console.error("Controller Error:", error);
+
+  if (
+    error.message.includes("User center information not found") ||
+    error.message.includes("User authentication required") ||
+    error.message.includes("User does not have outlet access") ||
+    error.message.includes("User not found") ||
+    error.message.includes("User ID is required")
+  ) {
+    return res.status(400).json({
       success: false,
-      message: 'Error retrieving products with stock information',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      message: error.message,
     });
   }
+
+  if (error.name === "ValidationError") {
+    const errors = Object.values(error.errors).map((err) => err.message);
+    return res.status(400).json({
+      success: false,
+      message: "Validation error",
+      errors,
+    });
+  }
+
+  if (error.code === 11000) {
+    return res.status(400).json({
+      success: false,
+      message: "Duplicate invoice number found",
+    });
+  }
+
+  if (error.name === "CastError") {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid ID format",
+    });
+  }
+
+  res.status(500).json({
+    success: false,
+    message: "Internal server error",
+    error:
+      process.env.NODE_ENV === "development"
+        ? error.message
+        : "Internal server error",
+  });
 };

@@ -48,6 +48,8 @@ export const login = async (req, res) => {
     }
 
     const user = await User.findByCredentials(identifier, password);
+
+     await user.populate('center', 'centerName centerCode centerType');
     createSendToken(user, 200, res);
   } catch (error) {
     console.error('Login error:', error);
@@ -130,7 +132,7 @@ export const register = async (req, res) => {
 
    
     await user.populate('role', 'roleTitle');
-    await user.populate('center', 'centerName centerCode');
+    await user.populate('center', 'centerName centerCode centerType');
 
    
     createSendToken(user, 201, res);

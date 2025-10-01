@@ -1,38 +1,103 @@
-import express from 'express';
+import express from "express";
 import {
   createStockRequest,
   getAllStockRequests,
   getStockRequestById,
   updateStockRequest,
   deleteStockRequest,
-  updateStockRequestStatus,
   approveStockRequest,
   shipStockRequest,
-  completeStockRequest,
-  markAsIncomplete,
-  updateApprovedQuantities,
   updateShippingInfo,
   rejectShipment,
+  markAsIncomplete,
+  completeStockRequest,
   completeIncompleteRequest,
-  getMostRecentOrderNumber
-} from '../controllers/stockRequestController.js';
-import { protect } from '../middlewares/authMiddleware.js';
+  updateStockRequestStatus,
+  updateApprovedQuantities,
+  getMostRecentOrderNumber,
+} from "../controllers/stockRequestController.js";
+import { protect } from "../middlewares/authMiddleware.js";
+
+import {
+  validateCreateStockRequest,
+  validateUpdateStockRequest,
+  validateIdParam,
+  validateStockRequestQuery,
+  validateApproveStockRequest,
+  validateShipStockRequest,
+  validateCompleteStockRequest,
+  validateCompleteIncompleteRequest,
+  validateUpdateApprovedQuantities,
+  validateRejectShipment,
+  validateMarkAsIncomplete,
+  validateUpdateShippingInfo,
+} from "../validations/stockRequestValidations.js";
 
 const router = express.Router();
-router.post('/', protect, createStockRequest);
-router.get('/', protect, getAllStockRequests);
-router.get('/recent-order-number', protect, getMostRecentOrderNumber)
-router.get('/:id', protect, getStockRequestById);
-router.put('/:id', protect, updateStockRequest);
-router.delete('/:id', protect, deleteStockRequest);
-router.patch('/:id/status', protect, updateStockRequestStatus);
-router.post('/:id/approve', protect, approveStockRequest);
-router.post('/:id/ship', protect, shipStockRequest);
-router.post('/:id/complete', protect, completeStockRequest);
-router.post('/:id/mark-incomplete', protect, markAsIncomplete);
-router.patch('/:id/approved-quantities', protect, updateApprovedQuantities);
-router.patch('/:id/shipping-info', protect, updateShippingInfo);
-router.patch('/:id/reject-shipment', protect, rejectShipment);
-router.patch('/:id/complete-incomplete', protect, completeIncompleteRequest);
+
+router.post("/", protect, validateCreateStockRequest, createStockRequest);
+
+router.get("/", protect, validateStockRequestQuery, getAllStockRequests);
+
+router.get("/recent-order-number", protect, getMostRecentOrderNumber);
+
+router.get("/:id", protect, validateIdParam, getStockRequestById);
+
+router.put("/:id", protect, validateUpdateStockRequest, updateStockRequest);
+
+router.delete("/:id", protect, validateIdParam, deleteStockRequest);
+
+router.post(
+  "/:id/approve",
+  protect,
+  validateApproveStockRequest,
+  approveStockRequest
+);
+
+router.post("/:id/ship", protect, validateShipStockRequest, shipStockRequest);
+
+router.post(
+  "/:id/complete",
+  protect,
+  validateCompleteStockRequest,
+  completeStockRequest
+);
+
+router.patch(
+  "/:id/complete-incomplete",
+  protect,
+  validateCompleteIncompleteRequest,
+  completeIncompleteRequest
+);
+
+router.patch(
+  "/:id/shipping-info",
+  protect,
+  validateUpdateShippingInfo,
+  updateShippingInfo
+);
+
+router.post(
+  "/:id/reject-shipment",
+  protect,
+  validateRejectShipment,
+  rejectShipment
+);
+
+router.post(
+  "/:id/mark-incomplete",
+  protect,
+  validateMarkAsIncomplete,
+  markAsIncomplete
+);
+
+router.patch(
+  "/:id/approved-quantities",
+  protect,
+  validateUpdateApprovedQuantities,
+  updateApprovedQuantities
+);
+
+router.patch("/:id/status", protect, validateIdParam, updateStockRequestStatus);
 
 export default router;

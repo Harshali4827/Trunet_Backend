@@ -1,10 +1,10 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const stockPurchaseSchema = new mongoose.Schema(
   {
     type: {
       type: String,
-      enum: ["new", "Furnished"],
+      enum: ["new", "refurbish"],
       required: true,
     },
     date: {
@@ -24,9 +24,18 @@ const stockPurchaseSchema = new mongoose.Schema(
       required: true,
     },
     outlet: {
-      type: String,
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Center",
       required: true,
-      trim: true,
+      validate: {
+        validator: async function (outletId) {
+          if (!outletId) return false;
+          const Center = mongoose.model("Center");
+          const outlet = await Center.findById(outletId);
+          return outlet && outlet.centerType === "Outlet";
+        },
+        message: 'Outlet must be a valid center with centerType "Outlet"',
+      },
     },
     transportAmount: {
       type: Number,
@@ -78,13 +87,44 @@ const stockPurchaseSchema = new mongoose.Schema(
         },
         serialNumbers: [
           {
-            type: String,
-            trim: true,
+            serialNumber: {
+              type: String,
+              trim: true,
+              required: true,
+            },
+            status: {
+              type: String,
+              enum: [
+                "available",
+                "transferred",
+                "sold",
+                "returned",
+                "consumed",
+              ],
+              default: "available",
+            },
+            currentLocation: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: "Center",
+              default: null,
+            },
+            transferredTo: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: "Center",
+              default: null,
+            },
+            transferDate: {
+              type: Date,
+              default: null,
+            },
+            consumedDate: {
+              type: Date,
+              default: null,
+            },
           },
         ],
       },
     ],
-    
     productAmount: {
       type: Number,
       default: 0,
@@ -93,106 +133,75 @@ const stockPurchaseSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    status: {
+      type: String,
+      enum: [
+        "active",
+        "cancelled",
+        "fully_transferred",
+        "partially_transferred",
+      ],
+      default: "active",
+    },
   },
   { timestamps: true }
 );
 
-
-stockPurchaseSchema.pre('save', function(next) {
-  
+stockPurchaseSchema.pre("save", function (next) {
   this.productAmount = this.products.reduce((total, product) => {
-    return total + (product.price * product.purchasedQuantity);
+    return total + product.price * product.purchasedQuantity;
   }, 0);
 
-  
   const totalTax = this.cgst + this.sgst + this.igst;
-
-  
   this.totalAmount = this.productAmount + totalTax;
 
-  
-  for (const productItem of this.products) {
-    productItem.availableQuantity = productItem.purchasedQuantity;
-    
-    if (productItem.serialNumbers && productItem.serialNumbers.length > 0) {
-      if (productItem.serialNumbers.length !== productItem.purchasedQuantity) {
-        return next(new Error(`Serial numbers count must match purchased quantity for product ${productItem.product}`));
+  if (this.isNew) {
+    for (const productItem of this.products) {
+      productItem.availableQuantity = productItem.purchasedQuantity;
+
+      if (productItem.serialNumbers && productItem.serialNumbers.length > 0) {
+        if (
+          productItem.serialNumbers.length !== productItem.purchasedQuantity
+        ) {
+          return next(
+            new Error(
+              `Serial numbers count must match purchased quantity for product ${productItem.product}`
+            )
+          );
+        }
+
+        productItem.serialNumbers = productItem.serialNumbers.map((serial) => ({
+          serialNumber:
+            typeof serial === "object" ? serial.serialNumber : serial,
+          status: "available",
+          currentLocation: this.outlet,
+          transferredTo: null,
+          transferDate: null,
+          consumedDate: null,
+        }));
       }
     }
   }
-  
+
+  const allProductsTransferred = this.products.every(
+    (product) => product.availableQuantity === 0
+  );
+
+  const someProductsTransferred = this.products.some(
+    (product) =>
+      product.availableQuantity < product.purchasedQuantity &&
+      product.availableQuantity > 0
+  );
+
+  if (allProductsTransferred) {
+    this.status = "fully_transferred";
+  } else if (someProductsTransferred) {
+    this.status = "partially_transferred";
+  } else {
+    this.status = "active";
+  }
+
   next();
 });
 
-stockPurchaseSchema.pre('validate', async function(next) {
-  try {
-    for (const productItem of this.products) {
-      const product = await mongoose.model('Product').findById(productItem.product);
-      
-      if (product && product.trackSerialNumber === 'Yes') {
-        if (!productItem.serialNumbers || productItem.serialNumbers.length === 0) {
-          return next(new Error(`Serial numbers are required for product: ${product.productTitle}`));
-        }
-        
-        if (productItem.serialNumbers.length !== productItem.purchasedQuantity) {
-          return next(new Error(`Number of serial numbers (${productItem.serialNumbers.length}) must match purchased quantity (${productItem.purchasedQuantity}) for product: ${product.productTitle}`));
-        }
-
-        const serialSet = new Set(productItem.serialNumbers);
-        if (serialSet.size !== productItem.serialNumbers.length) {
-          return next(new Error(`Duplicate serial numbers found for product: ${product.productTitle}`));
-        }
-      } else if (productItem.serialNumbers && productItem.serialNumbers.length > 0) {
-        if (productItem.serialNumbers.length !== productItem.purchasedQuantity) {
-          return next(new Error(`Serial numbers count must match purchased quantity for product ${product.productTitle}`));
-        }
-      }
-    }
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
-
-stockPurchaseSchema.index({ date: -1 });
-stockPurchaseSchema.index({ vendor: 1 });
-stockPurchaseSchema.index({ outlet: 1 });
-stockPurchaseSchema.index({ invoiceNo: 1 }, { unique: true });
-
-stockPurchaseSchema.virtual('totalTax').get(function() {
-  return this.cgst + this.sgst + this.igst;
-});
-
-stockPurchaseSchema.virtual('grandTotal').get(function() {
-  return this.totalAmount;
-});
-
-stockPurchaseSchema.methods.addProduct = function(productData) {
-  productData.availableQuantity = productData.purchasedQuantity;
-  this.products.push(productData);
-  return this.save();
-};
-
-stockPurchaseSchema.methods.removeProduct = function(productId) {
-  this.products = this.products.filter(item => item.product.toString() !== productId.toString());
-  return this.save();
-};
-
-stockPurchaseSchema.statics.findByVendor = function(vendorId) {
-  return this.find({ vendor: vendorId }).populate('vendor products.product');
-};
-
-stockPurchaseSchema.statics.findByDateRange = function(startDate, endDate) {
-  return this.find({
-    date: {
-      $gte: startDate,
-      $lte: endDate
-    }
-  }).populate('vendor products.product');
-};
-
-stockPurchaseSchema.statics.findByOutlet = function(outlet) {
-  return this.find({ outlet: outlet }).populate('vendor products.product');
-};
-
-export default mongoose.model('StockPurchase', stockPurchaseSchema);
+export default mongoose.model("StockPurchase", stockPurchaseSchema);

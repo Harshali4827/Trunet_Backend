@@ -15,7 +15,9 @@ import {
   markAsIncomplete,
   completeStockTransfer,
   completeIncompleteTransfer,
-  updateApprovedQuantities
+  updateApprovedQuantities,
+  approveStockTransferByAdmin,
+  rejectStockTransferByAdmin
 } from '../controllers/stockTransferController.js';
 import upload from '../config/multer.js';
 import { protect } from '../middlewares/authMiddleware.js';
@@ -36,6 +38,8 @@ router.post('/:id/approve', protect, approveStockTransfer);
 router.post('/:id/ship', protect, shipStockTransfer);
 router.post('/:id/complete', protect, completeStockTransfer);
 router.post('/:id/mark-incomplete', protect, markAsIncomplete);
+router.patch('/:id/admin/approve', protect, approveStockTransferByAdmin);
+router.patch('/:id/admin/reject', protect, rejectStockTransferByAdmin);
 router.patch('/:id/complete-incomplete', protect, completeIncompleteTransfer);
 router.patch('/:id/shipping-info', protect, updateShippingInfo);
 router.patch('/:id/reject-shipment', protect, rejectShipment);

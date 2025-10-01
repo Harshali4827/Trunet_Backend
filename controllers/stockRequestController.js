@@ -4,29 +4,6 @@ import User from '../models/User.js';
 import StockPurchase from '../models/StockPurchase.js'; 
 import mongoose from 'mongoose';
 
-const validateUserCenter = async (userId) => {
-  if (!userId) {
-    throw new Error('User authentication required');
-  }
-
-  const user = await User.findById(userId).populate('center', 'centerName centerCode centerType');
-  
-  if (!user) {
-    throw new Error('User not found');
-  }
-
-  if (!user.center) {
-    throw new Error('User center information not found');
-  }
-
-  const allowedCenterTypes = ['Center', 'Outlet'];
-  if (!allowedCenterTypes.includes(user.center.centerType)) {
-    throw new Error(`Stock requests can only be created for center or outlet types. Your center type is: ${user.center.centerType}`);
-  }
-
-  return user.center._id;
-};
-
 export const createStockRequest = async (req, res) => {
   try {
     const {
@@ -34,44 +11,63 @@ export const createStockRequest = async (req, res) => {
       remark,
       products,
       status = 'Draft',
-      orderNumber 
+      orderNumber,
+      date
     } = req.body;
 
-    const centerId = await validateUserCenter(req.user?.id);
-
     
-    if (!warehouse || !products || !Array.isArray(products) || products.length === 0 || !orderNumber) {
+    if (!orderNumber || orderNumber.trim() === '') {
       return res.status(400).json({
         success: false,
-        message: 'Warehouse, order number and at least one product are required'
+        message: 'Order number is required'
+      });
+    }
+
+    const trimmedOrderNumber = orderNumber.trim();
+
+    
+    const existingRequest = await StockRequest.findOne({ 
+      orderNumber: trimmedOrderNumber 
+    });
+    
+    if (existingRequest) {
+      return res.status(409).json({
+        success: false,
+        message: 'Order number already exists. Please use a unique order number.',
+        duplicateOrderNumber: trimmedOrderNumber,
+        existingRequestId: existingRequest._id
       });
     }
 
     
-    if (typeof orderNumber !== 'string' || orderNumber.trim().length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Order number must be a non-empty string'
-      });
-    }
-
-    
-    const existingOrder = await StockRequest.findOne({ orderNumber: orderNumber.trim() });
-    if (existingOrder) {
-      return res.status(400).json({
-        success: false,
-        message: 'Order number already exists. Please use a different order number.'
-      });
-    }
-
-    for (let product of products) {
-      if (!product.product || !product.quantity || product.quantity < 1) {
+    let requestDate = new Date();
+    if (date) {
+      requestDate = new Date(date);
+      if (isNaN(requestDate.getTime())) {
         return res.status(400).json({
           success: false,
-          message: 'Each product must have a valid product ID and quantity (min 1)'
+          message: 'Invalid date format. Please provide a valid date.'
         });
       }
+      
+      
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const providedDate = new Date(requestDate);
+      providedDate.setHours(0, 0, 0, 0);
+      
+     
     }
+
+    const user = await User.findById(req.user.id).populate('center');
+    if (!user || !user.center) {
+      return res.status(400).json({
+        success: false,
+        message: 'User center information not found'
+      });
+    }
+
+    const centerId = user.center._id;
 
     const centerExists = await Center.findById(centerId);
     if (!centerExists) {
@@ -81,45 +77,47 @@ export const createStockRequest = async (req, res) => {
       });
     }
 
-    let userId = req.user?.id;
     
-    if (!userId) {
-      const defaultUser = await User.findOne().sort({ createdAt: 1 });
-      if (defaultUser) {
-        userId = defaultUser._id;
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: 'No user found to assign as creator'
-        });
-      }
-    }
-
-    const userExists = await User.findById(userId);
-    if (!userExists) {
-      return res.status(404).json({
+    if (!products || !Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({
         success: false,
-        message: 'User not found'
+        message: 'Products array is required and cannot be empty'
       });
     }
 
     
-    
+    for (const product of products) {
+      if (!product.product || !product.quantity) {
+        return res.status(400).json({
+          success: false,
+          message: 'Each product must have product ID and quantity'
+        });
+      }
+      
+      if (product.quantity <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Product quantity must be greater than 0'
+        });
+      }
+    }
 
+    
     const stockRequest = new StockRequest({
-      orderNumber: orderNumber.trim(), 
+      orderNumber: trimmedOrderNumber,
       warehouse,
-      center: centerId, 
-      remark,
+      center: centerId,
+      remark: remark || '',
       products,
+      date: requestDate,
       status,
-      createdBy: userId
+      createdBy: req.user.id
     });
 
     const savedStockRequest = await stockRequest.save();
 
     const populatedRequest = await StockRequest.findById(savedStockRequest._id)
-      .populate('warehouse', '_id warehouseName')
+      .populate('warehouse', '_id centerName centerCode centerType')
       .populate('center', '_id centerName centerCode centerType')
       .populate('products.product', '_id productTitle productCode productImage')
       .populate('createdBy', '_id fullName email')
@@ -132,13 +130,22 @@ export const createStockRequest = async (req, res) => {
       message: 'Stock request created successfully',
       data: populatedRequest
     });
+
   } catch (error) {
-    if (error.message.includes('center or outlet types') || error.message.includes('User authentication')) {
-      return res.status(400).json({
-        success: false,
-        message: error.message
-      });
+    console.error('Error creating stock request:', error);
+    
+    
+    if (error.code === 11000) {
+      const duplicateField = Object.keys(error.keyPattern)[0];
+      if (duplicateField === 'orderNumber') {
+        return res.status(409).json({
+          success: false,
+          message: 'Order number already exists. Please use a unique order number.',
+          duplicateOrderNumber: req.body.orderNumber
+        });
+      }
     }
+    
     
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
@@ -148,15 +155,15 @@ export const createStockRequest = async (req, res) => {
         errors
       });
     }
+
     
-    if (error.code === 11000) {
+    if (error.name === 'CastError') {
       return res.status(400).json({
         success: false,
-        message: 'Order number already exists. Please use a different order number.'
+        message: `Invalid ${error.path}: ${error.value}`
       });
     }
 
-    console.error('Error creating stock request:', error);
     res.status(500).json({
       success: false,
       message: 'Error creating stock request',
@@ -245,8 +252,8 @@ export const getAllStockRequests = async (req, res) => {
     sortOptions[actualSortBy] = sortOrder === 'desc' ? -1 : 1;
 
     const stockRequests = await StockRequest.find(filter)
-      .populate('warehouse', '_id warehouseName')
-      .populate('center', '_id centerName centerCode')
+      .populate('warehouse', '_id centerName centerCode centerType') 
+      .populate('center', '_id centerName centerCode centerType')
       .populate('products.product', '_id productTitle productCode productImage')
       .populate('createdBy', '_id fullName email')
       .populate('updatedBy', '_id fullName email')
@@ -260,13 +267,10 @@ export const getAllStockRequests = async (req, res) => {
       .skip((page - 1) * limit)
       .lean();
 
-
     const stockRequestsWithCenterStock = await Promise.all(
       stockRequests.map(async (request) => {
-      
         const productIds = request.products.map(p => p.product._id);
         
-
         const centerStock = await StockPurchase.aggregate([
           {
             $match: {
@@ -282,12 +286,10 @@ export const getAllStockRequests = async (req, res) => {
           }
         ]);
         
-
         const centerStockMap = {};
         centerStock.forEach(stock => {
           centerStockMap[stock._id.toString()] = stock.totalQuantity;
         });
-        
         
         const productsWithStock = request.products.map(product => ({
           ...product,
@@ -348,8 +350,8 @@ export const getStockRequestById = async (req, res) => {
     const { id } = req.params;
 
     const stockRequest = await StockRequest.findById(id)
-      .populate('warehouse', '_id warehouseName')
-      .populate('center', '_id centerName centerCode')
+      .populate('warehouse', '_id centerName centerCode centerType') 
+      .populate('center', '_id centerName centerCode centerType')
       .populate('products.product', '_id productTitle productCode productImage')
       .populate('createdBy', '_id fullName email')
       .populate('updatedBy', '_id fullName email')
@@ -445,72 +447,6 @@ export const updateStockRequest = async (req, res) => {
       });
     }
 
-    if (['Completed', 'Rejected', 'Incompleted'].includes(existingRequest.status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot update completed, rejected, or incompleted stock requests'
-      });
-    }
-
-    
-    if (orderNumber && orderNumber !== existingRequest.orderNumber) {
-      if (typeof orderNumber !== 'string' || orderNumber.trim().length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Order number must be a non-empty string'
-        });
-      }
-
-      
-      const existingOrder = await StockRequest.findOne({ 
-        orderNumber: orderNumber.trim(),
-        _id: { $ne: id } 
-      });
-      if (existingOrder) {
-        return res.status(400).json({
-          success: false,
-          message: 'Order number already exists. Please use a different order number.'
-        });
-      }
-    }
-
-    if (products && Array.isArray(products) && !['Draft', 'Submitted'].includes(existingRequest.status)) {
-      const hasApprovedQuantityUpdates = products.some(newProduct => {
-        const existingProduct = existingRequest.products.find(
-          p => p.product.toString() === newProduct.product
-        );
-        return existingProduct && (
-          newProduct.approvedQuantity !== undefined ||
-          newProduct.approvedRemark !== undefined
-        );
-      });
-
-      if (hasApprovedQuantityUpdates) {
-        return res.status(400).json({
-          success: false,
-          message: 'Cannot update approvedQuantity or approvedRemark for requests beyond Submitted status'
-        });
-      }
-    }
-
-    if (products && Array.isArray(products)) {
-      if (products.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'At least one product is required'
-        });
-      }
-
-      for (let product of products) {
-        if (!product.product || !product.quantity || product.quantity < 1) {
-          return res.status(400).json({
-            success: false,
-            message: 'Each product must have a valid product ID and quantity (min 1)'
-          });
-        }
-      }
-    }
-
     const userId = req.user?.id;
     if (!userId) {
       return res.status(400).json({
@@ -545,7 +481,6 @@ export const updateStockRequest = async (req, res) => {
               productRemark: newProduct.productRemark !== undefined ? newProduct.productRemark : existingProduct.productRemark,
               receivedQuantity: newProduct.receivedQuantity !== undefined ? newProduct.receivedQuantity : existingProduct.receivedQuantity,
               receivedRemark: newProduct.receivedRemark !== undefined ? newProduct.receivedRemark : existingProduct.receivedRemark
-  
             };
           }
           return existingProduct;
@@ -612,8 +547,8 @@ export const updateStockRequest = async (req, res) => {
       updateData,
       { new: true, runValidators: true }
     )
-    .populate('warehouse', '_id warehouseName')
-    .populate('center', '_id centerName centerCode')
+    .populate('warehouse', '_id centerName centerCode centerType') 
+    .populate('center', '_id centerName centerCode centerType')
     .populate('products.product', '_id productTitle productCode productImage')
     .populate('createdBy', '_id fullName email')
     .populate('updatedBy', '_id fullName email')
@@ -673,10 +608,10 @@ export const deleteStockRequest = async (req, res) => {
       });
     }
 
-     if (!['Submitted', 'Incompleted', 'Draft', 'Completed', 'Confirmed'].includes(stockTransfer.status)) {
+    if (!['Submitted', 'Incompleted', 'Draft', 'Completed', 'Confirmed'].includes(stockRequest.status)) {
       return res.status(400).json({
         success: false,
-        message: 'Only Submitted, Incompleted, Draft, Confirmed and Completed stock transfers can be deleted'
+        message: 'Only Submitted, Incompleted, Draft, Confirmed and Completed stock requests can be deleted'
       });
     }
 
@@ -706,27 +641,13 @@ export const deleteStockRequest = async (req, res) => {
 export const approveStockRequest = async (req, res) => {
   try {
     const { id } = req.params;
-    const { productApprovals } = req.body;
-
-    if (!productApprovals || !Array.isArray(productApprovals) || productApprovals.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Product approvals are required with approved quantities'
-      });
-    }
+    const { productApprovals, approvedRemark } = req.body;
 
     const stockRequest = await StockRequest.findById(id);
     if (!stockRequest) {
       return res.status(404).json({
         success: false,
         message: 'Stock request not found'
-      });
-    }
-
-    if (stockRequest.status !== 'Submitted') {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot approve a stock request with status: ${stockRequest.status}. Status must be 'Submitted'`
       });
     }
 
@@ -738,34 +659,16 @@ export const approveStockRequest = async (req, res) => {
       });
     }
 
-    for (const approval of productApprovals) {
-      if (!approval.productId || approval.approvedQuantity === undefined) {
-        return res.status(400).json({
-          success: false,
-          message: 'Each product approval must have productId and approvedQuantity'
-        });
-      }
-      
-      const productExists = stockRequest.products.some(
-        p => p.product.toString() === approval.productId.toString()
-      );
-      
-      if (!productExists) {
-        return res.status(400).json({
-          success: false,
-          message: `Product with ID ${approval.productId} not found in this stock request`
-        });
-      }
-    }
-
+    
     const updatedRequest = await stockRequest.approveRequest(
       userId,  
+      approvedRemark || '',
       productApprovals
     );
 
     const populatedRequest = await StockRequest.findById(updatedRequest._id)
-      .populate('warehouse')
-      .populate('center', '_id centerName centerCode')
+      .populate('warehouse', '_id centerName centerCode centerType')
+      .populate('center', '_id centerName centerCode centerType')
       .populate('products.product', '_id productTitle productCode productImage')
       .populate('approvalInfo.approvedBy', '_id fullName email')
       .populate('createdBy', '_id fullName email')
@@ -776,6 +679,7 @@ export const approveStockRequest = async (req, res) => {
       message: 'Stock request approved successfully',
       data: populatedRequest
     });
+
   } catch (error) {
     console.error('Error approving stock request:', error);
     res.status(500).json({
@@ -785,7 +689,6 @@ export const approveStockRequest = async (req, res) => {
     });
   }
 };
-
 
 export const shipStockRequest = async (req, res) => {
   try {
@@ -798,25 +701,11 @@ export const shipStockRequest = async (req, res) => {
       documents 
     } = req.body;
 
-    if (!shippedDate) {
-      return res.status(400).json({
-        success: false,
-        message: 'Shipped date is required'
-      });
-    }
-
     const stockRequest = await StockRequest.findById(id);
     if (!stockRequest) {
       return res.status(404).json({
         success: false,
         message: 'Stock request not found'
-      });
-    }
-
-    if (stockRequest.status !== 'Confirmed') {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot ship a stock request with status: ${stockRequest.status}. Status must be 'Confirmed'`
       });
     }
 
@@ -839,7 +728,7 @@ export const shipStockRequest = async (req, res) => {
     const updatedRequest = await stockRequest.shipRequest(userId, shippingDetails);
 
     const populatedRequest = await StockRequest.findById(updatedRequest._id)
-      .populate('warehouse')
+      .populate('warehouse', '_id centerName centerCode centerType')
       .populate('center', '_id centerName centerCode')
       .populate('products.product', '_id productTitle productCode productImage')
       .populate('shippingInfo.shippedBy', '_id fullName email')
@@ -861,7 +750,6 @@ export const shipStockRequest = async (req, res) => {
   }
 };
 
-
 export const updateShippingInfo = async (req, res) => {
   try {
     const { id } = req.params;
@@ -881,14 +769,6 @@ export const updateShippingInfo = async (req, res) => {
       });
     }
 
-    
-    if (stockRequest.status !== 'Shipped') {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot update shipping information for stock request with status: ${stockRequest.status}. Status must be 'Shipped'`
-      });
-    }
-
     const userId = req.user?.id;
     if (!userId) {
       return res.status(400).json({
@@ -905,15 +785,13 @@ export const updateShippingInfo = async (req, res) => {
       ...(documents && { documents: Array.isArray(documents) ? documents : [documents] })
     };
 
-    
     const updatedRequest = await stockRequest.updateShippingInfo(shippingDetails);
-    
     
     updatedRequest.updatedBy = userId;
     await updatedRequest.save();
 
     const populatedRequest = await StockRequest.findById(updatedRequest._id)
-      .populate('warehouse')
+      .populate('warehouse', '_id centerName centerCode centerType')
       .populate('center', '_id centerName centerCode')
       .populate('products.product', '_id productTitle productCode productImage')
       .populate('shippingInfo.shippedBy', '_id fullName email')
@@ -947,14 +825,6 @@ export const rejectShipment = async (req, res) => {
       });
     }
 
-    
-    if (stockRequest.status !== 'Shipped') {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot reject shipment for stock request with status: ${stockRequest.status}. Status must be 'Shipped'`
-      });
-    }
-
     const userId = req.user?.id;
     if (!userId) {
       return res.status(400).json({
@@ -963,15 +833,13 @@ export const rejectShipment = async (req, res) => {
       });
     }
 
-    
     const updatedRequest = await stockRequest.rejectShipment(userId);
-    
     
     updatedRequest.updatedBy = userId;
     await updatedRequest.save();
 
     const populatedRequest = await StockRequest.findById(updatedRequest._id)
-      .populate('warehouse')
+      .populate('warehouse', '_id centerName centerCode centerType')
       .populate('center', '_id centerName centerCode')
       .populate('products.product', '_id productTitle productCode productImage')
       .populate('shippingInfo.shipmentRejected.rejectedBy', '_id fullName email')
@@ -1006,13 +874,6 @@ export const markAsIncomplete = async (req, res) => {
       });
     }
 
-    if (stockRequest.status !== 'Shipped') {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot mark as incomplete a stock request with status: ${stockRequest.status}. Status must be 'Shipped'`
-      });
-    }
-
     const userId = req.user?.id;
     if (!userId) {
       return res.status(400).json({
@@ -1037,7 +898,7 @@ export const markAsIncomplete = async (req, res) => {
       },
       { new: true, runValidators: true }
     )
-    .populate('warehouse')
+    .populate('warehouse', '_id centerName centerCode centerType')
     .populate('center', '_id centerName centerCode')
     .populate('products.product', '_id productTitle productCode productImage')
     .populate('completionInfo.incompleteBy', '_id fullName email')
@@ -1062,31 +923,13 @@ export const markAsIncomplete = async (req, res) => {
 export const completeStockRequest = async (req, res) => {
   try {
     const { id } = req.params;
-    const { productReceipts, markAsIncomplete = false } = req.body;
-
-    if (markAsIncomplete) {
-      return markAsIncomplete(req, res);
-    }
-
-    if (!productReceipts || !Array.isArray(productReceipts) || productReceipts.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Product receipts are required with received quantities'
-      });
-    }
+    const { productReceipts, receivedRemark } = req.body;
 
     const stockRequest = await StockRequest.findById(id);
     if (!stockRequest) {
       return res.status(404).json({
         success: false,
         message: 'Stock request not found'
-      });
-    }
-
-    if (stockRequest.status !== 'Shipped') {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot complete a stock request with status: ${stockRequest.status}. Status must be 'Shipped'`
       });
     }
 
@@ -1098,34 +941,16 @@ export const completeStockRequest = async (req, res) => {
       });
     }
 
-    for (const receipt of productReceipts) {
-      if (!receipt.productId || receipt.receivedQuantity === undefined) {
-        return res.status(400).json({
-          success: false,
-          message: 'Each product receipt must have productId and receivedQuantity'
-        });
-      }
-      
-      const productExists = stockRequest.products.some(
-        p => p.product.toString() === receipt.productId.toString()
-      );
-      
-      if (!productExists) {
-        return res.status(400).json({
-          success: false,
-          message: `Product with ID ${receipt.productId} not found in this stock request`
-        });
-      }
-    }
-
-    const updatedRequest = await stockRequest.completeRequest(
-      userId, 
-      productReceipts
+    
+    const updatedRequest = await stockRequest.completeWithStockTransfer(
+      userId,
+      productReceipts,
+      receivedRemark
     );
 
     const populatedRequest = await StockRequest.findById(updatedRequest._id)
-      .populate('warehouse')
-      .populate('center', '_id centerName centerCode')
+      .populate('warehouse', '_id centerName centerCode centerType')
+      .populate('center', '_id centerName centerCode centerType')
       .populate('products.product', '_id productTitle productCode productImage')
       .populate('receivingInfo.receivedBy', '_id fullName email')
       .populate('completionInfo.completedBy', '_id fullName email')
@@ -1134,9 +959,11 @@ export const completeStockRequest = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Stock request completed successfully',
-      data: populatedRequest
+      message: 'Stock request completed successfully and stock transferred to center',
+      data: populatedRequest,
+      transferSummary: stockRequest.stockTransferInfo
     });
+
   } catch (error) {
     console.error('Error completing stock request:', error);
     res.status(500).json({
@@ -1152,7 +979,9 @@ export const completeIncompleteRequest = async (req, res) => {
     const { id } = req.params;
     const { 
       productApprovals, 
-      productReceipts 
+      productReceipts,
+      approvedRemark,
+      receivedRemark
     } = req.body;
 
     const stockRequest = await StockRequest.findById(id);
@@ -1160,14 +989,6 @@ export const completeIncompleteRequest = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Stock request not found'
-      });
-    }
-
-    
-    if (stockRequest.status !== 'Incompleted') {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot complete a stock request with status: ${stockRequest.status}. Status must be 'Incompleted'`
       });
     }
 
@@ -1180,155 +1001,77 @@ export const completeIncompleteRequest = async (req, res) => {
     }
 
     
-    if (productApprovals && Array.isArray(productApprovals)) {
-      for (const approval of productApprovals) {
-        if (!approval.productId || approval.approvedQuantity === undefined) {
-          return res.status(400).json({
-            success: false,
-            message: 'Each product approval must have productId and approvedQuantity'
-          });
-        }
+    const productsToComplete = productReceipts && productReceipts.length > 0 
+      ? productReceipts 
+      : productApprovals;
 
-        const productExists = stockRequest.products.some(
-          p => p.product.toString() === approval.productId.toString()
-        );
-        
-        if (!productExists) {
-          const productDoc = await mongoose.model('Product').findById(approval.productId);
-          const productName = productDoc ? productDoc.productTitle : approval.productId;
-          return res.status(400).json({
-            success: false,
-            message: `Product "${productName}" not found in this stock request`
-          });
-        }
-
-        const existingProduct = stockRequest.products.find(
-          p => p.product.toString() === approval.productId.toString()
-        );
-        
-        
-        if (approval.approvedQuantity > existingProduct.quantity) {
-          const productDoc = await mongoose.model('Product').findById(approval.productId);
-          const productName = productDoc ? productDoc.productTitle : approval.productId;
-          return res.status(400).json({
-            success: false,
-            message: `Approved quantity (${approval.approvedQuantity}) cannot be greater than requested quantity (${existingProduct.quantity}) for product "${productName}"`
-          });
-        }
-
-        if (approval.approvedQuantity < 0) {
-          return res.status(400).json({
-            success: false,
-            message: `Approved quantity cannot be negative for product ${approval.productId}`
-          });
-        }
-      }
+    if (!productsToComplete || !Array.isArray(productsToComplete) || productsToComplete.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Product approvals or receipts are required'
+      });
     }
 
     
-    if (productReceipts && Array.isArray(productReceipts)) {
-      for (const receipt of productReceipts) {
-        if (!receipt.productId || receipt.receivedQuantity === undefined) {
-          return res.status(400).json({
-            success: false,
-            message: 'Each product receipt must have productId and receivedQuantity'
-          });
-        }
-
-        const productExists = stockRequest.products.some(
-          p => p.product.toString() === receipt.productId.toString()
-        );
-        
-        if (!productExists) {
-          return res.status(400).json({
-            success: false,
-            message: `Product with ID ${receipt.productId} not found in this stock request`
-          });
-        }
-
-        if (receipt.receivedQuantity < 0) {
-          return res.status(400).json({
-            success: false,
-            message: `Received quantity cannot be negative for product ${receipt.productId}`
-          });
-        }
-      }
-    }
-
-    const currentDate = new Date();
-    const updateData = {
-      status: 'Completed',
-      updatedBy: userId,
-      receivingInfo: {
-        ...stockRequest.receivingInfo,
-        receivedAt: currentDate,
-        receivedBy: userId,
-      },
-      completionInfo: {
-        ...stockRequest.completionInfo,
-        completedOn: currentDate,
-        completedBy: userId
-      }
-    };
+    const finalProductReceipts = productReceipts && productReceipts.length > 0 
+      ? productReceipts 
+      : productApprovals.map(approval => ({
+          productId: approval.productId,
+          receivedQuantity: approval.approvedQuantity,
+          receivedRemark: approval.approvedRemark || ''
+        }));
 
     
- 
-      updateData.approvalInfo = {
-        ...stockRequest.approvalInfo,
-        approvedBy: stockRequest.approvalInfo.approvedBy || userId,
-        approvedAt: stockRequest.approvalInfo.approvedAt || currentDate
-      };
-
-
-    
-    updateData.products = stockRequest.products.map(productItem => {
-      const productUpdate = { ...productItem.toObject() };
-
-      
-      if (productApprovals) {
+    if (productApprovals && productApprovals.length > 0) {
+      stockRequest.products = stockRequest.products.map(productItem => {
         const approval = productApprovals.find(
           pa => pa.productId.toString() === productItem.product.toString()
         );
         
         if (approval) {
-          productUpdate.approvedQuantity = approval.approvedQuantity;
-          productUpdate.approvedRemark = approval.approvedRemark || productUpdate.approvedRemark || '';
+          return {
+            ...productItem.toObject(),
+            approvedQuantity: approval.approvedQuantity,
+            approvedRemark: approval.approvedRemark || ''
+          };
         }
-      }
+        return productItem;
+      });
+    }
 
-      
-      if (productReceipts) {
-        const receipt = productReceipts.find(
-          pr => pr.productId.toString() === productItem.product.toString()
-        );
-        
-        if (receipt) {
-          productUpdate.receivedQuantity = receipt.receivedQuantity;
-          productUpdate.receivedRemark = receipt.receivedRemark || productUpdate.receivedRemark || '';
-        }
-      }
+    
+    const updatedRequest = await stockRequest.completeWithStockTransfer(
+      userId,
+      finalProductReceipts,
+      receivedRemark
+    );
 
-      return productUpdate;
-    });
+    
+    if (approvedRemark) {
+      stockRequest.approvalInfo = {
+        ...stockRequest.approvalInfo,
+        approvedAt: new Date(),
+        approvedBy: userId,
+        approvedRemark: approvedRemark
+      };
+      await stockRequest.save();
+    }
 
-    const updatedRequest = await StockRequest.findByIdAndUpdate(
-      id,
-      updateData,
-      { new: true, runValidators: true }
-    )
-    .populate('warehouse', '_id warehouseName')
-    .populate('center', '_id centerName centerCode')
-    .populate('products.product', '_id productTitle productCode productImage')
-    .populate('createdBy', '_id fullName email')
-    .populate('updatedBy', '_id fullName email')
-    .populate('approvalInfo.approvedBy', '_id fullName email')
-    .populate('receivingInfo.receivedBy', '_id fullName email')
-    .populate('completionInfo.completedBy', '_id fullName email');
+    const populatedRequest = await StockRequest.findById(updatedRequest._id)
+      .populate('warehouse', '_id centerName centerCode centerType')
+      .populate('center', '_id centerName centerCode centerType')
+      .populate('products.product', '_id productTitle productCode productImage')
+      .populate('createdBy', '_id fullName email')
+      .populate('updatedBy', '_id fullName email')
+      .populate('approvalInfo.approvedBy', '_id fullName email')
+      .populate('receivingInfo.receivedBy', '_id fullName email')
+      .populate('completionInfo.completedBy', '_id fullName email');
 
     res.status(200).json({
       success: true,
-      message: 'Incomplete stock request completed successfully',
-      data: updatedRequest
+      message: 'Incomplete stock request completed successfully and stock transferred to center',
+      data: populatedRequest,
+      transferSummary: stockRequest.stockTransferInfo
     });
 
   } catch (error) {
@@ -1362,21 +1105,6 @@ export const updateStockRequestStatus = async (req, res) => {
     const { id } = req.params;
     const { status, ...additionalInfo } = req.body;
 
-    if (!status) {
-      return res.status(400).json({
-        success: false,
-        message: 'Status is required'
-      });
-    }
-
-    const validStatuses = ['Draft', 'Submitted', 'Confirmed', 'Shipped', 'Incompleted', 'Completed', 'Rejected'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid status'
-      });
-    }
-
     const stockRequest = await StockRequest.findById(id);
     if (!stockRequest) {
       return res.status(404).json({
@@ -1391,33 +1119,6 @@ export const updateStockRequestStatus = async (req, res) => {
         success: false,
         message: 'User authentication required'
       });
-    }
-
-    if (status === 'Confirmed') {
-      if (!additionalInfo.productApprovals) {
-        return res.status(400).json({
-          success: false,
-          message: 'Product approvals are required when confirming a stock request'
-        });
-      }
-    }
-
-    if (status === 'Shipped') {
-      if (!additionalInfo.shippedDate) {
-        return res.status(400).json({
-          success: false,
-          message: 'Shipped date is required when shipping a stock request'
-        });
-      }
-    }
-
-    if (status === 'Completed') {
-      if (!additionalInfo.productReceipts) {
-        return res.status(400).json({
-          success: false,
-          message: 'Product receipts are required when completing a stock request'
-        });
-      }
     }
 
     const updateData = {
@@ -1523,7 +1224,7 @@ export const updateStockRequestStatus = async (req, res) => {
       updateData,
       { new: true, runValidators: true }
     )
-    .populate('warehouse')
+    .populate('warehouse', '_id centerName centerCode centerType')
     .populate('center', '_id centerName centerCode')
     .populate('products.product', '_id productTitle productCode productImage')
     .populate('approvalInfo.approvedBy', '_id fullName email')
@@ -1548,18 +1249,10 @@ export const updateStockRequestStatus = async (req, res) => {
   }
 };
 
-
 export const updateApprovedQuantities = async (req, res) => {
   try {
     const { id } = req.params;
     const { productApprovals } = req.body;
-
-    if (!productApprovals || !Array.isArray(productApprovals) || productApprovals.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Product approvals are required with approved quantities and remarks'
-      });
-    }
 
     const stockRequest = await StockRequest.findById(id);
     if (!stockRequest) {
@@ -1569,63 +1262,12 @@ export const updateApprovedQuantities = async (req, res) => {
       });
     }
 
-    const allowedStatuses = ['Submitted', 'Confirmed', 'Shipped', 'Incompleted'];
-    if (!allowedStatuses.includes(stockRequest.status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot update approved quantities for stock request with status: ${stockRequest.status}. Allowed statuses: ${allowedStatuses.join(', ')}`
-      });
-    }
-
     const userId = req.user?.id;
     if (!userId) {
       return res.status(400).json({
         success: false,
         message: 'User authentication required'
       });
-    }
-
-    for (const approval of productApprovals) {
-      if (!approval.productId || approval.approvedQuantity === undefined) {
-        return res.status(400).json({
-          success: false,
-          message: 'Each product approval must have productId and approvedQuantity'
-        });
-      }
-
-      const productExists = stockRequest.products.some(
-        p => p.product.toString() === approval.productId.toString()
-      );
-      
-      if (!productExists) {
-        const productDoc = await mongoose.model('Product').findById(approval.productId);
-        const productName = productDoc ? productDoc.productTitle : approval.productId;
-        return res.status(400).json({
-          success: false,
-          message: `Product "${productName}" not found in this stock request`
-        });
-      }
-
-      const existingProduct = stockRequest.products.find(
-        p => p.product.toString() === approval.productId.toString()
-      );
-      
-      if (approval.approvedQuantity > existingProduct.quantity) {
-        const productDoc = await mongoose.model('Product').findById(approval.productId);
-        const productName = productDoc ? productDoc.productTitle : approval.productId;
-        return res.status(400).json({
-          success: false,
-          message: `Approved quantity (${approval.approvedQuantity}) cannot be greater than requested quantity (${existingProduct.quantity}) for product "${productName}"`
-        });
-      }
-
-
-      if (approval.approvedQuantity < 0) {
-        return res.status(400).json({
-          success: false,
-          message: `Approved quantity cannot be negative for product ${approval.productId}`
-        });
-      }
     }
 
     const updatedProducts = stockRequest.products.map(productItem => {
@@ -1642,23 +1284,15 @@ export const updateApprovedQuantities = async (req, res) => {
       return productItem;
     });
 
-
     const updateData = {
       products: updatedProducts,
       updatedBy: userId
     };
 
-      updateData.approvalInfo = {
-        ...stockRequest.approvalInfo,
-        approvedBy: stockRequest.approvalInfo.approvedBy || userId,
-        approvedAt: stockRequest.approvalInfo.approvedAt || new Date()
-      };
-
-
     if (stockRequest.status === 'Submitted') {
       updateData.status = 'Confirmed';
       updateData.approvalInfo = {
-        ...updateData.approvalInfo,
+        ...stockRequest.approvalInfo,
         approvedBy: userId,
         approvedAt: new Date()
       };
@@ -1669,7 +1303,7 @@ export const updateApprovedQuantities = async (req, res) => {
       updateData,
       { new: true, runValidators: true }
     )
-    .populate('warehouse', '_id warehouseName')
+    .populate('warehouse', '_id centerName centerCode centerType')
     .populate('center', '_id centerName centerCode')
     .populate('products.product', '_id productTitle productCode productImage')
     .populate('createdBy', '_id fullName email')
@@ -1708,10 +1342,8 @@ export const updateApprovedQuantities = async (req, res) => {
   }
 };
 
-
 export const getMostRecentOrderNumber = async (req, res) => {
   try {
-    
     const mostRecentRequest = await StockRequest.findOne()
       .sort({ createdAt: -1 }) 
       .select('orderNumber createdAt') 

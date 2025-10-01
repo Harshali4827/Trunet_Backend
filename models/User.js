@@ -120,7 +120,7 @@ userSchema.statics.findByCredentials = async function(loginId, password) {
   const user = await this.findOne(query)
     .select('+password +loginAttempts +lockUntil')
     .populate('role', 'roleTitle')
-    .populate('center', 'centerName centerCode');
+    .populate('center', 'centerName centerCode centerType');
   
   if (!user) {
     throw new Error('Invalid login credentials');
