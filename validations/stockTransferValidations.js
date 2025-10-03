@@ -12,11 +12,14 @@ const isValidObjectId = (value) => {
 const isArrayOfObjects = (value) => {
   if (!value) return true;
   return (
-    Array.isArray(value) && value.every((item) => typeof item === "object")
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => typeof item === "object")
   );
 };
 
 const isValidStatus = (value) => {
+  if (!value) return true;
   const validStatuses = [
     "Draft",
     "Submitted",
@@ -32,26 +35,31 @@ const isValidStatus = (value) => {
 };
 
 const isValidAdminApprovalStatus = (value) => {
-  const validStatuses = ["Pending", "Approved", "Rejected", "Not_Required"];
+  if (!value) return true;
+  const validStatuses = ["Approved", "Rejected"];
   return validStatuses.includes(value);
 };
 
-export const handleValidationErrors = (req, res, next) => {
+const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
       success: false,
       message: "Validation failed",
-      errors: errors.array(),
+      errors: errors.array().map((err) => ({
+        field: err.path,
+        message: err.msg,
+        value: err.value,
+      })),
     });
   }
   next();
 };
 
 export const validateCreateStockTransfer = [
-  body("toCenter")
+  body("fromCenter")
     .notEmpty()
-    .withMessage("To center is required")
+    .withMessage("From center is required")
     .custom(isValidObjectId)
     .withMessage("Invalid to center ID")
     .custom(async (value, { req }) => {
@@ -65,6 +73,9 @@ export const validateCreateStockTransfer = [
   body("transferNumber")
     .notEmpty()
     .withMessage("Transfer number is required")
+    .isString()
+    .withMessage("Transfer number must be a string")
+    .trim()
     .isLength({ min: 1, max: 100 })
     .withMessage("Transfer number must be between 1 and 100 characters")
     .custom(async (value) => {
@@ -77,23 +88,17 @@ export const validateCreateStockTransfer = [
       return true;
     }),
 
-  body("date")
-    .optional()
-    .isISO8601()
-    .withMessage("Date must be a valid ISO 8601 date"),
-
-  body("remark")
-    .optional()
-    .isLength({ max: 500 })
-    .withMessage("Remark must not exceed 500 characters"),
-
-  body("status").optional().custom(isValidStatus).withMessage("Invalid status"),
-
   body("products")
-    .isArray({ min: 1 })
-    .withMessage("At least one product is required")
+    .notEmpty()
+    .withMessage("Products array is required")
     .custom(isArrayOfObjects)
-    .withMessage("Products must be an array of objects"),
+    .withMessage("Products must be a non-empty array of objects")
+    .custom((products) => {
+      if (!Array.isArray(products) || products.length === 0) {
+        throw new Error("At least one product is required");
+      }
+      return true;
+    }),
 
   body("products.*.product")
     .notEmpty()
@@ -109,27 +114,30 @@ export const validateCreateStockTransfer = [
     }),
 
   body("products.*.quantity")
-    .isInt({ min: 1 })
-    .withMessage("Quantity must be a positive integer for each product"),
+    .notEmpty()
+    .withMessage("Quantity is required for each product")
+    .isInt({ min: 1, max: 100000 })
+    .withMessage("Quantity must be an integer between 1 and 100,000"),
 
-  body("products.*.productRemark")
+  body("status").optional().custom(isValidStatus).withMessage("Invalid status"),
+
+  body("date")
     .optional()
-    .isLength({ max: 200 })
-    .withMessage("Product remark must not exceed 200 characters"),
+    .isISO8601()
+    .withMessage("Date must be a valid ISO 8601 date"),
 
-  body("products.*.serialNumbers")
-    .optional()
-    .isArray()
-    .withMessage("Serial numbers must be an array"),
-
-  body("products.*.serialNumbers.*")
+  body("remark")
     .optional()
     .isString()
-    .withMessage("Each serial number must be a string"),
+    .withMessage("Remark must be a string")
+    .isLength({ max: 500 })
+    .withMessage("Remark cannot exceed 500 characters"),
+
+  handleValidationErrors,
 ];
 
 export const validateUpdateStockTransfer = [
-  param("id").isMongoId().withMessage("Invalid stock transfer ID"),
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
 
   body("toCenter")
     .optional()
@@ -147,6 +155,9 @@ export const validateUpdateStockTransfer = [
 
   body("transferNumber")
     .optional()
+    .isString()
+    .withMessage("Transfer number must be a string")
+    .trim()
     .isLength({ min: 1, max: 100 })
     .withMessage("Transfer number must be between 1 and 100 characters")
     .custom(async (value, { req }) => {
@@ -162,6 +173,40 @@ export const validateUpdateStockTransfer = [
       return true;
     }),
 
+  body("products")
+    .optional()
+    .custom(isArrayOfObjects)
+    .withMessage("Products must be a non-empty array of objects")
+    .custom((products) => {
+      if (products && (!Array.isArray(products) || products.length === 0)) {
+        throw new Error("At least one product is required");
+      }
+      return true;
+    }),
+
+  body("products.*.product")
+    .if(body("products").exists())
+    .notEmpty()
+    .withMessage("Product ID is required for each product")
+    .custom(isValidObjectId)
+    .withMessage("Invalid product ID")
+    .custom(async (value) => {
+      const product = await Product.findById(value);
+      if (!product) {
+        throw new Error(`Product with ID ${value} not found`);
+      }
+      return true;
+    }),
+
+  body("products.*.quantity")
+    .if(body("products").exists())
+    .notEmpty()
+    .withMessage("Quantity is required for each product")
+    .isInt({ min: 1, max: 100000 })
+    .withMessage("Quantity must be an integer between 1 and 100,000"),
+
+  body("status").optional().custom(isValidStatus).withMessage("Invalid status"),
+
   body("date")
     .optional()
     .isISO8601()
@@ -169,53 +214,282 @@ export const validateUpdateStockTransfer = [
 
   body("remark")
     .optional()
+    .isString()
+    .withMessage("Remark must be a string")
     .isLength({ max: 500 })
-    .withMessage("Remark must not exceed 500 characters"),
+    .withMessage("Remark cannot exceed 500 characters"),
 
-  body("status").optional().custom(isValidStatus).withMessage("Invalid status"),
-
-  body("products")
-    .optional()
-    .isArray({ min: 1 })
-    .withMessage("Products array must contain at least one item")
-    .custom(isArrayOfObjects)
-    .withMessage("Products must be an array of objects"),
-
-  body("products.*.product")
-    .optional()
-    .custom(isValidObjectId)
-    .withMessage("Invalid product ID")
-    .custom(async (value) => {
-      if (value) {
-        const product = await Product.findById(value);
-        if (!product) {
-          throw new Error(`Product with ID ${value} not found`);
-        }
-      }
-      return true;
-    }),
-
-  body("products.*.quantity")
-    .optional()
-    .isInt({ min: 1 })
-    .withMessage("Quantity must be a positive integer"),
-
-  body("products.*.approvedQuantity")
-    .optional()
-    .isInt({ min: 0 })
-    .withMessage("Approved quantity must be a non-negative integer"),
-
-  body("products.*.receivedQuantity")
-    .optional()
-    .isInt({ min: 0 })
-    .withMessage("Received quantity must be a non-negative integer"),
+  handleValidationErrors,
 ];
 
 export const validateIdParam = [
-  param("id").isMongoId().withMessage("Invalid stock transfer ID"),
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
+
+  handleValidationErrors,
 ];
 
-export const validateGetAllStockTransfers = [
+export const validateAdminApproval = [
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
+
+  body("approvedRemark")
+    .optional()
+    .isString()
+    .withMessage("Approved remark must be a string")
+    .isLength({ max: 500 })
+    .withMessage("Approved remark cannot exceed 500 characters"),
+
+  body("modifications")
+    .optional()
+    .isArray()
+    .withMessage("Modifications must be an array"),
+
+  body("modifications.*.product")
+    .if(body("modifications").exists())
+    .notEmpty()
+    .withMessage("Product ID is required for each modification")
+    .custom(isValidObjectId)
+    .withMessage("Invalid product ID in modification"),
+
+  body("modifications.*.originalQuantity")
+    .if(body("modifications").exists())
+    .isInt({ min: 0 })
+    .withMessage("Original quantity must be a non-negative integer"),
+
+  body("modifications.*.approvedQuantity")
+    .if(body("modifications").exists())
+    .isInt({ min: 0 })
+    .withMessage("Approved quantity must be a non-negative integer"),
+
+  body("modifications.*.modificationReason")
+    .optional()
+    .isString()
+    .withMessage("Modification reason must be a string")
+    .isLength({ max: 500 })
+    .withMessage("Modification reason cannot exceed 500 characters"),
+
+  handleValidationErrors,
+];
+
+export const validateAdminRejection = [
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
+
+  body("rejectionReason")
+    .optional()
+    .isString()
+    .withMessage("Rejection reason must be a string")
+    .isLength({ max: 500 })
+    .withMessage("Rejection reason cannot exceed 500 characters"),
+
+  handleValidationErrors,
+];
+
+export const validateShipping = [
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
+
+  body("shippedDate")
+    .notEmpty()
+    .withMessage("Shipped date is required")
+    .isISO8601()
+    .withMessage("Shipped date must be a valid ISO 8601 date"),
+
+  body("expectedDeliveryDate")
+    .optional()
+    .isISO8601()
+    .withMessage("Expected delivery date must be a valid ISO 8601 date"),
+
+  body("shipmentDetails")
+    .optional()
+    .isString()
+    .withMessage("Shipment details must be a string")
+    .isLength({ max: 1000 })
+    .withMessage("Shipment details cannot exceed 1000 characters"),
+
+  body("shipmentRemark")
+    .optional()
+    .isString()
+    .withMessage("Shipment remark must be a string")
+    .isLength({ max: 500 })
+    .withMessage("Shipment remark cannot exceed 500 characters"),
+
+  body("documents")
+    .optional()
+    .isArray()
+    .withMessage("Documents must be an array"),
+
+  body("documents.*")
+    .optional()
+    .isString()
+    .withMessage("Each document must be a string"),
+
+  body("carrierInfo.name")
+    .optional()
+    .isString()
+    .withMessage("Carrier name must be a string")
+    .isLength({ max: 100 })
+    .withMessage("Carrier name cannot exceed 100 characters"),
+
+  body("carrierInfo.trackingNumber")
+    .optional()
+    .isString()
+    .withMessage("Tracking number must be a string")
+    .isLength({ max: 100 })
+    .withMessage("Tracking number cannot exceed 100 characters"),
+
+  body("carrierInfo.contact")
+    .optional()
+    .isString()
+    .withMessage("Carrier contact must be a string")
+    .isLength({ max: 100 })
+    .withMessage("Carrier contact cannot exceed 100 characters"),
+
+  handleValidationErrors,
+];
+
+export const validateUpdateShippingInfo = [
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
+
+  body("shippedDate")
+    .optional()
+    .isISO8601()
+    .withMessage("Shipped date must be a valid ISO 8601 date"),
+
+  body("expectedDeliveryDate")
+    .optional()
+    .isISO8601()
+    .withMessage("Expected delivery date must be a valid ISO 8601 date"),
+
+  body("shipmentDetails")
+    .optional()
+    .isString()
+    .withMessage("Shipment details must be a string")
+    .isLength({ max: 1000 })
+    .withMessage("Shipment details cannot exceed 1000 characters"),
+
+  body("shipmentRemark")
+    .optional()
+    .isString()
+    .withMessage("Shipment remark must be a string")
+    .isLength({ max: 500 })
+    .withMessage("Shipment remark cannot exceed 500 characters"),
+
+  body("documents")
+    .optional()
+    .isArray()
+    .withMessage("Documents must be an array"),
+
+  body("documents.*")
+    .optional()
+    .isString()
+    .withMessage("Each document must be a string"),
+
+  body("carrierInfo")
+    .optional()
+    .isObject()
+    .withMessage("Carrier info must be an object"),
+
+  handleValidationErrors,
+];
+
+export const validateCompletion = [
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
+
+  body("productReceipts")
+    .optional()
+    .isArray()
+    .withMessage("Product receipts must be an array"),
+
+  body("productReceipts.*.productId")
+    .if(body("productReceipts").exists())
+    .notEmpty()
+    .withMessage("Product ID is required for each receipt")
+    .custom(isValidObjectId)
+    .withMessage("Invalid product ID in receipt"),
+
+  body("productReceipts.*.receivedQuantity")
+    .if(body("productReceipts").exists())
+    .isInt({ min: 0 })
+    .withMessage("Received quantity must be a non-negative integer"),
+
+  body("productReceipts.*.receivedRemark")
+    .optional()
+    .isString()
+    .withMessage("Received remark must be a string")
+    .isLength({ max: 200 })
+    .withMessage("Received remark cannot exceed 200 characters"),
+
+  handleValidationErrors,
+];
+
+export const validateConfirmation = [
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
+
+  body("productApprovals")
+    .optional()
+    .isArray()
+    .withMessage("Product approvals must be an array"),
+
+  body("productApprovals.*.productId")
+    .if(body("productApprovals").exists())
+    .notEmpty()
+    .withMessage("Product ID is required for each approval")
+    .custom(isValidObjectId)
+    .withMessage("Invalid product ID in approval"),
+
+  body("productApprovals.*.approvedQuantity")
+    .if(body("productApprovals").exists())
+    .isInt({ min: 0 })
+    .withMessage("Approved quantity must be a non-negative integer"),
+
+  body("productApprovals.*.approvedRemark")
+    .optional()
+    .isString()
+    .withMessage("Approved remark must be a string")
+    .isLength({ max: 200 })
+    .withMessage("Approved remark cannot exceed 200 characters"),
+
+  handleValidationErrors,
+];
+
+export const validateIncompleteTransfer = [
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
+
+  body("incompleteRemark")
+    .optional()
+    .isString()
+    .withMessage("Incomplete remark must be a string")
+    .isLength({ max: 500 })
+    .withMessage("Incomplete remark cannot exceed 500 characters"),
+
+  handleValidationErrors,
+];
+
+export const validateRejectShipment = [
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
+
+  body("rejectionReason")
+    .optional()
+    .isString()
+    .withMessage("Rejection reason must be a string")
+    .isLength({ max: 500 })
+    .withMessage("Rejection reason cannot exceed 500 characters"),
+
+  handleValidationErrors,
+];
+
+export const validateRejectTransfer = [
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
+
+  body("rejectionRemark")
+    .optional()
+    .isString()
+    .withMessage("Rejection remark must be a string")
+    .isLength({ max: 500 })
+    .withMessage("Rejection remark cannot exceed 500 characters"),
+
+  handleValidationErrors,
+];
+
+export const validateQueryParams = [
   query("page")
     .optional()
     .isInt({ min: 1 })
@@ -224,27 +498,12 @@ export const validateGetAllStockTransfers = [
   query("limit")
     .optional()
     .isInt({ min: 1, max: 100 })
-    .withMessage("Limit must be between 1 and 100"),
+    .withMessage("Limit must be an integer between 1 and 100"),
 
   query("status")
     .optional()
-    .custom((value) => {
-      if (!value) return true;
-      const statuses = value.split(",");
-      const validStatuses = [
-        "Draft",
-        "Submitted",
-        "Admin_Approved",
-        "Admin_Rejected",
-        "Confirmed",
-        "Shipped",
-        "Incompleted",
-        "Completed",
-        "Rejected",
-      ];
-      return statuses.every((status) => validStatuses.includes(status));
-    })
-    .withMessage("Invalid status value"),
+    .custom(isValidStatus)
+    .withMessage("Invalid status"),
 
   query("fromCenter")
     .optional()
@@ -268,160 +527,30 @@ export const validateGetAllStockTransfers = [
 
   query("transferNumber")
     .optional()
+    .isString()
+    .withMessage("Transfer number must be a string")
     .isLength({ max: 100 })
-    .withMessage("Transfer number must not exceed 100 characters"),
+    .withMessage("Transfer number cannot exceed 100 characters"),
 
   query("search")
     .optional()
-    .isLength({ max: 200 })
-    .withMessage("Search term must not exceed 200 characters"),
+    .isString()
+    .withMessage("Search term must be a string")
+    .isLength({ max: 100 })
+    .withMessage("Search term cannot exceed 100 characters"),
 
-  query("sortBy")
-    .optional()
-    .isIn([
-      "createdAt",
-      "updatedAt",
-      "date",
-      "transferNumber",
-      "status",
-      "adminApproval.approvedAt",
-      "adminApproval.rejectedAt",
-      "approvalInfo.approvedAt",
-      "shippingInfo.shippedAt",
-      "receivingInfo.receivedAt",
-    ])
-    .withMessage("Invalid sort field"),
+  query("sortBy").optional().isString().withMessage("Sort by must be a string"),
 
   query("sortOrder")
     .optional()
     .isIn(["asc", "desc"])
     .withMessage('Sort order must be either "asc" or "desc"'),
+
+  handleValidationErrors,
 ];
 
-export const validateAdminApproval = [
-  param("id").isMongoId().withMessage("Invalid stock transfer ID"),
-
-  body("approvedRemark")
-    .optional()
-    .isLength({ max: 500 })
-    .withMessage("Approved remark must not exceed 500 characters"),
-
-  body("modifications")
-    .optional()
-    .isArray()
-    .withMessage("Modifications must be an array"),
-
-  body("modifications.*.product")
-    .if(body("modifications").exists())
-    .notEmpty()
-    .withMessage("Product ID is required for each modification")
-    .custom(isValidObjectId)
-    .withMessage("Invalid product ID in modification"),
-
-  body("modifications.*.approvedQuantity")
-    .if(body("modifications").exists())
-    .isInt({ min: 0 })
-    .withMessage(
-      "Approved quantity must be a non-negative integer for each modification"
-    ),
-
-  body("modifications.*.modificationReason")
-    .optional()
-    .isLength({ max: 200 })
-    .withMessage("Modification reason must not exceed 200 characters"),
-];
-
-export const validateAdminRejection = [
-  param("id").isMongoId().withMessage("Invalid stock transfer ID"),
-
-  body("rejectionReason")
-    .optional()
-    .isLength({ max: 500 })
-    .withMessage("Rejection reason must not exceed 500 characters"),
-];
-
-export const validateCenterApproval = [
-  param("id").isMongoId().withMessage("Invalid stock transfer ID"),
-
-  body("productApprovals")
-    .isArray({ min: 1 })
-    .withMessage("Product approvals are required with at least one item"),
-
-  body("productApprovals.*.productId")
-    .notEmpty()
-    .withMessage("Product ID is required for each approval")
-    .custom(isValidObjectId)
-    .withMessage("Invalid product ID in approval"),
-
-  body("productApprovals.*.approvedQuantity")
-    .isInt({ min: 0 })
-    .withMessage(
-      "Approved quantity must be a non-negative integer for each approval"
-    ),
-
-  body("productApprovals.*.approvedRemark")
-    .optional()
-    .isLength({ max: 200 })
-    .withMessage("Approved remark must not exceed 200 characters"),
-];
-
-export const validateShipping = [
-  param("id").isMongoId().withMessage("Invalid stock transfer ID"),
-
-  body("shippedDate")
-    .notEmpty()
-    .withMessage("Shipped date is required")
-    .isISO8601()
-    .withMessage("Shipped date must be a valid ISO 8601 date"),
-
-  body("expectedDeliveryDate")
-    .optional()
-    .isISO8601()
-    .withMessage("Expected delivery date must be a valid ISO 8601 date"),
-
-  body("shipmentDetails")
-    .optional()
-    .isLength({ max: 1000 })
-    .withMessage("Shipment details must not exceed 1000 characters"),
-
-  body("shipmentRemark")
-    .optional()
-    .isLength({ max: 500 })
-    .withMessage("Shipment remark must not exceed 500 characters"),
-
-  body("documents")
-    .optional()
-    .isArray()
-    .withMessage("Documents must be an array"),
-];
-
-export const validateCompletion = [
-  param("id").isMongoId().withMessage("Invalid stock transfer ID"),
-
-  body("productReceipts")
-    .isArray({ min: 1 })
-    .withMessage("Product receipts are required with at least one item"),
-
-  body("productReceipts.*.productId")
-    .notEmpty()
-    .withMessage("Product ID is required for each receipt")
-    .custom(isValidObjectId)
-    .withMessage("Invalid product ID in receipt"),
-
-  body("productReceipts.*.receivedQuantity")
-    .isInt({ min: 0 })
-    .withMessage(
-      "Received quantity must be a non-negative integer for each receipt"
-    ),
-
-  body("productReceipts.*.receivedRemark")
-    .optional()
-    .isLength({ max: 200 })
-    .withMessage("Received remark must not exceed 200 characters"),
-];
-
-export const validateIncompleteTransferCompletion = [
-  param("id").isMongoId().withMessage("Invalid stock transfer ID"),
+export const validateCompleteIncompleteTransfer = [
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
 
   body("productApprovals")
     .optional()
@@ -438,9 +567,14 @@ export const validateIncompleteTransferCompletion = [
   body("productApprovals.*.approvedQuantity")
     .if(body("productApprovals").exists())
     .isInt({ min: 0 })
-    .withMessage(
-      "Approved quantity must be a non-negative integer for each approval"
-    ),
+    .withMessage("Approved quantity must be a non-negative integer"),
+
+  body("productApprovals.*.approvedRemark")
+    .optional()
+    .isString()
+    .withMessage("Approved remark must be a string")
+    .isLength({ max: 200 })
+    .withMessage("Approved remark cannot exceed 200 characters"),
 
   body("productReceipts")
     .optional()
@@ -457,13 +591,53 @@ export const validateIncompleteTransferCompletion = [
   body("productReceipts.*.receivedQuantity")
     .if(body("productReceipts").exists())
     .isInt({ min: 0 })
-    .withMessage(
-      "Received quantity must be a non-negative integer for each receipt"
-    ),
+    .withMessage("Received quantity must be a non-negative integer"),
+
+  body("productReceipts.*.receivedRemark")
+    .optional()
+    .isString()
+    .withMessage("Received remark must be a string")
+    .isLength({ max: 200 })
+    .withMessage("Received remark cannot exceed 200 characters"),
+
+  handleValidationErrors,
 ];
 
-export const validateStatusUpdate = [
-  param("id").isMongoId().withMessage("Invalid stock transfer ID"),
+export const validateUpdateApprovedQuantities = [
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
+
+  body("productApprovals")
+    .notEmpty()
+    .withMessage("Product approvals are required")
+    .isArray()
+    .withMessage("Product approvals must be an array")
+    .custom((approvals) => approvals.length > 0)
+    .withMessage("At least one product approval is required"),
+
+  body("productApprovals.*.productId")
+    .notEmpty()
+    .withMessage("Product ID is required for each approval")
+    .custom(isValidObjectId)
+    .withMessage("Invalid product ID in approval"),
+
+  body("productApprovals.*.approvedQuantity")
+    .notEmpty()
+    .withMessage("Approved quantity is required for each approval")
+    .isInt({ min: 0 })
+    .withMessage("Approved quantity must be a non-negative integer"),
+
+  body("productApprovals.*.approvedRemark")
+    .optional()
+    .isString()
+    .withMessage("Approved remark must be a string")
+    .isLength({ max: 200 })
+    .withMessage("Approved remark cannot exceed 200 characters"),
+
+  handleValidationErrors,
+];
+
+export const validateUpdateStatus = [
+  param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
 
   body("status")
     .notEmpty()
@@ -471,22 +645,5 @@ export const validateStatusUpdate = [
     .custom(isValidStatus)
     .withMessage("Invalid status"),
 
-  body("approvedRemark")
-    .optional()
-    .isLength({ max: 500 })
-    .withMessage("Approved remark must not exceed 500 characters"),
-
-  body("receivedRemark")
-    .optional()
-    .isLength({ max: 500 })
-    .withMessage("Received remark must not exceed 500 characters"),
-
-  body("incompleteRemark")
-    .optional()
-    .isLength({ max: 500 })
-    .withMessage("Incomplete remark must not exceed 500 characters"),
-];
-
-export const validateFileUpload = [
-  param("id").isMongoId().withMessage("Invalid stock transfer ID"),
+  handleValidationErrors,
 ];

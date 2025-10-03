@@ -25,9 +25,9 @@ export const createBuildingValidator = [
     .optional()
     .isString().withMessage('Landmark must be a string'),
 
-  body('pincode')
-    .notEmpty().withMessage('Pincode is required')
-    .matches(/^[1-9][0-9]{5}$/).withMessage('Invalid Indian pincode'),
+  // body('pincode')
+  //   .notEmpty().withMessage('Pincode is required')
+  //   .matches(/^[1-9][0-9]{5}$/).withMessage('Invalid Indian pincode'),
 ];
 
 export const updateBuildingValidator = [

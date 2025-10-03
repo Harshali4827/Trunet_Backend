@@ -181,7 +181,6 @@ const customValidators = {
         throw new Error(`Insufficient stock in outlet for product "${productName}". Required: ${quantity}, Available: ${outletStock ? outletStock.availableQuantity : 0}`);
       }
 
-      // For serialized products, check serial number availability
       const productDoc = await Product.findById(productId);
       if (productDoc?.trackSerialNumber === "Yes") {
         const fifoResult = outletStock.getFIFOStock(quantity);

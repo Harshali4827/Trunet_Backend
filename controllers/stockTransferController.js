@@ -1,101 +1,236 @@
-import StockTransfer from "../models/StockTransfer.js";
-import Center from "../models/Center.js";
-import User from "../models/User.js";
-import StockPurchase from "../models/StockPurchase.js";
-import Product from "../models/Product.js";
-import mongoose from "mongoose";
-import path from "path";
-import fs from "fs";
-
-const validateUserCenter = async (userId) => {
-  if (!userId) {
-    throw new Error("User authentication required");
-  }
-
-  const user = await User.findById(userId).populate(
-    "center",
-    "centerName centerCode centerType _id"
-  );
-
-  if (!user) {
-    throw new Error("User not found");
-  }
-
-  if (!user.center) {
-    throw new Error("User center information not found");
-  }
-
-  return user.center._id;
-};
-
-const isAdminUser = async (userId) => {
-  const user = await User.findById(userId);
-  return user && user.isAdmin;
-};
+import StockTransfer from '../models/StockTransfer.js';
+import Center from '../models/Center.js';
+import User from '../models/User.js';
+import CenterStock from '../models/CenterStock.js';
+import mongoose from 'mongoose';
 
 export const createStockTransfer = async (req, res) => {
   try {
     const {
-      toCenter,
-      date,
+      fromCenter,
       transferNumber,
       remark,
       products,
-      status = "Draft",
+      date,
+      status = 'Draft' // Default to 'Draft' if not provided
     } = req.body;
 
-    const fromCenter = await validateUserCenter(req.user?.id);
-
-    if (
-      !toCenter ||
-      !products ||
-      !Array.isArray(products) ||
-      products.length === 0
-    ) {
+    // Validate required fields
+    if (!transferNumber || transferNumber.trim() === '') {
       return res.status(400).json({
         success: false,
-        message: "To center and at least one product are required",
+        message: 'Transfer number is required'
       });
     }
 
-    if (!transferNumber) {
+    // Validate status if provided
+    const validStatuses = ['Draft', 'Submitted'];
+    if (status && !validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
-        message: "Transfer number is required",
+        message: 'Status must be either "Draft" or "Submitted" when creating a transfer'
       });
     }
 
-    const existingTransfer = await StockTransfer.findOne({ transferNumber });
+    const existingTransfer = await StockTransfer.findOne({ 
+      transferNumber: transferNumber.trim() 
+    });
+    
     if (existingTransfer) {
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
-        message:
-          "Transfer number already exists. Please use a different transfer number.",
+        message: 'Transfer number already exists. Please use a unique transfer number.',
+        duplicateTransferNumber: transferNumber.trim(),
+        existingTransferId: existingTransfer._id
       });
     }
 
-    for (let product of products) {
-      if (!product.product || !product.quantity || product.quantity < 1) {
+    // Get logged in user's center (toCenter)
+    const user = await User.findById(req.user.id).populate('center');
+    if (!user || !user.center) {
+      return res.status(400).json({
+        success: false,
+        message: 'User center information not found'
+      });
+    }
+
+    const toCenterId = user.center._id;
+
+    // Validate centers exist
+    const fromCenterExists = await Center.findById(fromCenter);
+    const toCenterExists = await Center.findById(toCenterId);
+    
+    if (!fromCenterExists || !toCenterExists) {
+      return res.status(404).json({
+        success: false,
+        message: 'Source or destination center not found'
+      });
+    }
+
+    // Validate products array
+    if (!products || !Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Products array is required and cannot be empty'
+      });
+    }
+
+    // Validate each product
+    for (const product of products) {
+      if (!product.product || !product.quantity) {
         return res.status(400).json({
           success: false,
-          message:
-            "Each product must have a valid product ID and quantity (min 1)",
+          message: 'Each product must have product ID and quantity'
+        });
+      }
+      
+      if (product.quantity <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Product quantity must be greater than 0'
         });
       }
     }
 
-    const toCenterExists = await Center.findById(toCenter);
-    if (!toCenterExists) {
-      return res.status(404).json({
+    // Set date
+    let transferDate = new Date();
+    if (date) {
+      transferDate = new Date(date);
+      if (isNaN(transferDate.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid date format. Please provide a valid date.'
+        });
+      }
+    }
+
+    // Create stock transfer with the provided status
+    const stockTransfer = new StockTransfer({
+      transferNumber: transferNumber.trim(),
+      fromCenter,
+      toCenter: toCenterId,
+      remark: remark || '',
+      products,
+      date: transferDate,
+      status: status, // Use the status from request body
+      createdBy: req.user.id
+    });
+
+    // If status is 'Submitted', validate stock availability and serial numbers
+    if (status === 'Submitted') {
+      try {
+        await stockTransfer.validateSerialNumbers();
+        await stockTransfer.validateStockAvailability();
+      } catch (validationError) {
+        return res.status(400).json({
+          success: false,
+          message: `Cannot create transfer with Submitted status: ${validationError.message}`
+        });
+      }
+    }
+
+    const savedStockTransfer = await stockTransfer.save();
+
+    // Populate and return
+    const populatedTransfer = await StockTransfer.findById(savedStockTransfer._id)
+      .populate('fromCenter', '_id centerName centerCode')
+      .populate('toCenter', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+      .populate('createdBy', '_id fullName email');
+
+    res.status(201).json({
+      success: true,
+      message: `Stock transfer created successfully with status: ${status}`,
+      data: populatedTransfer
+    });
+
+  } catch (error) {
+    console.error('Error creating stock transfer:', error);
+    
+    // Handle duplicate transfer number
+    if (error.code === 11000) {
+      const duplicateField = Object.keys(error.keyPattern)[0];
+      if (duplicateField === 'transferNumber') {
+        return res.status(409).json({
+          success: false,
+          message: 'Transfer number already exists. Please use a unique transfer number.',
+          duplicateTransferNumber: req.body.transferNumber
+        });
+      }
+    }
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
         success: false,
-        message: "To center not found",
+        message: 'Validation error',
+        errors
       });
     }
 
-    if (fromCenter.toString() === toCenterExists._id.toString()) {
+    // Handle cast errors
+    if (error.name === 'CastError') {
       return res.status(400).json({
         success: false,
-        message: "From center and to center cannot be the same",
+        message: `Invalid ${error.path}: ${error.value}`
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Error creating stock transfer',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const submitStockTransfer = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const stockTransfer = await StockTransfer.findById(id);
+    if (!stockTransfer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock transfer not found'
+      });
+    }
+
+    // Submit the transfer
+    const submittedTransfer = await stockTransfer.submitTransfer();
+
+    const populatedTransfer = await StockTransfer.findById(submittedTransfer._id)
+      .populate('fromCenter', '_id centerName centerCode')
+      .populate('toCenter', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+      .populate('createdBy', '_id fullName email');
+
+    res.status(200).json({
+      success: true,
+      message: 'Stock transfer submitted successfully. Waiting for admin approval.',
+      data: populatedTransfer
+    });
+
+  } catch (error) {
+    console.error('Error submitting stock transfer:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const approveStockTransferByAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const stockTransfer = await StockTransfer.findById(id);
+    if (!stockTransfer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock transfer not found'
       });
     }
 
@@ -103,113 +238,471 @@ export const createStockTransfer = async (req, res) => {
     if (!userId) {
       return res.status(400).json({
         success: false,
-        message: "User authentication required",
+        message: 'User authentication required'
       });
     }
 
-    for (let product of products) {
-      const stockData = await StockPurchase.aggregate([
-        {
-          $match: {
-            outlet: new mongoose.Types.ObjectId(fromCenter),
-            "products.product": new mongoose.Types.ObjectId(product.product),
-          },
-        },
-        { $unwind: "$products" },
-        {
-          $match: {
-            "products.product": new mongoose.Types.ObjectId(product.product),
-            "products.availableQuantity": { $gt: 0 },
-          },
-        },
-        {
-          $group: {
-            _id: "$products.product",
-            totalAvailable: { $sum: "$products.availableQuantity" },
-          },
-        },
-      ]);
+    // Approve by admin
+    const approvedTransfer = await stockTransfer.approveByAdmin(userId);
 
-      const currentAvailableStock =
-        stockData.length > 0 ? stockData[0].totalAvailable : 0;
+    const populatedTransfer = await StockTransfer.findById(approvedTransfer._id)
+      .populate('fromCenter', '_id centerName centerCode')
+      .populate('toCenter', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+      .populate('createdBy', '_id fullName email')
+      .populate('adminApproval.approvedBy', '_id fullName email');
 
-      if (product.quantity > currentAvailableStock) {
-        const productDoc = await Product.findById(product.product);
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for product "${productDoc.productTitle}". Available: ${currentAvailableStock}, Requested: ${product.quantity}`,
-        });
+    res.status(200).json({
+      success: true,
+      message: 'Stock transfer approved by admin successfully',
+      data: populatedTransfer
+    });
+
+  } catch (error) {
+    console.error('Error approving stock transfer by admin:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const rejectStockTransferByAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const stockTransfer = await StockTransfer.findById(id);
+    if (!stockTransfer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock transfer not found'
+      });
+    }
+
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
+    }
+
+    // Reject by admin
+    const rejectedTransfer = await stockTransfer.rejectByAdmin(userId);
+
+    const populatedTransfer = await StockTransfer.findById(rejectedTransfer._id)
+      .populate('fromCenter', '_id centerName centerCode')
+      .populate('toCenter', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+      .populate('createdBy', '_id fullName email')
+      .populate('adminApproval.rejectedBy', '_id fullName email');
+
+    res.status(200).json({
+      success: true,
+      message: 'Stock transfer rejected by admin',
+      data: populatedTransfer
+    });
+
+  } catch (error) {
+    console.error('Error rejecting stock transfer by admin:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const confirmStockTransfer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { productApprovals } = req.body;
+
+    const stockTransfer = await StockTransfer.findById(id);
+    if (!stockTransfer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock transfer not found'
+      });
+    }
+
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
+    }
+
+    // Validate product approvals if provided
+    if (productApprovals && Array.isArray(productApprovals)) {
+      // Validate each product approval
+      for (const approval of productApprovals) {
+        if (!approval.productId) {
+          return res.status(400).json({
+            success: false,
+            message: 'Each approval must have a productId'
+          });
+        }
+        
+        if (approval.approvedQuantity === undefined || approval.approvedQuantity === null) {
+          return res.status(400).json({
+            success: false,
+            message: 'Each approval must have an approvedQuantity'
+          });
+        }
+        
+        if (approval.approvedQuantity < 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Approved quantity cannot be negative'
+          });
+        }
+
+        // Find the corresponding product in the transfer
+        const productItem = stockTransfer.products.find(
+          p => p.product.toString() === approval.productId.toString()
+        );
+        
+        if (!productItem) {
+          return res.status(400).json({
+            success: false,
+            message: `Product with ID ${approval.productId} not found in this transfer`
+          });
+        }
+
+        // Validate approved quantity doesn't exceed requested quantity
+        if (approval.approvedQuantity > productItem.quantity) {
+          return res.status(400).json({
+            success: false,
+            message: `Approved quantity (${approval.approvedQuantity}) cannot exceed requested quantity (${productItem.quantity}) for product ${productItem.product}`
+          });
+        }
+      }
+
+      // Update product approved quantities before confirmation
+      stockTransfer.products = stockTransfer.products.map(productItem => {
+        const approval = productApprovals.find(
+          pa => pa.productId.toString() === productItem.product.toString()
+        );
+        
+        if (approval) {
+          return {
+            ...productItem.toObject(),
+            approvedQuantity: approval.approvedQuantity,
+            approvedRemark: approval.approvedRemark || ''
+          };
+        }
+        return productItem;
+      });
+    }
+
+    // Confirm transfer (by destination center) with optional product approvals
+    const confirmedTransfer = await stockTransfer.confirmTransfer(userId, productApprovals);
+
+    const populatedTransfer = await StockTransfer.findById(confirmedTransfer._id)
+      .populate('fromCenter', '_id centerName centerCode')
+      .populate('toCenter', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+      .populate('createdBy', '_id fullName email')
+      .populate('centerApproval.approvedBy', '_id fullName email');
+
+    // Prepare response message
+    let message = 'Stock transfer confirmed successfully';
+    if (productApprovals && productApprovals.length > 0) {
+      message += ` with ${productApprovals.length} product quantity adjustment(s)`;
+    }
+
+    res.status(200).json({
+      success: true,
+      message,
+      data: populatedTransfer,
+      ...(productApprovals && {
+        approvedQuantities: productApprovals.map(approval => ({
+          productId: approval.productId,
+          approvedQuantity: approval.approvedQuantity,
+          approvedRemark: approval.approvedRemark || ''
+        }))
+      })
+    });
+
+  } catch (error) {
+    console.error('Error confirming stock transfer:', error);
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product ID or transfer ID'
+      });
+    }
+
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors
+      });
+    }
+
+    res.status(400).json({
+      success: false,
+      message: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const shipStockTransfer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { 
+      shippedDate, 
+      expectedDeliveryDate, 
+      shipmentDetails, 
+      carrierInfo 
+    } = req.body;
+
+    console.log(`[DEBUG] Starting shipStockTransfer for transfer ID: ${id}`);
+
+    const stockTransfer = await StockTransfer.findById(id)
+      .populate('fromCenter', '_id centerName centerCode')
+      .populate('toCenter', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode trackSerialNumber');
+
+    if (!stockTransfer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock transfer not found'
+      });
+    }
+
+    console.log(`[DEBUG] Found transfer: ${stockTransfer.transferNumber}, Status: ${stockTransfer.status}`);
+
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
+    }
+
+    const shippingDetails = {
+      ...(shippedDate && { shippedDate: new Date(shippedDate) }),
+      ...(expectedDeliveryDate && { expectedDeliveryDate: new Date(expectedDeliveryDate) }),
+      ...(shipmentDetails && { shipmentDetails }),
+      ...(carrierInfo && { carrierInfo })
+    };
+
+    // Pre-validate stock and serial number availability
+    console.log(`[DEBUG] Pre-validating stock and serial number availability...`);
+    const CenterStock = mongoose.model('CenterStock');
+    
+    for (const [index, productItem] of stockTransfer.products.entries()) {
+      const product = await mongoose.model('Product').findById(productItem.product);
+      const requiresSerials = product ? (product.trackSerialNumber === 'Yes') : false;
+      
+      console.log(`\n[DEBUG] Product ${index + 1}: ${product?.productTitle}`);
+      console.log(`[DEBUG] - Requires serial numbers: ${requiresSerials}`);
+      
+      const centerStock = await CenterStock.findOne({
+        center: stockTransfer.fromCenter._id,
+        product: productItem.product._id
+      });
+
+      if (centerStock) {
+        console.log(`[DEBUG] - Available quantity: ${centerStock.availableQuantity}`);
+        
+        if (requiresSerials) {
+          const availableSerials = centerStock.serialNumbers?.filter(sn => sn.status === 'available') || [];
+          console.log(`[DEBUG] - Available serial numbers: ${availableSerials.length}`);
+          console.log(`[DEBUG] - Required quantity: ${productItem.approvedQuantity || productItem.quantity}`);
+          
+          if (availableSerials.length < (productItem.approvedQuantity || productItem.quantity)) {
+            return res.status(400).json({
+              success: false,
+              message: `Insufficient serial numbers available for product "${product?.productTitle}". Available: ${availableSerials.length}, Required: ${productItem.approvedQuantity || productItem.quantity}`,
+              details: {
+                product: product?.productTitle,
+                availableSerials: availableSerials.length,
+                requiredQuantity: productItem.approvedQuantity || productItem.quantity
+              }
+            });
+          }
+        }
       }
     }
 
-    const stockTransfer = new StockTransfer({
-      fromCenter,
-      toCenter,
-      date: date || new Date(),
-      transferNumber,
-      remark,
-      products,
-      status,
-      createdBy: userId,
-    });
+    console.log(`[DEBUG] All pre-validations passed. Attempting to ship transfer...`);
+    
+    // Ship transfer (stock will be deducted from fromCenter here)
+    const shippedTransfer = await stockTransfer.shipTransfer(userId, shippingDetails);
+    console.log(`[DEBUG] Transfer shipped successfully. New status: ${shippedTransfer.status}`);
 
-    const savedTransfer = await stockTransfer.save();
+    const populatedTransfer = await StockTransfer.findById(shippedTransfer._id)
+      .populate('fromCenter', '_id centerName centerCode')
+      .populate('toCenter', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode trackSerialNumber')
+      .populate('createdBy', '_id fullName email')
+      .populate('shippingInfo.shippedBy', '_id fullName email');
 
-    const populatedTransfer = await StockTransfer.findById(savedTransfer._id)
-      .populate("fromCenter", "_id centerName centerCode")
-      .populate("toCenter", "_id centerName centerCode")
-      .populate(
-        "products.product",
-        "_id productTitle productCode trackSerialNumbers"
-      )
-      .populate("createdBy", "_id fullName email")
-      .populate("adminApproval.approvedBy", "_id fullName email")
-      .populate("adminApproval.rejectedBy", "_id fullName email")
-      .populate("approvalInfo.approvedBy", "_id fullName email")
-      .populate("shippingInfo.shippedBy", "_id fullName email")
-      .populate("receivingInfo.receivedBy", "_id fullName email");
-
-    res.status(201).json({
+    res.status(200).json({
       success: true,
-      message: "Stock transfer created successfully",
-      data: populatedTransfer,
+      message: 'Stock transfer shipped successfully. Stock deducted from source center.',
+      data: populatedTransfer
     });
+
   } catch (error) {
-    if (
-      error.message.includes("User authentication") ||
-      error.message.includes("User not found")
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    if (error.name === "ValidationError") {
-      const errors = Object.values(error.errors).map((err) => err.message);
-      return res.status(400).json({
-        success: false,
-        message: "Validation error",
-        errors,
-      });
-    }
-
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Transfer number already exists. Please use a different transfer number.",
-      });
-    }
-
-    console.error("Error creating stock transfer:", error);
-    res.status(500).json({
+    console.error(`[DEBUG] ERROR in shipStockTransfer:`, error.message);
+    console.error(`[DEBUG] Error stack:`, error.stack);
+    
+    res.status(400).json({
       success: false,
-      message: "Error creating stock transfer",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
+      message: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const completeStockTransfer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { productReceipts } = req.body;
+
+    const stockTransfer = await StockTransfer.findById(id);
+    if (!stockTransfer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock transfer not found'
+      });
+    }
+
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
+    }
+
+    // Complete transfer (stock will be added to toCenter here)
+    const completedTransfer = await stockTransfer.completeTransfer(userId, productReceipts);
+
+    const populatedTransfer = await StockTransfer.findById(completedTransfer._id)
+      .populate('fromCenter', '_id centerName centerCode')
+      .populate('toCenter', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+      .populate('createdBy', '_id fullName email')
+      .populate('receivingInfo.receivedBy', '_id fullName email')
+      .populate('completionInfo.completedBy', '_id fullName email');
+
+    res.status(200).json({
+      success: true,
+      message: 'Stock transfer completed successfully. Stock added to destination center.',
+      data: populatedTransfer
+    });
+
+  } catch (error) {
+    console.error('Error completing stock transfer:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const markStockTransferAsIncomplete = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { incompleteRemark } = req.body;
+
+    const stockTransfer = await StockTransfer.findById(id);
+    if (!stockTransfer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock transfer not found'
+      });
+    }
+
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
+    }
+
+    // Mark as incomplete
+    const incompleteTransfer = await stockTransfer.markAsIncomplete(userId, incompleteRemark);
+
+    const populatedTransfer = await StockTransfer.findById(incompleteTransfer._id)
+      .populate('fromCenter', '_id centerName centerCode')
+      .populate('toCenter', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+      .populate('createdBy', '_id fullName email')
+      .populate('completionInfo.incompleteBy', '_id fullName email');
+
+    res.status(200).json({
+      success: true,
+      message: 'Stock transfer marked as incomplete',
+      data: populatedTransfer
+    });
+
+  } catch (error) {
+    console.error('Error marking stock transfer as incomplete:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const rejectStockTransfer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rejectionRemark } = req.body;
+
+    const stockTransfer = await StockTransfer.findById(id);
+    if (!stockTransfer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock transfer not found'
+      });
+    }
+
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
+    }
+
+    // Reject transfer
+    const rejectedTransfer = await stockTransfer.rejectTransfer(userId, rejectionRemark);
+
+    const populatedTransfer = await StockTransfer.findById(rejectedTransfer._id)
+      .populate('fromCenter', '_id centerName centerCode')
+      .populate('toCenter', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+      .populate('createdBy', '_id fullName email')
+      .populate('completionInfo.incompleteBy', '_id fullName email');
+
+    res.status(200).json({
+      success: true,
+      message: 'Stock transfer rejected',
+      data: populatedTransfer
+    });
+
+  } catch (error) {
+    console.error('Error rejecting stock transfer:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 };
@@ -226,36 +719,36 @@ export const getAllStockTransfers = async (req, res) => {
       endDate,
       transferNumber,
       search,
-      sortBy = "createdAt",
-      sortOrder = "desc",
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
     } = req.query;
 
     const filter = {};
 
-    try {
-      const userFromCenter = await validateUserCenter(req.user?.id);
-      filter.fromCenter = userFromCenter;
-    } catch (error) {
-      const isAdmin = await isAdminUser(req.user?.id);
-      if (!isAdmin && fromCenter) {
-        filter.fromCenter = fromCenter;
-      }
+    // Get user's center for filtering
+    const user = await User.findById(req.user.id).populate('center');
+    if (user && user.center) {
+      // Show transfers where user's center is either fromCenter or toCenter
+      filter.$or = [
+        { fromCenter: user.center._id },
+        { toCenter: user.center._id }
+      ];
     }
 
     if (status) {
-      if (status.includes(",")) {
-        filter.status = { $in: status.split(",") };
+      if (status.includes(',')) {
+        filter.status = { $in: status.split(',') };
       } else {
         filter.status = status;
       }
     }
 
+    if (fromCenter) {
+      filter.fromCenter = fromCenter;
+    }
+
     if (toCenter) {
-      if (toCenter.includes(",")) {
-        filter.toCenter = { $in: toCenter.split(",") };
-      } else {
-        filter.toCenter = toCenter;
-      }
+      filter.toCenter = toCenter;
     }
 
     if (startDate || endDate) {
@@ -265,64 +758,43 @@ export const getAllStockTransfers = async (req, res) => {
     }
 
     if (transferNumber) {
-      if (transferNumber.includes(",")) {
-        filter.transferNumber = {
-          $in: transferNumber.split(",").map((num) => num.trim()),
-        };
+      if (transferNumber.includes(',')) {
+        filter.transferNumber = { $in: transferNumber.split(',').map(num => num.trim()) };
       } else {
-        filter.transferNumber = { $regex: transferNumber, $options: "i" };
+        filter.transferNumber = { $regex: transferNumber, $options: 'i' };
       }
     }
 
     if (search) {
       filter.$or = [
-        { transferNumber: { $regex: search, $options: "i" } },
-        { remark: { $regex: search, $options: "i" } },
-        { "products.productRemark": { $regex: search, $options: "i" } },
-        { "adminApproval.approvedRemark": { $regex: search, $options: "i" } },
-        { "adminApproval.rejectionReason": { $regex: search, $options: "i" } },
-        { "approvalInfo.approvedRemark": { $regex: search, $options: "i" } },
-        { "receivingInfo.receivedRemark": { $regex: search, $options: "i" } },
+        { transferNumber: { $regex: search, $options: 'i' } },
+        { remark: { $regex: search, $options: 'i' } },
+        { 'products.productRemark': { $regex: search, $options: 'i' } }
       ];
     }
 
     const sortOptions = {};
-    const validSortFields = [
-      "createdAt",
-      "updatedAt",
-      "date",
-      "transferNumber",
-      "status",
-      "adminApproval.approvedAt",
-      "adminApproval.rejectedAt",
-      "approvalInfo.approvedAt",
-      "shippingInfo.shippedAt",
-      "receivingInfo.receivedAt",
-    ];
-    const actualSortBy = validSortFields.includes(sortBy)
-      ? sortBy
-      : "createdAt";
-    sortOptions[actualSortBy] = sortOrder === "desc" ? -1 : 1;
+    const validSortFields = ['createdAt', 'updatedAt', 'date', 'transferNumber', 'status'];
+    const actualSortBy = validSortFields.includes(sortBy) ? sortBy : 'createdAt';
+    sortOptions[actualSortBy] = sortOrder === 'desc' ? -1 : 1;
 
     const stockTransfers = await StockTransfer.find(filter)
-      .populate("fromCenter", "_id centerName centerCode")
-      .populate("toCenter", "_id centerName centerCode")
-      .populate(
-        "products.product",
-        "_id productTitle productCode trackSerialNumbers"
-      )
-      .populate("createdBy", "_id fullName email")
-      .populate("updatedBy", "_id fullName email")
-      .populate("adminApproval.approvedBy", "_id fullName email")
-      .populate("adminApproval.rejectedBy", "_id fullName email")
-      .populate("approvalInfo.approvedBy", "_id fullName email")
-      .populate("shippingInfo.shippedBy", "_id fullName email")
-      .populate("receivingInfo.receivedBy", "_id fullName email")
-      .populate("completionInfo.completedBy", "_id fullName email")
-      .populate("completionInfo.incompleteBy", "_id fullName email")
+      .populate('fromCenter', '_id centerName centerCode')
+      .populate('toCenter', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+      .populate('createdBy', '_id fullName email')
+      .populate('updatedBy', '_id fullName email')
+      .populate('adminApproval.approvedBy', '_id fullName email')
+      .populate('adminApproval.rejectedBy', '_id fullName email')
+      .populate('centerApproval.approvedBy', '_id fullName email')
+      .populate('shippingInfo.shippedBy', '_id fullName email')
+      .populate('receivingInfo.receivedBy', '_id fullName email')
+      .populate('completionInfo.completedBy', '_id fullName email')
+      .populate('completionInfo.incompleteBy', '_id fullName email')
       .sort(sortOptions)
       .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .skip((page - 1) * limit)
+      .lean();
 
     const total = await StockTransfer.countDocuments(filter);
 
@@ -330,38 +802,38 @@ export const getAllStockTransfers = async (req, res) => {
       { $match: filter },
       {
         $group: {
-          _id: "$status",
-          count: { $sum: 1 },
-        },
-      },
+          _id: '$status',
+          count: { $sum: 1 }
+        }
+      }
     ]);
 
     const statusStats = {};
-    statusCounts.forEach((stat) => {
+    statusCounts.forEach(stat => {
       statusStats[stat._id] = stat.count;
     });
 
     res.status(200).json({
       success: true,
-      message: "Stock transfers retrieved successfully",
+      message: 'Stock transfers retrieved successfully',
       data: stockTransfers,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / limit),
         totalItems: total,
-        itemsPerPage: parseInt(limit),
+        itemsPerPage: parseInt(limit)
       },
       filters: {
         status: statusStats,
-        total: total,
-      },
+        total: total
+      }
     });
   } catch (error) {
-    console.error("Error retrieving stock transfers:", error);
+    console.error('Error retrieving stock transfers:', error);
     res.status(500).json({
       success: false,
-      message: "Error retrieving stock transfers",
-      error: error.message,
+      message: 'Error retrieving stock transfers',
+      error: error.message
     });
   }
 };
@@ -371,72 +843,45 @@ export const getStockTransferById = async (req, res) => {
     const { id } = req.params;
 
     const stockTransfer = await StockTransfer.findById(id)
-      .populate("fromCenter", "_id centerName centerCode")
-      .populate("toCenter", "_id centerName centerCode")
-      .populate(
-        "products.product",
-        "_id productTitle productCode productImage trackSerialNumbers"
-      )
-      .populate("createdBy", "_id fullName email")
-      .populate("updatedBy", "_id fullName email")
-      .populate("adminApproval.approvedBy", "_id fullName email")
-      .populate("adminApproval.rejectedBy", "_id fullName email")
-      .populate("approvalInfo.approvedBy", "_id fullName email")
-      .populate("shippingInfo.shippedBy", "_id fullName email")
-      .populate("receivingInfo.receivedBy", "_id fullName email")
-      .populate("completionInfo.completedBy", "_id fullName email")
-      .populate("completionInfo.incompleteBy", "_id fullName email");
+      .populate('fromCenter', '_id centerName centerCode')
+      .populate('toCenter', '_id centerName centerCode')
+      .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+      .populate('createdBy', '_id fullName email')
+      .populate('updatedBy', '_id fullName email')
+      .populate('adminApproval.approvedBy', '_id fullName email')
+      .populate('adminApproval.rejectedBy', '_id fullName email')
+      .populate('centerApproval.approvedBy', '_id fullName email')
+      .populate('shippingInfo.shippedBy', '_id fullName email')
+      .populate('receivingInfo.receivedBy', '_id fullName email')
+      .populate('completionInfo.completedBy', '_id fullName email')
+      .populate('completionInfo.incompleteBy', '_id fullName email')
+      .lean();
 
     if (!stockTransfer) {
       return res.status(404).json({
         success: false,
-        message: "Stock transfer not found",
+        message: 'Stock transfer not found'
       });
-    }
-
-    try {
-      const userFromCenter = await validateUserCenter(req.user?.id);
-      const isAdmin = await isAdminUser(req.user?.id);
-
-      if (
-        !isAdmin &&
-        stockTransfer.fromCenter.toString() !== userFromCenter.toString()
-      ) {
-        return res.status(403).json({
-          success: false,
-          message:
-            "Access denied. You can only view transfers from your center.",
-        });
-      }
-    } catch (error) {
-      const isAdmin = await isAdminUser(req.user?.id);
-      if (!isAdmin) {
-        return res.status(403).json({
-          success: false,
-          message:
-            "Access denied. You can only view transfers from your center.",
-        });
-      }
     }
 
     res.status(200).json({
       success: true,
-      message: "Stock transfer retrieved successfully",
-      data: stockTransfer,
+      message: 'Stock transfer retrieved successfully',
+      data: stockTransfer
     });
   } catch (error) {
-    if (error.name === "CastError") {
+    if (error.name === 'CastError') {
       return res.status(400).json({
         success: false,
-        message: "Invalid stock transfer ID",
+        message: 'Invalid stock transfer ID'
       });
     }
 
-    console.error("Error retrieving stock transfer:", error);
+    console.error('Error retrieving stock transfer:', error);
     res.status(500).json({
       success: false,
-      message: "Error retrieving stock transfer",
-      error: error.message,
+      message: 'Error retrieving stock transfer',
+      error: error.message
     });
   }
 };
@@ -445,202 +890,47 @@ export const updateStockTransfer = async (req, res) => {
   try {
     const { id } = req.params;
     const {
-      toCenter,
-      date,
+      fromCenter,
       transferNumber,
       remark,
       products,
-      status,
-      approvalInfo,
-      shippingInfo,
-      receivingInfo,
-      completionInfo,
+      date
     } = req.body;
-
-    const fromCenter = await validateUserCenter(req.user?.id);
 
     const existingTransfer = await StockTransfer.findById(id);
     if (!existingTransfer) {
       return res.status(404).json({
         success: false,
-        message: "Stock transfer not found",
+        message: 'Stock transfer not found'
       });
     }
 
-    if (existingTransfer.fromCenter.toString() !== fromCenter.toString()) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Access denied. You can only update transfers from your center.",
-      });
-    }
-
-    if (
-      ["Completed", "Admin_Rejected", "Rejected"].includes(
-        existingTransfer.status
-      )
-    ) {
+    // Only allow updates for Draft status
+    if (existingTransfer.status !== 'Draft') {
       return res.status(400).json({
         success: false,
-        message: "Cannot update completed or rejected stock transfers",
+        message: 'Only draft transfers can be updated'
       });
-    }
-
-    const isAdmin = await isAdminUser(req.user?.id);
-    if (!isAdmin && existingTransfer.adminApproval.status === "Approved") {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Cannot update transfer after admin approval. Please contact administrator.",
-      });
-    }
-
-    if (transferNumber && transferNumber !== existingTransfer.transferNumber) {
-      const existingTransferNumber = await StockTransfer.findOne({
-        transferNumber,
-        _id: { $ne: id },
-      });
-
-      if (existingTransferNumber) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Transfer number already exists. Please use a different transfer number.",
-        });
-      }
-    }
-
-    if (products && Array.isArray(products)) {
-      if (products.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "At least one product is required",
-        });
-      }
-
-      for (let product of products) {
-        if (!product.product || !product.quantity || product.quantity < 1) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "Each product must have a valid product ID and quantity (min 1)",
-          });
-        }
-      }
-
-      if (["Draft", "Submitted"].includes(existingTransfer.status)) {
-        for (let product of products) {
-          const stockData = await StockPurchase.aggregate([
-            {
-              $match: {
-                outlet: fromCenter,
-                "products.product": new mongoose.Types.ObjectId(
-                  product.product
-                ),
-              },
-            },
-            { $unwind: "$products" },
-            {
-              $match: {
-                "products.product": new mongoose.Types.ObjectId(
-                  product.product
-                ),
-              },
-            },
-            {
-              $group: {
-                _id: "$products.product",
-                totalAvailable: { $sum: "$products.availableQuantity" },
-              },
-            },
-          ]);
-
-          const currentAvailableStock =
-            stockData.length > 0 ? stockData[0].totalAvailable : 0;
-
-          if (product.quantity > currentAvailableStock) {
-            const productDoc = await Product.findById(product.product);
-            return res.status(400).json({
-              success: false,
-              message: `Insufficient stock for product "${productDoc.productTitle}". Available: ${currentAvailableStock}, Requested: ${product.quantity}`,
-            });
-          }
-        }
-      }
-    }
-
-    if (toCenter) {
-      const toCenterExists = await Center.findById(toCenter);
-      if (!toCenterExists) {
-        return res.status(404).json({
-          success: false,
-          message: "To center not found",
-        });
-      }
-
-      if (fromCenter.toString() === toCenterExists._id.toString()) {
-        return res.status(400).json({
-          success: false,
-          message: "From center and to center cannot be the same",
-        });
-      }
     }
 
     const userId = req.user?.id;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
+    }
+
     const updateData = {
       updatedBy: userId,
-      ...(toCenter && { toCenter }),
-      ...(date && { date }),
-      ...(transferNumber && { transferNumber }),
+      ...(fromCenter && { fromCenter }),
+      ...(transferNumber && { transferNumber: transferNumber.trim() }),
       ...(remark !== undefined && { remark }),
-      ...(status && { status }),
-      ...(approvalInfo && {
-        approvalInfo: { ...existingTransfer.approvalInfo, ...approvalInfo },
-      }),
-      ...(shippingInfo && {
-        shippingInfo: { ...existingTransfer.shippingInfo, ...shippingInfo },
-      }),
-      ...(receivingInfo && {
-        receivingInfo: { ...existingTransfer.receivingInfo, ...receivingInfo },
-      }),
-      ...(completionInfo && {
-        completionInfo: {
-          ...existingTransfer.completionInfo,
-          ...completionInfo,
-        },
-      }),
+      ...(date && { date: new Date(date) })
     };
 
     if (products) {
-      if (["Draft", "Submitted"].includes(existingTransfer.status)) {
-        updateData.products = products;
-      } else {
-        updateData.products = existingTransfer.products.map(
-          (existingProduct, index) => {
-            const newProduct = products.find(
-              (p) => p.product.toString() === existingProduct.product.toString()
-            );
-            if (newProduct) {
-              return {
-                ...existingProduct.toObject(),
-                productRemark:
-                  newProduct.productRemark !== undefined
-                    ? newProduct.productRemark
-                    : existingProduct.productRemark,
-                receivedQuantity:
-                  newProduct.receivedQuantity !== undefined
-                    ? newProduct.receivedQuantity
-                    : existingProduct.receivedQuantity,
-                receivedRemark:
-                  newProduct.receivedRemark !== undefined
-                    ? newProduct.receivedRemark
-                    : existingProduct.receivedRemark,
-              };
-            }
-            return existingProduct;
-          }
-        );
-      }
+      updateData.products = products;
     }
 
     const updatedTransfer = await StockTransfer.findByIdAndUpdate(
@@ -648,61 +938,46 @@ export const updateStockTransfer = async (req, res) => {
       updateData,
       { new: true, runValidators: true }
     )
-      .populate("fromCenter", "_id centerName centerCode")
-      .populate("toCenter", "_id centerName centerCode")
-      .populate(
-        "products.product",
-        "_id productTitle productCode trackSerialNumbers"
-      )
-      .populate("createdBy", "_id fullName email")
-      .populate("updatedBy", "_id fullName email")
-      .populate("adminApproval.approvedBy", "_id fullName email")
-      .populate("adminApproval.rejectedBy", "_id fullName email")
-      .populate("approvalInfo.approvedBy", "_id fullName email")
-      .populate("shippingInfo.shippedBy", "_id fullName email")
-      .populate("receivingInfo.receivedBy", "_id fullName email")
-      .populate("completionInfo.incompleteBy", "_id fullName email");
+    .populate('fromCenter', '_id centerName centerCode')
+    .populate('toCenter', '_id centerName centerCode')
+    .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+    .populate('createdBy', '_id fullName email')
+    .populate('updatedBy', '_id fullName email');
 
     res.status(200).json({
       success: true,
-      message: "Stock transfer updated successfully",
-      data: updatedTransfer,
+      message: 'Stock transfer updated successfully',
+      data: updatedTransfer
     });
   } catch (error) {
-    if (
-      error.message.includes("User authentication") ||
-      error.message.includes("Access denied")
-    ) {
+    if (error.name === 'CastError') {
       return res.status(400).json({
         success: false,
-        message: error.message,
+        message: 'Invalid stock transfer ID'
       });
     }
 
-    if (error.name === "CastError") {
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
       return res.status(400).json({
         success: false,
-        message: "Invalid stock transfer ID",
+        message: 'Validation error',
+        errors
       });
     }
 
-    if (error.name === "ValidationError") {
-      const errors = Object.values(error.errors).map((err) => err.message);
+    if (error.code === 11000) {
       return res.status(400).json({
         success: false,
-        message: "Validation error",
-        errors,
+        message: 'Transfer number already exists. Please use a different transfer number.'
       });
     }
 
-    console.error("Error updating stock transfer:", error);
+    console.error('Error updating stock transfer:', error);
     res.status(500).json({
       success: false,
-      message: "Error updating stock transfer",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
+      message: 'Error updating stock transfer',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 };
@@ -711,32 +986,20 @@ export const deleteStockTransfer = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const fromCenter = await validateUserCenter(req.user?.id);
-
     const stockTransfer = await StockTransfer.findById(id);
-
+    
     if (!stockTransfer) {
       return res.status(404).json({
         success: false,
-        message: "Stock transfer not found",
+        message: 'Stock transfer not found'
       });
     }
 
-    if (stockTransfer.fromCenter.toString() !== fromCenter.toString()) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Access denied. You can only delete transfers from your center.",
-      });
-    }
-
-    const allowedStatuses = ["Draft", "Submitted", "Admin_Rejected"];
-    if (!allowedStatuses.includes(stockTransfer.status)) {
+    // Only allow deletion for Draft status
+    if (stockTransfer.status == 'Completed' || stockTransfer.status == 'Shipped' || stockTransfer.status == 'Rejected') {
       return res.status(400).json({
         success: false,
-        message: `Only ${allowedStatuses.join(
-          ", "
-        )} stock transfers can be deleted`,
+        message: 'Only Completed, Shipped, Rejected transfers can not be deleted'
       });
     }
 
@@ -744,564 +1007,89 @@ export const deleteStockTransfer = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Stock transfer deleted successfully",
+      message: 'Stock transfer deleted successfully'
     });
   } catch (error) {
-    if (
-      error.message.includes("User authentication") ||
-      error.message.includes("Access denied")
-    ) {
+    if (error.name === 'CastError') {
       return res.status(400).json({
         success: false,
-        message: error.message,
+        message: 'Invalid stock transfer ID'
       });
     }
 
-    if (error.name === "CastError") {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid stock transfer ID",
-      });
-    }
-
-    console.error("Error deleting stock transfer:", error);
+    console.error('Error deleting stock transfer:', error);
     res.status(500).json({
       success: false,
-      message: "Error deleting stock transfer",
-      error: error.message,
+      message: 'Error deleting stock transfer',
+      error: error.message
     });
   }
 };
 
-export const submitForAdminApproval = async (req, res) => {
+export const getPendingAdminApprovalTransfers = async (req, res) => {
   try {
-    const { id } = req.params;
-
-    const fromCenter = await validateUserCenter(req.user?.id);
-
-    const stockTransfer = await StockTransfer.findById(id);
-    if (!stockTransfer) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock transfer not found",
-      });
-    }
-
-    if (stockTransfer.fromCenter.toString() !== fromCenter.toString()) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Access denied. You can only submit transfers from your center.",
-      });
-    }
-
-    const updatedTransfer = await stockTransfer.submitTransfer();
-
-    const populatedTransfer = await StockTransfer.findById(updatedTransfer._id)
-      .populate("fromCenter", "_id centerName centerCode")
-      .populate("toCenter", "_id centerName centerCode")
-      .populate(
-        "products.product",
-        "_id productTitle productCode trackSerialNumbers"
-      )
-      .populate("createdBy", "_id fullName email");
-
-    res.status(200).json({
-      success: true,
-      message: "Stock transfer submitted for admin approval successfully",
-      data: populatedTransfer,
-    });
-  } catch (error) {
-    console.error("Error submitting transfer for admin approval:", error);
-
-    if (
-      error.message.includes("Only draft transfers") ||
-      error.message.includes("Access denied") ||
-      error.message.includes("Insufficient stock")
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: "Error submitting transfer for admin approval",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
-    });
-  }
-};
-
-export const approveStockTransferByAdmin = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { approvedRemark = "", modifications = [] } = req.body;
-
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "Admin authentication required",
-      });
-    }
-
-    const user = await User.findById(userId);
-    if (!user || !user.isAdmin) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. Admin privileges required.",
-      });
-    }
-
-    const stockTransfer = await StockTransfer.findById(id);
-    if (!stockTransfer) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock transfer not found",
-      });
-    }
-
-    if (stockTransfer.status !== "Submitted") {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot approve transfer with status: ${stockTransfer.status}. Transfer must be in 'Submitted' status for admin approval.`,
-      });
-    }
-
-    const updatedTransfer = await stockTransfer.approveByAdmin(
-      userId,
-      approvedRemark,
-      modifications
-    );
-
-    const populatedTransfer = await StockTransfer.findById(updatedTransfer._id)
-      .populate("fromCenter", "_id centerName centerCode")
-      .populate("toCenter", "_id centerName centerCode")
-      .populate(
-        "products.product",
-        "_id productTitle productCode trackSerialNumbers"
-      )
-      .populate("createdBy", "_id fullName email")
-      .populate("adminApproval.approvedBy", "_id fullName email")
-      .populate(
-        "adminApproval.modifications.product",
-        "_id productTitle productCode"
-      );
-
-    res.status(200).json({
-      success: true,
-      message: "Stock transfer approved by admin successfully",
-      data: populatedTransfer,
-    });
-  } catch (error) {
-    console.error("Error approving stock transfer by admin:", error);
-
-    if (
-      error.message.includes("Only submitted transfers") ||
-      error.message.includes("Transfer is not pending")
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: "Error approving stock transfer by admin",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
-    });
-  }
-};
-
-export const rejectStockTransferByAdmin = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { rejectionReason = "" } = req.body;
-
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "Admin authentication required",
-      });
-    }
-
-    const user = await User.findById(userId);
-    if (!user || !user.isAdmin) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. Admin privileges required.",
-      });
-    }
-
-    const stockTransfer = await StockTransfer.findById(id);
-    if (!stockTransfer) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock transfer not found",
-      });
-    }
-
-    if (stockTransfer.status !== "Submitted") {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot reject transfer with status: ${stockTransfer.status}. Transfer must be in 'Submitted' status for admin rejection.`,
-      });
-    }
-
-    const updatedTransfer = await stockTransfer.rejectByAdmin(
-      userId,
-      rejectionReason
-    );
-
-    const populatedTransfer = await StockTransfer.findById(updatedTransfer._id)
-      .populate("fromCenter", "_id centerName centerCode")
-      .populate("toCenter", "_id centerName centerCode")
-      .populate(
-        "products.product",
-        "_id productTitle productCode trackSerialNumbers"
-      )
-      .populate("createdBy", "_id fullName email")
-      .populate("adminApproval.rejectedBy", "_id fullName email");
-
-    res.status(200).json({
-      success: true,
-      message: "Stock transfer rejected by admin successfully",
-      data: populatedTransfer,
-    });
-  } catch (error) {
-    console.error("Error rejecting stock transfer by admin:", error);
-
-    if (
-      error.message.includes("Only submitted transfers") ||
-      error.message.includes("Transfer is not pending")
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: "Error rejecting stock transfer by admin",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
-    });
-  }
-};
-
-export const approveStockTransfer = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { productApprovals } = req.body;
-
-    if (
-      !productApprovals ||
-      !Array.isArray(productApprovals) ||
-      productApprovals.length === 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Product approvals are required with approved quantities",
-      });
-    }
-
-    const stockTransfer = await StockTransfer.findById(id);
-    if (!stockTransfer) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock transfer not found",
-      });
-    }
-
-    if (!stockTransfer.isAdminApproved()) {
-      return res.status(400).json({
-        success: false,
-        message: "Admin approval is required before center approval",
-      });
-    }
-
-    if (stockTransfer.status !== "Admin_Approved") {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot approve a stock transfer with status: ${stockTransfer.status}. Status must be 'Admin_Approved'`,
-      });
-    }
-
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "User authentication required",
-      });
-    }
-
-    for (const approval of productApprovals) {
-      if (!approval.productId || approval.approvedQuantity === undefined) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Each product approval must have productId and approvedQuantity",
-        });
-      }
-
-      const productExists = stockTransfer.products.some(
-        (p) => p.product.toString() === approval.productId.toString()
-      );
-
-      if (!productExists) {
-        return res.status(400).json({
-          success: false,
-          message: `Product with ID ${approval.productId} not found in this stock transfer`,
-        });
-      }
-    }
-
-    const updatedTransfer = await stockTransfer.approveTransfer(
-      userId,
-      productApprovals
-    );
-
-    const populatedTransfer = await StockTransfer.findById(updatedTransfer._id)
-      .populate("fromCenter", "_id centerName centerCode")
-      .populate("toCenter", "_id centerName centerCode")
-      .populate(
-        "products.product",
-        "_id productTitle productCode trackSerialNumbers"
-      )
-      .populate("approvalInfo.approvedBy", "_id fullName email")
-      .populate("createdBy", "_id fullName email")
-      .populate("updatedBy", "_id fullName email");
-
-    res.status(200).json({
-      success: true,
-      message: "Stock transfer approved successfully",
-      data: populatedTransfer,
-    });
-  } catch (error) {
-    console.error("Error approving stock transfer:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error approving stock transfer",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
-    });
-  }
-};
-
-export const shipStockTransfer = async (req, res) => {
-  try {
-    const { id } = req.params;
     const {
-      shippedDate,
-      expectedDeliveryDate,
-      shipmentDetails,
-      shipmentRemark,
-      documents,
-    } = req.body;
+      page = 1,
+      limit = 10,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
 
-    if (!shippedDate) {
-      return res.status(400).json({
-        success: false,
-        message: "Shipped date is required",
-      });
-    }
+    const pendingTransfers = await StockTransfer.findPendingAdminApproval({
+      page: parseInt(page),
+      limit: parseInt(limit),
+      sortBy,
+      sortOrder
+    });
 
-    const stockTransfer = await StockTransfer.findById(id);
-    if (!stockTransfer) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock transfer not found",
-      });
-    }
-
-    if (!stockTransfer.isAdminApproved()) {
-      return res.status(400).json({
-        success: false,
-        message: "Admin approval is required before shipping",
-      });
-    }
-
-    if (stockTransfer.status !== "Confirmed") {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot ship a stock transfer with status: ${stockTransfer.status}. Status must be 'Confirmed'`,
-      });
-    }
-
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "User authentication required",
-      });
-    }
-
-    const shippingDetails = {
-      shippedDate: new Date(shippedDate),
-      ...(expectedDeliveryDate && {
-        expectedDeliveryDate: new Date(expectedDeliveryDate),
-      }),
-      ...(shipmentDetails && { shipmentDetails }),
-      ...(shipmentRemark && { shipmentRemark }),
-      ...(documents && {
-        documents: Array.isArray(documents) ? documents : [documents],
-      }),
-    };
-
-    const updatedTransfer = await stockTransfer.shipTransfer(
-      userId,
-      shippingDetails
-    );
-
-    const populatedTransfer = await StockTransfer.findById(updatedTransfer._id)
-      .populate("fromCenter", "_id centerName centerCode")
-      .populate("toCenter", "_id centerName centerCode")
-      .populate(
-        "products.product",
-        "_id productTitle productCode trackSerialNumbers"
-      )
-      .populate("shippingInfo.shippedBy", "_id fullName email")
-      .populate("createdBy", "_id fullName email")
-      .populate("updatedBy", "_id fullName email");
+    const total = await StockTransfer.countDocuments({
+      status: "Submitted",
+      "adminApproval.status": { $exists: false }
+    });
 
     res.status(200).json({
       success: true,
-      message: "Stock transfer shipped successfully",
-      data: populatedTransfer,
+      message: 'Pending admin approval transfers retrieved successfully',
+      data: pendingTransfers,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        itemsPerPage: parseInt(limit)
+      }
     });
   } catch (error) {
-    console.error("Error shipping stock transfer:", error);
+    console.error('Error retrieving pending admin approval transfers:', error);
     res.status(500).json({
       success: false,
-      message: "Error shipping stock transfer",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
+      message: 'Error retrieving pending admin approval transfers',
+      error: error.message
     });
   }
 };
 
-export const completeStockTransfer = async (req, res) => {
+export const getTransferStats = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { productReceipts } = req.body;
+    const user = await User.findById(req.user.id).populate('center');
+    let centerId = null;
 
-    if (
-      !productReceipts ||
-      !Array.isArray(productReceipts) ||
-      productReceipts.length === 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Product receipts are required with received quantities",
-      });
+    if (user && user.center) {
+      centerId = user.center._id;
     }
 
-    const stockTransfer = await StockTransfer.findById(id);
-    if (!stockTransfer) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock transfer not found",
-      });
-    }
-
-    if (!stockTransfer.isAdminApproved()) {
-      return res.status(400).json({
-        success: false,
-        message: "Admin approval is required before completion",
-      });
-    }
-
-    if (stockTransfer.status !== "Shipped") {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot complete a stock transfer with status: ${stockTransfer.status}. Status must be 'Shipped'`,
-      });
-    }
-
-    if (!stockTransfer.challanDocument) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Cannot complete stock transfer. Challan document is required. Please upload the challan document.",
-      });
-    }
-
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "User authentication required",
-      });
-    }
-
-    for (const receipt of productReceipts) {
-      if (!receipt.productId || receipt.receivedQuantity === undefined) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Each product receipt must have productId and receivedQuantity",
-        });
-      }
-
-      const productExists = stockTransfer.products.some(
-        (p) => p.product.toString() === receipt.productId.toString()
-      );
-
-      if (!productExists) {
-        return res.status(400).json({
-          success: false,
-          message: `Product with ID ${receipt.productId} not found in this stock transfer`,
-        });
-      }
-    }
-
-    const updatedTransfer = await stockTransfer.completeTransfer(
-      userId,
-      productReceipts
-    );
-
-    const populatedTransfer = await StockTransfer.findById(updatedTransfer._id)
-      .populate("fromCenter", "_id centerName centerCode")
-      .populate("toCenter", "_id centerName centerCode")
-      .populate(
-        "products.product",
-        "_id productTitle productCode trackSerialNumbers"
-      )
-      .populate("receivingInfo.receivedBy", "_id fullName email")
-      .populate("completionInfo.completedBy", "_id fullName email")
-      .populate("createdBy", "_id fullName email")
-      .populate("updatedBy", "_id fullName email");
+    const stats = await StockTransfer.getTransferStats(centerId);
 
     res.status(200).json({
       success: true,
-      message: "Stock transfer completed successfully",
-      data: populatedTransfer,
+      message: 'Transfer statistics retrieved successfully',
+      data: stats
     });
   } catch (error) {
-    console.error("Error completing stock transfer:", error);
+    console.error('Error retrieving transfer statistics:', error);
     res.status(500).json({
       success: false,
-      message: "Error completing stock transfer",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
+      message: 'Error retrieving transfer statistics',
+      error: error.message
     });
   }
 };
@@ -1309,26 +1097,27 @@ export const completeStockTransfer = async (req, res) => {
 export const updateShippingInfo = async (req, res) => {
   try {
     const { id } = req.params;
-    const {
-      shippedDate,
-      expectedDeliveryDate,
-      shipmentDetails,
-      shipmentRemark,
-      documents,
+    const { 
+      shippedDate, 
+      expectedDeliveryDate, 
+      shipmentDetails, 
+      carrierInfo,
+      documents 
     } = req.body;
 
     const stockTransfer = await StockTransfer.findById(id);
     if (!stockTransfer) {
       return res.status(404).json({
         success: false,
-        message: "Stock transfer not found",
+        message: 'Stock transfer not found'
       });
     }
 
-    if (stockTransfer.status !== "Shipped") {
+    // Only allow updating shipping info for Shipped or Confirmed status
+    if (!['Shipped', 'Confirmed'].includes(stockTransfer.status)) {
       return res.status(400).json({
         success: false,
-        message: `Cannot update shipping information for stock transfer with status: ${stockTransfer.status}. Status must be 'Shipped'`,
+        message: 'Shipping info can only be updated for Shipped or Confirmed transfers'
       });
     }
 
@@ -1336,500 +1125,24 @@ export const updateShippingInfo = async (req, res) => {
     if (!userId) {
       return res.status(400).json({
         success: false,
-        message: "User authentication required",
+        message: 'User authentication required'
       });
-    }
-
-    const shippingDetails = {
-      ...(shippedDate && { shippedDate: new Date(shippedDate) }),
-      ...(expectedDeliveryDate && {
-        expectedDeliveryDate: new Date(expectedDeliveryDate),
-      }),
-      ...(shipmentDetails && { shipmentDetails }),
-      ...(shipmentRemark && { shipmentRemark }),
-      ...(documents && {
-        documents: Array.isArray(documents) ? documents : [documents],
-      }),
-    };
-
-    const updatedTransfer = await stockTransfer.updateShippingInfo(
-      shippingDetails
-    );
-
-    updatedTransfer.updatedBy = userId;
-    await updatedTransfer.save();
-
-    const populatedTransfer = await StockTransfer.findById(updatedTransfer._id)
-      .populate("toCenter", "_id centerName centerCode")
-      .populate("products.product", "_id productTitle productCode")
-      .populate("shippingInfo.shippedBy", "_id fullName email")
-      .populate("updatedBy", "_id fullName email")
-      .populate("createdBy", "_id fullName email");
-
-    res.status(200).json({
-      success: true,
-      message: "Shipping information updated successfully",
-      data: populatedTransfer,
-    });
-  } catch (error) {
-    console.error("Error updating shipping information:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error updating shipping information",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
-    });
-  }
-};
-
-export const rejectShipment = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const stockTransfer = await StockTransfer.findById(id);
-    if (!stockTransfer) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock transfer not found",
-      });
-    }
-
-    if (stockTransfer.status !== "Shipped") {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot reject shipment for stock transfer with status: ${stockTransfer.status}. Status must be 'Shipped'`,
-      });
-    }
-
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "User authentication required",
-      });
-    }
-
-    const updatedTransfer = await stockTransfer.rejectShipment(userId);
-
-    updatedTransfer.updatedBy = userId;
-    await updatedTransfer.save();
-
-    const populatedTransfer = await StockTransfer.findById(updatedTransfer._id)
-      .populate("toCenter", "_id centerName centerCode")
-      .populate("products.product", "_id productTitle productCode")
-      .populate(
-        "shippingInfo.shipmentRejected.rejectedBy",
-        "_id fullName email"
-      )
-      .populate("updatedBy", "_id fullName email")
-      .populate("createdBy", "_id fullName email");
-
-    res.status(200).json({
-      success: true,
-      message:
-        "Shipment rejected successfully. Shipping details cleared and status reverted to Confirmed.",
-      data: populatedTransfer,
-    });
-  } catch (error) {
-    console.error("Error rejecting shipment:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error rejecting shipment",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
-    });
-  }
-};
-
-export const markAsIncomplete = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { incompleteRemark } = req.body;
-
-    const stockTransfer = await StockTransfer.findById(id);
-    if (!stockTransfer) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock transfer not found",
-      });
-    }
-
-    if (stockTransfer.status !== "Shipped") {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot mark as incomplete a stock transfer with status: ${stockTransfer.status}. Status must be 'Shipped'`,
-      });
-    }
-
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "User authentication required",
-      });
-    }
-
-    const updatedTransfer = await stockTransfer.markAsIncomplete(
-      userId,
-      incompleteRemark
-    );
-
-    const populatedTransfer = await StockTransfer.findById(updatedTransfer._id)
-      .populate("toCenter", "_id centerName centerCode")
-      .populate("products.product", "_id productTitle productCode")
-      .populate("completionInfo.incompleteBy", "_id fullName email")
-      .populate("createdBy", "_id fullName email")
-      .populate("updatedBy", "_id fullName email");
-
-    res.status(200).json({
-      success: true,
-      message: "Stock transfer marked as incomplete successfully",
-      data: populatedTransfer,
-    });
-  } catch (error) {
-    console.error("Error marking stock transfer as incomplete:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error marking stock transfer as incomplete",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
-    });
-  }
-};
-
-export const completeIncompleteTransfer = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { productApprovals, productReceipts } = req.body;
-
-    const stockTransfer = await StockTransfer.findById(id);
-    if (!stockTransfer) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock transfer not found",
-      });
-    }
-
-    if (stockTransfer.status !== "Incompleted") {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot complete a stock transfer with status: ${stockTransfer.status}. Status must be 'Incompleted'`,
-      });
-    }
-
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "User authentication required",
-      });
-    }
-
-    if (productApprovals && Array.isArray(productApprovals)) {
-      for (const approval of productApprovals) {
-        if (!approval.productId || approval.approvedQuantity === undefined) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "Each product approval must have productId and approvedQuantity",
-          });
-        }
-
-        const productExists = stockTransfer.products.some(
-          (p) => p.product.toString() === approval.productId.toString()
-        );
-
-        if (!productExists) {
-          const productDoc = await Product.findById(approval.productId);
-          const productName = productDoc
-            ? productDoc.productTitle
-            : approval.productId;
-          return res.status(400).json({
-            success: false,
-            message: `Product "${productName}" not found in this stock transfer`,
-          });
-        }
-
-        const existingProduct = stockTransfer.products.find(
-          (p) => p.product.toString() === approval.productId.toString()
-        );
-
-        if (approval.approvedQuantity > existingProduct.quantity) {
-          const productDoc = await Product.findById(approval.productId);
-          const productName = productDoc
-            ? productDoc.productTitle
-            : approval.productId;
-          return res.status(400).json({
-            success: false,
-            message: `Approved quantity (${approval.approvedQuantity}) cannot be greater than requested quantity (${existingProduct.quantity}) for product "${productName}"`,
-          });
-        }
-
-        if (approval.approvedQuantity < 0) {
-          return res.status(400).json({
-            success: false,
-            message: `Approved quantity cannot be negative for product ${approval.productId}`,
-          });
-        }
-      }
-    }
-
-    if (productReceipts && Array.isArray(productReceipts)) {
-      for (const receipt of productReceipts) {
-        if (!receipt.productId || receipt.receivedQuantity === undefined) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "Each product receipt must have productId and receivedQuantity",
-          });
-        }
-
-        const productExists = stockTransfer.products.some(
-          (p) => p.product.toString() === receipt.productId.toString()
-        );
-
-        if (!productExists) {
-          return res.status(400).json({
-            success: false,
-            message: `Product with ID ${receipt.productId} not found in this stock transfer`,
-          });
-        }
-
-        if (receipt.receivedQuantity < 0) {
-          return res.status(400).json({
-            success: false,
-            message: `Received quantity cannot be negative for product ${receipt.productId}`,
-          });
-        }
-      }
-    }
-
-    const updatedTransfer = await stockTransfer.completeIncompleteTransfer(
-      userId,
-      productApprovals || [],
-      productReceipts || []
-    );
-
-    const populatedTransfer = await StockTransfer.findById(updatedTransfer._id)
-      .populate("toCenter", "_id centerName centerCode")
-      .populate("products.product", "_id productTitle productCode")
-      .populate("createdBy", "_id fullName email")
-      .populate("updatedBy", "_id fullName email")
-      .populate("approvalInfo.approvedBy", "_id fullName email")
-      .populate("receivingInfo.receivedBy", "_id fullName email")
-      .populate("completionInfo.completedBy", "_id fullName email");
-
-    res.status(200).json({
-      success: true,
-      message: "Incomplete stock transfer completed successfully",
-      data: populatedTransfer,
-    });
-  } catch (error) {
-    if (error.name === "CastError") {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid stock transfer ID",
-      });
-    }
-
-    if (error.name === "ValidationError") {
-      const errors = Object.values(error.errors).map((err) => err.message);
-      return res.status(400).json({
-        success: false,
-        message: "Validation error",
-        errors,
-      });
-    }
-
-    console.error("Error completing incomplete stock transfer:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error completing incomplete stock transfer",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
-    });
-  }
-};
-
-export const updateStockTransferStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status, ...additionalInfo } = req.body;
-
-    if (!status) {
-      return res.status(400).json({
-        success: false,
-        message: "Status is required",
-      });
-    }
-
-    const validStatuses = [
-      "Draft",
-      "Submitted",
-      "Confirmed",
-      "Shipped",
-      "Incompleted",
-      "Completed",
-      "Rejected",
-    ];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid status",
-      });
-    }
-
-    const stockTransfer = await StockTransfer.findById(id);
-    if (!stockTransfer) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock transfer not found",
-      });
-    }
-
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "User authentication required",
-      });
-    }
-
-    if (status === "Confirmed") {
-      if (!additionalInfo.productApprovals) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Product approvals are required when confirming a stock transfer",
-        });
-      }
-    }
-
-    if (status === "Shipped") {
-      if (!additionalInfo.shippedDate) {
-        return res.status(400).json({
-          success: false,
-          message: "Shipped date is required when shipping a stock transfer",
-        });
-      }
-    }
-
-    if (status === "Completed") {
-      if (!additionalInfo.productReceipts) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Product receipts are required when completing a stock transfer",
-        });
-      }
     }
 
     const updateData = {
-      status,
-      updatedBy: userId,
+      updatedBy: userId
     };
 
-    const currentDate = new Date();
-
-    switch (status) {
-      case "Confirmed":
-        updateData.approvalInfo = {
-          ...stockTransfer.approvalInfo,
-          approvedAt: currentDate,
-          approvedBy: userId,
-          approvedRemark: additionalInfo.approvedRemark || "",
-          ...additionalInfo,
-        };
-
-        if (additionalInfo.productApprovals) {
-          updateData.products = stockTransfer.products.map((productItem) => {
-            const approval = additionalInfo.productApprovals.find(
-              (pa) => pa.productId.toString() === productItem.product.toString()
-            );
-            if (approval) {
-              return {
-                ...productItem.toObject(),
-                approvedQuantity: approval.approvedQuantity,
-                approvedRemark: approval.approvedRemark || "",
-              };
-            }
-            return productItem;
-          });
-        }
-        break;
-
-      case "Shipped":
-        updateData.shippingInfo = {
-          ...stockTransfer.shippingInfo,
-          shippedAt: currentDate,
-          shippedBy: userId,
-          shippedDate: additionalInfo.shippedDate
-            ? new Date(additionalInfo.shippedDate)
-            : currentDate,
-          ...additionalInfo,
-        };
-        break;
-
-      case "Completed":
-        updateData.receivingInfo = {
-          ...stockTransfer.receivingInfo,
-          receivedAt: currentDate,
-          receivedBy: userId,
-          receivedRemark: additionalInfo.receivedRemark || "",
-          ...additionalInfo,
-        };
-
-        updateData.completionInfo = {
-          ...stockTransfer.completionInfo,
-          completedOn: currentDate,
-          completedBy: userId,
-          ...additionalInfo,
-        };
-
-        if (additionalInfo.productReceipts) {
-          updateData.products = stockTransfer.products.map((productItem) => {
-            const receipt = additionalInfo.productReceipts.find(
-              (pr) => pr.productId.toString() === productItem.product.toString()
-            );
-            if (receipt) {
-              return {
-                ...productItem.toObject(),
-                receivedQuantity: receipt.receivedQuantity,
-                receivedRemark: receipt.receivedRemark || "",
-              };
-            }
-            return productItem;
-          });
-        }
-        break;
-
-      case "Incompleted":
-        updateData.completionInfo = {
-          ...stockTransfer.completionInfo,
-          incompleteOn: currentDate,
-          incompleteBy: userId,
-          incompleteRemark: additionalInfo.incompleteRemark || "",
-          ...additionalInfo,
-        };
-        break;
-
-      case "Rejected":
-        updateData.completionInfo = {
-          ...stockTransfer.completionInfo,
-          incompleteOn: currentDate,
-          incompleteBy: userId,
-          incompleteRemark: additionalInfo.incompleteRemark || "",
-          ...additionalInfo,
-        };
-        break;
+    // Build shipping info update
+    if (shippedDate || expectedDeliveryDate || shipmentDetails || carrierInfo || documents) {
+      updateData.shippingInfo = {
+        ...stockTransfer.shippingInfo.toObject(),
+        ...(shippedDate && { shippedDate: new Date(shippedDate) }),
+        ...(expectedDeliveryDate && { expectedDeliveryDate: new Date(expectedDeliveryDate) }),
+        ...(shipmentDetails && { shipmentDetails }),
+        ...(carrierInfo && { carrierInfo }),
+        ...(documents && { documents: Array.isArray(documents) ? documents : [documents] })
+      };
     }
 
     const updatedTransfer = await StockTransfer.findByIdAndUpdate(
@@ -1837,29 +1150,188 @@ export const updateStockTransferStatus = async (req, res) => {
       updateData,
       { new: true, runValidators: true }
     )
-      .populate("toCenter", "_id centerName centerCode")
-      .populate("products.product", "_id productTitle productCode")
-      .populate("approvalInfo.approvedBy", "_id fullName email")
-      .populate("shippingInfo.shippedBy", "_id fullName email")
-      .populate("receivingInfo.receivedBy", "_id fullName email")
-      .populate("completionInfo.incompleteBy", "_id fullName email")
-      .populate("createdBy", "_id fullName email")
-      .populate("updatedBy", "_id fullName email");
+    .populate('fromCenter', '_id centerName centerCode')
+    .populate('toCenter', '_id centerName centerCode')
+    .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+    .populate('createdBy', '_id fullName email')
+    .populate('updatedBy', '_id fullName email')
+    .populate('shippingInfo.shippedBy', '_id fullName email');
 
     res.status(200).json({
       success: true,
-      message: `Stock transfer status updated to ${status}`,
-      data: updatedTransfer,
+      message: 'Shipping information updated successfully',
+      data: updatedTransfer
     });
   } catch (error) {
-    console.error("Error updating stock transfer status:", error);
+    console.error('Error updating shipping information:', error);
+    
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors
+      });
+    }
+
     res.status(500).json({
       success: false,
-      message: "Error updating stock transfer status",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
+      message: 'Error updating shipping information',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const rejectShipping = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rejectionRemark } = req.body;
+
+    const stockTransfer = await StockTransfer.findById(id);
+    if (!stockTransfer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Stock transfer not found'
+      });
+    }
+
+    // Only allow rejecting shipping for Shipped status
+    if (stockTransfer.status !== 'Shipped') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only shipped transfers can have shipping rejected'
+      });
+    }
+
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User authentication required'
+      });
+    }
+
+    // Store previous shipping info for reference
+    const previousShippingInfo = { ...stockTransfer.shippingInfo.toObject() };
+
+    // Revert stock deduction if it was already done
+    if (stockTransfer.stockStatus.sourceDeducted) {
+      await revertStockDeduction(stockTransfer);
+    }
+
+    const updateData = {
+      status: 'Confirmed', // Revert back to Confirmed status
+      updatedBy: userId,
+      shippingInfo: {
+        // Clear shipping info but keep rejection record
+        shippedAt: null,
+        shippedBy: null,
+        shippedDate: null,
+        expectedDeliveryDate: null,
+        shipmentDetails: null,
+        carrierInfo: null,
+        documents: [],
+        shipmentRejected: {
+          rejectedAt: new Date(),
+          rejectedBy: userId,
+          rejectionRemark: rejectionRemark || '',
+          previousShippingData: previousShippingInfo
+        }
+      },
+      stockStatus: {
+        ...stockTransfer.stockStatus,
+        sourceDeducted: false,
+        deductedAt: null
+      }
+    };
+
+    const updatedTransfer = await StockTransfer.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true, runValidators: true }
+    )
+    .populate('fromCenter', '_id centerName centerCode')
+    .populate('toCenter', '_id centerName centerCode')
+    .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+    .populate('createdBy', '_id fullName email')
+    .populate('updatedBy', '_id fullName email')
+    .populate('shippingInfo.shipmentRejected.rejectedBy', '_id fullName email');
+
+    res.status(200).json({
+      success: true,
+      message: 'Shipping rejected successfully. Transfer reverted to Confirmed status and stock deduction reversed.',
+      data: updatedTransfer
+    });
+  } catch (error) {
+    console.error('Error rejecting shipping:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error rejecting shipping',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+// Helper function to revert stock deduction
+const revertStockDeduction = async (stockTransfer) => {
+  try {
+    const CenterStock = mongoose.model('CenterStock');
+    
+    for (const item of stockTransfer.products) {
+      const centerStock = await CenterStock.findOne({
+        center: stockTransfer.fromCenter,
+        product: item.product
+      });
+
+      if (centerStock) {
+        const quantityToRevert = item.approvedQuantity || item.quantity;
+        
+        if (item.requiresSerialNumbers && item.serialNumbers && item.serialNumbers.length > 0) {
+          // Revert serial numbers back to available status
+          await centerStock.revertSerialNumbers(item.serialNumbers);
+        } else {
+          // Revert quantity
+          centerStock.availableQuantity += quantityToRevert;
+          centerStock.totalQuantity += quantityToRevert;
+          await centerStock.save();
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error reverting stock deduction:', error);
+    throw new Error(`Failed to revert stock deduction: ${error.message}`);
+  }
+};
+
+export const getMostRecentTransferNumber = async (req, res) => {
+  try {
+    const mostRecentTransfer = await StockTransfer.findOne()
+      .sort({ createdAt: -1 })
+      .select('transferNumber createdAt')
+      .lean();
+
+    if (!mostRecentTransfer) {
+      return res.status(404).json({
+        success: false,
+        message: 'No stock transfers found',
+        data: null
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Most recent transfer number retrieved successfully',
+      data: {
+        transferNumber: mostRecentTransfer.transferNumber,
+        createdAt: mostRecentTransfer.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Error retrieving most recent transfer number:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving most recent transfer number',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 };
@@ -1869,38 +1341,19 @@ export const updateApprovedQuantities = async (req, res) => {
     const { id } = req.params;
     const { productApprovals } = req.body;
 
-    if (
-      !productApprovals ||
-      !Array.isArray(productApprovals) ||
-      productApprovals.length === 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Product approvals are required with approved quantities and remarks",
-      });
-    }
-
     const stockTransfer = await StockTransfer.findById(id);
     if (!stockTransfer) {
       return res.status(404).json({
         success: false,
-        message: "Stock transfer not found",
+        message: 'Stock transfer not found'
       });
     }
 
-    const allowedStatuses = [
-      "Submitted",
-      "Confirmed",
-      "Shipped",
-      "Incompleted",
-    ];
-    if (!allowedStatuses.includes(stockTransfer.status)) {
+    // Only allow updating approved quantities for Admin_Approved or Confirmed status
+    if (!['Admin_Approved', 'Confirmed'].includes(stockTransfer.status)) {
       return res.status(400).json({
         success: false,
-        message: `Cannot update approved quantities for stock transfer with status: ${
-          stockTransfer.status
-        }. Allowed statuses: ${allowedStatuses.join(", ")}`,
+        message: 'Approved quantities can only be updated for Admin Approved or Confirmed transfers'
       });
     }
 
@@ -1908,66 +1361,73 @@ export const updateApprovedQuantities = async (req, res) => {
     if (!userId) {
       return res.status(400).json({
         success: false,
-        message: "User authentication required",
+        message: 'User authentication required'
       });
     }
 
+    // Validate product approvals
+    if (!productApprovals || !Array.isArray(productApprovals) || productApprovals.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Product approvals array is required and cannot be empty'
+      });
+    }
+
+    // Validate each product approval
     for (const approval of productApprovals) {
-      if (!approval.productId || approval.approvedQuantity === undefined) {
+      if (!approval.productId) {
         return res.status(400).json({
           success: false,
-          message:
-            "Each product approval must have productId and approvedQuantity",
+          message: 'Each approval must have a productId'
         });
       }
-
-      const productExists = stockTransfer.products.some(
-        (p) => p.product.toString() === approval.productId.toString()
-      );
-
-      if (!productExists) {
-        const productDoc = await Product.findById(approval.productId);
-        const productName = productDoc
-          ? productDoc.productTitle
-          : approval.productId;
+      
+      if (approval.approvedQuantity === undefined || approval.approvedQuantity === null) {
         return res.status(400).json({
           success: false,
-          message: `Product "${productName}" not found in this stock transfer`,
+          message: 'Each approval must have an approvedQuantity'
         });
       }
-
-      const existingProduct = stockTransfer.products.find(
-        (p) => p.product.toString() === approval.productId.toString()
-      );
-
-      if (approval.approvedQuantity > existingProduct.quantity) {
-        const productDoc = await Product.findById(approval.productId);
-        const productName = productDoc
-          ? productDoc.productTitle
-          : approval.productId;
-        return res.status(400).json({
-          success: false,
-          message: `Approved quantity (${approval.approvedQuantity}) cannot be greater than requested quantity (${existingProduct.quantity}) for product "${productName}"`,
-        });
-      }
-
+      
       if (approval.approvedQuantity < 0) {
         return res.status(400).json({
           success: false,
-          message: `Approved quantity cannot be negative for product ${approval.productId}`,
+          message: 'Approved quantity cannot be negative'
+        });
+      }
+
+      // Find the corresponding product in the transfer
+      const productItem = stockTransfer.products.find(
+        p => p.product.toString() === approval.productId.toString()
+      );
+      
+      if (!productItem) {
+        return res.status(400).json({
+          success: false,
+          message: `Product with ID ${approval.productId} not found in this transfer`
+        });
+      }
+
+      // Validate approved quantity doesn't exceed requested quantity
+      if (approval.approvedQuantity > productItem.quantity) {
+        return res.status(400).json({
+          success: false,
+          message: `Approved quantity (${approval.approvedQuantity}) cannot exceed requested quantity (${productItem.quantity}) for product ${productItem.product}`
         });
       }
     }
 
-    const updatedProducts = stockTransfer.products.map((productItem) => {
+    // Update product approved quantities
+    const updatedProducts = stockTransfer.products.map(productItem => {
       const approval = productApprovals.find(
-        (pa) => pa.productId.toString() === productItem.product.toString()
+        pa => pa.productId.toString() === productItem.product.toString()
       );
-
+      
       if (approval) {
         return {
           ...productItem.toObject(),
           approvedQuantity: approval.approvedQuantity,
+          approvedRemark: approval.approvedRemark || ''
         };
       }
       return productItem;
@@ -1975,16 +1435,16 @@ export const updateApprovedQuantities = async (req, res) => {
 
     const updateData = {
       products: updatedProducts,
-      updatedBy: userId,
+      updatedBy: userId
     };
 
-    if (stockTransfer.status === "Submitted") {
-      updateData.status = "Confirmed";
-      updateData.approvalInfo = {
-        ...stockTransfer.approvalInfo,
-        approvedBy: userId,
-        approvedAt: new Date(),
-      };
+    // If transfer is in Admin_Approved status and we're updating quantities, 
+    // we might want to track this as a modification
+    if (stockTransfer.status === 'Admin_Approved') {
+      updateData.status = 'Admin_Approved'; // Keep same status but quantities updated
+      
+      // Note: Since modifications field was removed from schema, we're not tracking modifications
+      // If you need to track modifications, you'll need to add the modifications field back to the schema
     }
 
     const updatedTransfer = await StockTransfer.findByIdAndUpdate(
@@ -1992,166 +1452,44 @@ export const updateApprovedQuantities = async (req, res) => {
       updateData,
       { new: true, runValidators: true }
     )
-      .populate("toCenter", "_id centerName centerCode")
-      .populate("products.product", "_id productTitle productCode")
-      .populate("createdBy", "_id fullName email")
-      .populate("updatedBy", "_id fullName email")
-      .populate("approvalInfo.approvedBy", "_id fullName email");
+    .populate('fromCenter', '_id centerName centerCode')
+    .populate('toCenter', '_id centerName centerCode')
+    .populate('products.product', '_id productTitle productCode trackSerialNumbers')
+    .populate('createdBy', '_id fullName email')
+    .populate('updatedBy', '_id fullName email')
+    .populate('adminApproval.approvedBy', '_id fullName email');
+    // Removed the problematic populate: .populate('adminApproval.modifications.product', '_id productTitle productCode');
 
     res.status(200).json({
       success: true,
-      message: "Approved quantities updated successfully",
+      message: 'Approved quantities updated successfully',
       data: updatedTransfer,
+     
     });
+
   } catch (error) {
-    if (error.name === "CastError") {
+    console.error('Error updating approved quantities:', error);
+    
+    if (error.name === 'CastError') {
       return res.status(400).json({
         success: false,
-        message: "Invalid stock transfer ID",
+        message: 'Invalid product ID or transfer ID'
       });
     }
 
-    if (error.name === "ValidationError") {
-      const errors = Object.values(error.errors).map((err) => err.message);
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
       return res.status(400).json({
         success: false,
-        message: "Validation error",
-        errors,
+        message: 'Validation error',
+        errors
       });
     }
 
-    console.error("Error updating approved quantities:", error);
     res.status(500).json({
       success: false,
-      message: "Error updating approved quantities",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
-    });
-  }
-};
-
-export const updateChallanDocument = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "Challan document file is required.",
-      });
-    }
-
-    const absolutePath = req.file.path;
-    const relativePath = path
-      .relative(process.cwd(), absolutePath)
-      .replace(/\\/g, "/");
-
-    console.log("Absolute path:", absolutePath);
-    console.log("Relative path:", relativePath);
-
-    const fromCenter = await validateUserCenter(req.user?.id);
-
-    const stockTransfer = await StockTransfer.findById(id);
-    if (!stockTransfer) {
-      return res.status(404).json({
-        success: false,
-        message: "Stock transfer not found",
-      });
-    }
-
-    if (stockTransfer.fromCenter !== fromCenter) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Access denied. You can only update transfers from your center.",
-      });
-    }
-
-    const userId = req.user?.id;
-    const updatedTransfer = await StockTransfer.findByIdAndUpdate(
-      id,
-      {
-        challanDocument: relativePath,
-        updatedBy: userId,
-      },
-      { new: true, runValidators: true }
-    )
-      .populate("toCenter", "_id centerName centerCode")
-      .populate("products.product", "_id productTitle productCode")
-      .populate("updatedBy", "_id fullName email");
-
-    res.status(200).json({
-      success: true,
-      message: "Challan document updated successfully",
-      data: updatedTransfer,
-    });
-  } catch (error) {
-    if (
-      error.message.includes("User authentication") ||
-      error.message.includes("Access denied")
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    if (error.code === "LIMIT_FILE_SIZE") {
-      return res.status(400).json({
-        success: false,
-        message: "File too large. Maximum size is 5MB.",
-      });
-    }
-
-    console.error("Error updating challan document:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error updating challan document",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
-    });
-  }
-};
-
-export const getLatestTransferNumber = async (req, res) => {
-  try {
-    const latestTransfer = await StockTransfer.findOne()
-      .sort({ createdAt: -1 })
-      .select("transferNumber createdAt")
-      .lean();
-
-    if (!latestTransfer) {
-      return res.status(200).json({
-        success: true,
-        message: "No stock transfers found",
-        data: {
-          latestTransferNumber: null,
-          suggestion: "Create your first transfer number",
-        },
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      message: "Latest transfer number retrieved successfully",
-      data: {
-        latestTransferNumber: latestTransfer.transferNumber,
-        lastCreated: latestTransfer.createdAt,
-      },
-    });
-  } catch (error) {
-    console.error("Error retrieving latest transfer number:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error retrieving latest transfer number",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : "Internal server error",
+      message: 'Error updating approved quantities',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 };

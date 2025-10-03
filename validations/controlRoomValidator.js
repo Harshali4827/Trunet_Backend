@@ -25,10 +25,10 @@ export const createControlRoomValidator = [
     .optional()
     .isString().withMessage('Landmark must be a string'),
 
-    body('pincode')
-    .optional({ checkFalsy: true })
-    .isString().withMessage('Pincode must be a string')
-    .matches(/^[1-9][0-9]{5}$/).withMessage('Invalid Indian pincode'),
+    // body('pincode')
+    // .optional({ checkFalsy: true })
+    // .isString().withMessage('Pincode must be a string')
+    // .matches(/^[1-9][0-9]{5}$/).withMessage('Invalid Indian pincode'),
 ];
 
 export const updateControlRoomValidator = [
