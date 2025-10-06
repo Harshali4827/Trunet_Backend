@@ -4,7 +4,9 @@ export const createVendorValidator = [
   body('businessName').notEmpty().withMessage('Business name is required'),
   body('contactNumber').notEmpty().withMessage('Contact number is required'),
   body('name').notEmpty().withMessage('Name is required'),
-  // body('mobile').notEmpty().withMessage('Mobile is required'),
+  body('mobile')
+  .optional()
+  .isMobilePhone('en-IN').withMessage('Invalid mobile number'),
   body('email').optional().isEmail().withMessage('Invalid email address'),
   body('gstNumber').optional().isString(),
   body('panNumber').optional().isString(),

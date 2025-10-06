@@ -28,7 +28,7 @@ const controlRoomSchema = new mongoose.Schema(
     },
     pincode: {
       type: String,
-      required: true,
+      required: false,
       match: /^[1-9][0-9]{5}$/,
     },
   },

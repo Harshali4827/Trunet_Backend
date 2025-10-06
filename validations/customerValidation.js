@@ -2,7 +2,9 @@ import { body } from 'express-validator';
 
 export const createCustomerValidation = [
   body('username').notEmpty().withMessage('Username is required'),
-  // body('name').notEmpty().withMessage('Name is required'),
+  body('name')
+  .optional()
+  .isString().withMessage('Name must be a string'),
   body('center').notEmpty().withMessage('Center is required'),
   body('partner').notEmpty().withMessage('Partner is required'),
   body('area').notEmpty().withMessage('Area is required'),

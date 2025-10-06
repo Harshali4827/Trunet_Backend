@@ -3,12 +3,16 @@ import { body } from 'express-validator';
 export const createProductValidator = [
   body('productCategory').notEmpty().withMessage('Product category is required'),
   body('productTitle').notEmpty().withMessage('Product title is required'),
-  // body('productCode').notEmpty().withMessage('Product code is required'),
-  // body('productPrice').isNumeric().withMessage('Product price must be a number'),
-  // body('status')
-  //   .optional()
-  //   .isIn(['Enable', 'Disable'])
-  //   .withMessage('Status must be either Enable or Disable'),
+  body('productCode')
+    .optional()
+    .isString().withMessage('Product code must be a string'),
+  body('productPrice')
+    .optional() 
+    .isNumeric().withMessage('Product price must be a number'),
+  body('status')
+    .optional()
+    .isIn(['Enable', 'Disable'])
+    .withMessage('Status must be either Enable or Disable'),
   body('trackSerialNumber')
     .optional()
     .isIn(['Yes', 'No'])

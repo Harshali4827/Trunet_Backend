@@ -31,7 +31,7 @@ export const createCustomer = async (req, res) => {
 
 export const getCustomers = async (req, res) => {
   try {
-    const { search, center, page = 1, limit = 1, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    const { search, center, page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     
 
     const filter = {};
@@ -119,21 +119,56 @@ export const getCustomerById = async (req, res) => {
   }
 };
 
+// export const updateCustomer = async (req, res) => {
+//   try {
+//     const customer = await Customer.findByIdAndUpdate(req.params.id, req.body, {
+//       new: true,
+//       runValidators: true,
+//     })
+//       .populate({
+//         path: 'center',
+//         populate: [
+//           { path: 'partner', select: 'partnerName' },
+//           { path: 'area', select: 'areaName' },
+//         ],
+//       });
+
+//     if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
+
+//     res.status(200).json({ success: true, data: customer });
+//   } catch (error) {
+//     res.status(500).json({ success: false, message: error.message });
+//   }
+// };
+
+
+
 export const updateCustomer = async (req, res) => {
   try {
-    const customer = await Customer.findByIdAndUpdate(req.params.id, req.body, {
+    const updateData = { ...req.body };
+    if (req.body.centerId) {
+      const center = await Center.findById(req.body.centerId);
+      if (!center) {
+        return res.status(404).json({ success: false, message: 'Center not found' });
+      }
+      updateData.center = req.body.centerId;
+      delete updateData.centerId;
+    }
+
+    const customer = await Customer.findByIdAndUpdate(req.params.id, updateData, {
       new: true,
       runValidators: true,
-    })
-      .populate({
-        path: 'center',
-        populate: [
-          { path: 'partner', select: 'partnerName' },
-          { path: 'area', select: 'areaName' },
-        ],
-      });
+    }).populate({
+      path: 'center',
+      populate: [
+        { path: 'partner', select: 'partnerName' },
+        { path: 'area', select: 'areaName' },
+      ],
+    });
 
-    if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
+    if (!customer) {
+      return res.status(404).json({ success: false, message: 'Customer not found' });
+    }
 
     res.status(200).json({ success: true, data: customer });
   } catch (error) {

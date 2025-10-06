@@ -348,6 +348,175 @@ export const getAllUsers = async (req, res) => {
   }
 };
 
+
+
+export const getUserById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findById(id)
+      .populate('role', 'roleTitle')
+      .populate({
+        path: 'center',
+        select: 'centerName centerCode centerType addressLine1 city state',
+        populate: [
+          { path: 'partner', select: 'partnerName' },
+          { path: 'area', select: 'areaName' },
+        ],
+      })
+      .select('-password'); 
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        user: {
+          _id: user._id,
+          fullName: user.fullName,
+          email: user.email,
+          mobile: user.mobile,
+          status: user.status,
+          role: user.role,
+          center: user.center,
+          lastLogin: user.lastLogin,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Get user by ID error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching user',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};
+
+
+
+export const updateUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      fullName,
+      email,
+      mobile,
+      status,
+      role,
+      center,
+      password,
+      confirmPassword,
+    } = req.body;
+    const user = await User.findById(id).select('+password');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+    if (email && email.toLowerCase() !== user.email.toLowerCase()) {
+      const emailExists = await User.findOne({ email: email.toLowerCase(), _id: { $ne: id } });
+      if (emailExists) {
+        return res.status(409).json({
+          success: false,
+          message: 'Email already in use by another user',
+        });
+      }
+    }
+
+    if (mobile && mobile !== user.mobile) {
+      const mobileExists = await User.findOne({ mobile, _id: { $ne: id } });
+      if (mobileExists) {
+        return res.status(409).json({
+          success: false,
+          message: 'Mobile number already in use by another user',
+        });
+      }
+    }
+    if (center) {
+      const centerExists = await Center.findById(center);
+      if (!centerExists) {
+        return res.status(404).json({
+          success: false,
+          message: 'Center not found',
+        });
+      }
+    }
+
+    if (role) {
+      const roleExists = await Role.findById(role);
+      if (!roleExists) {
+        return res.status(404).json({
+          success: false,
+          message: 'Role not found',
+        });
+      }
+    }
+    if (password || confirmPassword) {
+      if (password !== confirmPassword) {
+        return res.status(400).json({
+          success: false,
+          message: 'Passwords do not match',
+        });
+      }
+
+      user.password = password;
+      user.confirmPassword = confirmPassword;
+    }
+    if (fullName) user.fullName = fullName;
+    if (email) user.email = email.toLowerCase();
+    if (mobile) user.mobile = mobile;
+    if (status) user.status = status;
+    if (role) user.role = role;
+    if (center) user.center = center;
+
+    await user.save();
+    await user.populate('role', 'roleTitle');
+    await user.populate({
+      path: 'center',
+      select: 'centerName centerCode centerType addressLine1 city state',
+      populate: [
+        { path: 'partner', select: 'partnerName' },
+        { path: 'area', select: 'areaName' },
+      ],
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'User updated successfully',
+      data: {
+        user: {
+          _id: user._id,
+          fullName: user.fullName,
+          email: user.email,
+          mobile: user.mobile,
+          status: user.status,
+          role: user.role,
+          center: user.center,
+          lastLogin: user.lastLogin,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Update user error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating user',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};
+
 export const logout = (req, res) => {
   res.status(200).json({
     success: true,
