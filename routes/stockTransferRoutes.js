@@ -18,6 +18,7 @@ import {
   updateShippingInfo,
   rejectShipping,
   getMostRecentTransferNumber,
+  completeIncompleteStockTransfer,
   updateApprovedQuantities,
 } from "../controllers/stockTransferController.js";
 import {
@@ -135,6 +136,12 @@ router.post(
   validateIdParam,
   validateIncompleteTransfer,
   markStockTransferAsIncomplete
+);
+
+router.patch(
+  "/:id/complete-incomplete",
+  protect,
+  completeIncompleteStockTransfer
 );
 
 router.patch(

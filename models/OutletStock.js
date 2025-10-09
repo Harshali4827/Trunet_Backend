@@ -122,7 +122,43 @@ outletStockSchema.statics.updateStock = async function (
   );
 };
 
-// In OutletStock model - ensure getFIFOStock returns proper data
+outletStockSchema.methods.validateAndGetSerials = function (
+  requestedSerials,
+  currentLocation
+) {
+  try {
+    const availableSerials = [];
+
+    for (const requestedSerial of requestedSerials) {
+      const serial = this.serialNumbers.find(
+        (sn) =>
+          sn.serialNumber === requestedSerial &&
+          sn.status === "available" &&
+          sn.currentLocation?.toString() === currentLocation.toString()
+      );
+
+      if (serial) {
+        availableSerials.push(requestedSerial);
+      }
+    }
+
+    return availableSerials;
+  } catch (error) {
+    throw new Error(`Error validating serial numbers: ${error.message}`);
+  }
+};
+
+outletStockSchema.methods.getAvailableSerials = function (
+  requestedSerials,
+  currentLocation
+) {
+  const validationResult = this.validateAndGetSerials(
+    requestedSerials,
+    currentLocation
+  );
+  return validationResult.availableSerials;
+};
+
 outletStockSchema.methods.getFIFOStock = function (quantity) {
   const availableSerials = this.serialNumbers
     .filter((sn) => sn.status === "available")
@@ -132,13 +168,12 @@ outletStockSchema.methods.getFIFOStock = function (quantity) {
   return {
     availableQuantity: this.availableQuantity,
     availableSerials: availableSerials.map((sn) => ({
-      serialNumber: sn.serialNumber, // Ensure this is just the string
+      serialNumber: sn.serialNumber,
       purchaseId: sn.purchaseId,
     })),
   };
 };
 
-// In OutletStock model - update transferStock to handle non-serialized products
 outletStockSchema.methods.transferStock = async function (
   toCenter,
   quantity,
@@ -151,9 +186,7 @@ outletStockSchema.methods.transferStock = async function (
 
     let transferredSerials = [];
 
-    // Check if we're dealing with serialized transfer
     if (serialNumbers.length > 0) {
-      // Serialized transfer - validate and transfer specific serial numbers
       for (const serialNumber of serialNumbers) {
         const serial = this.serialNumbers.find(
           (sn) => sn.serialNumber === serialNumber && sn.status === "available"
@@ -175,14 +208,11 @@ outletStockSchema.methods.transferStock = async function (
         transferredSerials.push(serialNumber);
       }
     } else {
-      // Non-serialized transfer - just deduct quantity without serial number tracking
-      // Find available serial numbers to mark as transferred (if any exist)
       const availableSerials = this.serialNumbers
         .filter((sn) => sn.status === "available")
         .sort((a, b) => a.createdAt - b.createdAt)
         .slice(0, quantity);
 
-      // If we have serial numbers in the system, update them
       if (availableSerials.length > 0) {
         for (const serial of availableSerials) {
           serial.status = "transferred";
@@ -196,10 +226,9 @@ outletStockSchema.methods.transferStock = async function (
           transferredSerials.push(serial.serialNumber);
         }
       } else {
-        // For completely non-serialized products, we still need to track the transfer
-        // but we don't have individual serial numbers
-        console.log(`Non-serialized transfer: ${quantity} units of product ${this.product}`);
-        // We'll return empty array for transferredSerials
+        console.log(
+          `Non-serialized transfer: ${quantity} units of product ${this.product}`
+        );
       }
     }
 
@@ -209,13 +238,12 @@ outletStockSchema.methods.transferStock = async function (
     await this.save();
 
     const CenterStock = mongoose.model("CenterStock");
-    
-    // For CenterStock, pass the serial numbers (empty for non-serialized)
+
     await CenterStock.updateStock(
       toCenter,
       this.product,
       quantity,
-      transferredSerials, 
+      transferredSerials,
       this.outlet,
       "inbound_transfer"
     );

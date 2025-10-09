@@ -11,9 +11,9 @@ import { protect } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.post('/',protect, validateCreatePartner, createPartner);
-router.get('/',protect, getPartners);
-router.get('/:id',protect, validatePartnerId, getPartnerById);
+router.post('/', validateCreatePartner, createPartner);
+router.get('/', getPartners);
+router.get('/:id', validatePartnerId, getPartnerById);
 router.put('/:id',protect, validatePartnerId, validateUpdatePartner, updatePartner);
 router.delete('/:id',protect, validatePartnerId, deletePartner);
 

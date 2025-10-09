@@ -10,9 +10,9 @@ import { protect } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.post('/', protect, createRole);
-router.get('/', protect, getRoles);
-router.get('/:id', protect, getRoleById);
+router.post('/', createRole);
+router.get('/', getRoles);
+router.get('/:id', getRoleById);
 router.put('/:id', protect, updateRole);
 router.delete('/:id', protect, deleteRole);
 

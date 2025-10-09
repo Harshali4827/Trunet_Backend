@@ -1,105 +1,116 @@
 import mongoose from "mongoose";
 
-const centerStockSchema = new mongoose.Schema({
-  center: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Center",
-    required: true,
-    validate: {
-      validator: async function (centerId) {
-        const Center = mongoose.model("Center");
-        const center = await Center.findById(centerId);
-        return center && center.centerType === "Center";
-      },
-      message: 'Must be a valid Center (not Outlet)'
-    }
-  },
-  product: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Product",
-    required: true
-  },
-  totalQuantity: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  availableQuantity: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  inTransitQuantity: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  consumedQuantity: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  serialNumbers: [{
-    serialNumber: {
-      type: String,
-      required: true,
-      trim: true
-    },
-    purchaseId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "StockPurchase",
-      required: true
-    },
-    originalOutlet: {
+const centerStockSchema = new mongoose.Schema(
+  {
+    center: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Center",
-      required: true
+      required: true,
+      validate: {
+        validator: async function (centerId) {
+          const Center = mongoose.model("Center");
+          const center = await Center.findById(centerId);
+          return center && center.centerType === "Center";
+        },
+        message: "Must be a valid Center (not Outlet)",
+      },
     },
-    status: {
-      type: String,
-      enum: ["available", "in_transit", "transferred", "consumed", "returned"],
-      default: "available"
-    },
-    currentLocation: {
+    product: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Center"
+      ref: "Product",
+      required: true,
     },
-    transferHistory: [{
-      fromCenter: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Center"
+    totalQuantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    availableQuantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    inTransitQuantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    consumedQuantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    serialNumbers: [
+      {
+        serialNumber: {
+          type: String,
+          required: true,
+          trim: true,
+        },
+        purchaseId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "StockPurchase",
+          required: true,
+        },
+        originalOutlet: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Center",
+          required: true,
+        },
+        status: {
+          type: String,
+          enum: [
+            "available",
+            "in_transit",
+            "transferred",
+            "consumed",
+            "damaged",
+          ],
+          default: "available",
+        },
+        currentLocation: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Center",
+        },
+        transferHistory: [
+          {
+            fromCenter: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: "Center",
+            },
+            toCenter: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: "Center",
+            },
+            transferDate: Date,
+            transferType: {
+              type: String,
+              enum: ["inbound_transfer", "outbound_transfer", "field_usage", "damage_approved", "damage_reserved", "damage_rejected", "transfer_rejected", "transfer_updated"],
+            },
+          },
+        ],
+        consumedDate: {
+          type: Date,
+          default: null,
+        },
+        consumedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
       },
-      toCenter: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Center"
-      },
-      transferDate: Date,
-      transferType: {
-        type: String,
-        enum: ["inbound_transfer", "outbound_transfer", "field_usage"]
-      }
-    }],
-    consumedDate: {
+    ],
+    lastUpdated: {
       type: Date,
-      default: null
+      default: Date.now,
     },
-    consumedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User"
-    }
-  }],
-  lastUpdated: {
-    type: Date,
-    default: Date.now
-  }
-}, { timestamps: true });
+  },
+  { timestamps: true }
+);
 
 centerStockSchema.index({ center: 1, product: 1 }, { unique: true });
 centerStockSchema.index({ "serialNumbers.serialNumber": 1 });
 
-
-// In CenterStock model - update to handle non-serialized products
-centerStockSchema.statics.updateStock = async function(
+centerStockSchema.statics.updateStock = async function (
   centerId,
   productId,
   quantity,
@@ -110,24 +121,22 @@ centerStockSchema.statics.updateStock = async function(
   const updateData = {
     $inc: {
       totalQuantity: quantity,
-      availableQuantity: quantity
+      availableQuantity: quantity,
     },
-    lastUpdated: new Date()
+    lastUpdated: new Date(),
   };
 
-  // Only add serial numbers if they are provided (for serialized products)
   if (serialNumbers.length > 0) {
-    // Get purchase IDs for the serial numbers
     const purchaseIds = await Promise.all(
       serialNumbers.map(async (serialNumber) => {
         const OutletStock = mongoose.model("OutletStock");
         const outletStock = await OutletStock.findOne({
-          "serialNumbers.serialNumber": serialNumber
+          "serialNumbers.serialNumber": serialNumber,
         });
-        
+
         if (outletStock) {
           const serial = outletStock.serialNumbers.find(
-            sn => sn.serialNumber === serialNumber
+            (sn) => sn.serialNumber === serialNumber
           );
           return serial ? serial.purchaseId : null;
         }
@@ -141,19 +150,20 @@ centerStockSchema.statics.updateStock = async function(
       originalOutlet: sourceCenter,
       status: "available",
       currentLocation: centerId,
-      transferHistory: [{
-        fromCenter: sourceCenter,
-        toCenter: centerId,
-        transferDate: new Date(),
-        transferType: transferType
-      }]
+      transferHistory: [
+        {
+          fromCenter: sourceCenter,
+          toCenter: centerId,
+          transferDate: new Date(),
+          transferType: transferType,
+        },
+      ],
     }));
 
     updateData.$push = {
-      serialNumbers: { $each: serialsToAdd }
+      serialNumbers: { $each: serialsToAdd },
     };
   }
-  // For non-serialized products, we just update the quantities without adding serial numbers
 
   return this.findOneAndUpdate(
     { center: centerId, product: productId },
@@ -162,24 +172,99 @@ centerStockSchema.statics.updateStock = async function(
   );
 };
 
-centerStockSchema.statics.getPurchaseIdFromSerial = async function(serialNumber) {
+centerStockSchema.methods.validateAndGetSerials = function (
+  requestedSerials,
+  currentLocation
+) {
+  try {
+
+       console.log('validateAndGetSerials called with:', {
+      requestedSerials,
+      currentLocation: currentLocation?.toString?.(),
+      availableSerials: this.serialNumbers.map(sn => ({
+        serialNumber: sn.serialNumber,
+        status: sn.status,
+        currentLocation: sn.currentLocation?.toString?.()
+      }))
+    });
+    const availableSerials = [];
+
+    for (const requestedSerial of requestedSerials) {
+      const serial = this.serialNumbers.find(
+        (sn) =>
+          sn.serialNumber === requestedSerial &&
+          sn.status === "available" &&
+          sn.currentLocation?.toString() === currentLocation.toString()
+      );
+
+      if (serial) {
+        availableSerials.push(requestedSerial);
+      }
+    }
+
+      console.log('Final availableSerials:', availableSerials);
+
+    return availableSerials;
+  } catch (error) {
+    throw new Error(`Error validating serial numbers: ${error.message}`);
+  }
+};
+
+centerStockSchema.methods.validateSerialsWithDetails = function (
+  requestedSerials,
+  currentLocation
+) {
+  try {
+    const availableSerials = [];
+    const unavailableSerials = [];
+
+    for (const requestedSerial of requestedSerials) {
+      const serial = this.serialNumbers.find(
+        (sn) =>
+          sn.serialNumber === requestedSerial &&
+          sn.status === "available" &&
+          sn.currentLocation?.toString() === currentLocation.toString()
+      );
+
+      if (serial) {
+        availableSerials.push(requestedSerial);
+      } else {
+        unavailableSerials.push(requestedSerial);
+      }
+    }
+
+    return {
+      availableSerials,
+      unavailableSerials,
+      isValid: unavailableSerials.length === 0,
+    };
+  } catch (error) {
+    throw new Error(`Error validating serial numbers: ${error.message}`);
+  }
+};
+
+centerStockSchema.statics.getPurchaseIdFromSerial = async function (
+  serialNumber
+) {
   const OutletStock = mongoose.model("OutletStock");
   const outletStock = await OutletStock.findOne({
-    "serialNumbers.serialNumber": serialNumber
+    "serialNumbers.serialNumber": serialNumber,
   });
-  
+
   if (outletStock) {
     const serial = outletStock.serialNumbers.find(
-      sn => sn.serialNumber === serialNumber
+      (sn) => sn.serialNumber === serialNumber
     );
     return serial ? serial.purchaseId : null;
   }
   return null;
 };
 
-
-// In CenterStock model - fix transferToCenter method
-centerStockSchema.methods.transferToCenter = async function(toCenter, quantity, serialNumbers = []) {
+centerStockSchema.methods.transferToCenter = async function (
+  toCenter,
+  quantity,
+  serialNumbers = []
+) {
   try {
     if (this.availableQuantity < quantity) {
       throw new Error("Insufficient stock available");
@@ -190,9 +275,9 @@ centerStockSchema.methods.transferToCenter = async function(toCenter, quantity, 
     if (serialNumbers.length > 0) {
       for (const serialNumber of serialNumbers) {
         const serial = this.serialNumbers.find(
-          sn => sn.serialNumber === serialNumber && sn.status === "available"
+          (sn) => sn.serialNumber === serialNumber && sn.status === "available"
         );
-        
+
         if (!serial) {
           throw new Error(`Serial number ${serialNumber} not available`);
         }
@@ -203,32 +288,37 @@ centerStockSchema.methods.transferToCenter = async function(toCenter, quantity, 
           fromCenter: this.center,
           toCenter: toCenter,
           transferDate: new Date(),
-          transferType: "outbound_transfer"
+          transferType: "outbound_transfer",
         });
 
         transferredSerials.push(serialNumber);
       }
     } else {
       const availableSerials = this.serialNumbers
-        .filter(sn => sn.status === "available")
+        .filter((sn) => sn.status === "available")
         .sort((a, b) => a.createdAt - b.createdAt)
         .slice(0, quantity);
 
-      if (availableSerials.length < quantity) {
-        throw new Error("Insufficient serial numbers available");
-      }
+      if (availableSerials.length > 0) {
+        if (availableSerials.length < quantity) {
+          throw new Error("Insufficient serial numbers available");
+        }
 
-      for (const serial of availableSerials) {
-        serial.status = "transferred";
-        serial.currentLocation = toCenter;
-        serial.transferHistory.push({
-          fromCenter: this.center,
-          toCenter: toCenter,
-          transferDate: new Date(),
-          transferType: "outbound_transfer"
-        });
-
-        transferredSerials.push(serial.serialNumber);
+        for (const serial of availableSerials) {
+          serial.status = "transferred";
+          serial.currentLocation = toCenter;
+          serial.transferHistory.push({
+            fromCenter: this.center,
+            toCenter: toCenter,
+            transferDate: new Date(),
+            transferType: "outbound_transfer",
+          });
+          transferredSerials.push(serial.serialNumber);
+        }
+      } else {
+        console.log(
+          `Non-serialized transfer: ${quantity} units of product ${this.product}`
+        );
       }
     }
 
@@ -237,7 +327,9 @@ centerStockSchema.methods.transferToCenter = async function(toCenter, quantity, 
 
     await this.save();
 
-    await this.constructor.updateStock(
+    const CenterStock = mongoose.model("CenterStock");
+
+    await CenterStock.updateStock(
       toCenter,
       this.product,
       quantity,
@@ -247,14 +339,16 @@ centerStockSchema.methods.transferToCenter = async function(toCenter, quantity, 
     );
 
     return transferredSerials;
-
   } catch (error) {
     throw error;
   }
 };
 
-
-centerStockSchema.methods.consumeStock = async function(quantity, serialNumbers = [], consumedBy = null) {
+centerStockSchema.methods.consumeStock = async function (
+  quantity,
+  serialNumbers = [],
+  consumedBy = null
+) {
   if (this.availableQuantity < quantity) {
     throw new Error("Insufficient stock available for consumption");
   }
@@ -262,12 +356,11 @@ centerStockSchema.methods.consumeStock = async function(quantity, serialNumbers 
   let consumedSerials = [];
 
   if (serialNumbers.length > 0) {
-    
     for (const serialNumber of serialNumbers) {
       const serial = this.serialNumbers.find(
-        sn => sn.serialNumber === serialNumber && sn.status === "available"
+        (sn) => sn.serialNumber === serialNumber && sn.status === "available"
       );
-      
+
       if (!serial) {
         throw new Error(`Serial number ${serialNumber} not available`);
       }
@@ -279,15 +372,14 @@ centerStockSchema.methods.consumeStock = async function(quantity, serialNumbers 
         fromCenter: this.center,
         toCenter: null,
         transferDate: new Date(),
-        transferType: "field_usage"
+        transferType: "field_usage",
       });
 
       consumedSerials.push(serialNumber);
     }
   } else {
-    
     const availableSerials = this.serialNumbers
-      .filter(sn => sn.status === "available")
+      .filter((sn) => sn.status === "available")
       .sort((a, b) => a.createdAt - b.createdAt)
       .slice(0, quantity);
 
@@ -303,7 +395,7 @@ centerStockSchema.methods.consumeStock = async function(quantity, serialNumbers 
         fromCenter: this.center,
         toCenter: null,
         transferDate: new Date(),
-        transferType: "field_usage"
+        transferType: "field_usage",
       });
 
       consumedSerials.push(serial.serialNumber);
@@ -317,8 +409,7 @@ centerStockSchema.methods.consumeStock = async function(quantity, serialNumbers 
   return consumedSerials;
 };
 
-
-centerStockSchema.statics.getCenterStockSummary = async function(centerId) {
+centerStockSchema.statics.getCenterStockSummary = async function (centerId) {
   return this.aggregate([
     { $match: { center: mongoose.Types.ObjectId(centerId) } },
     {
@@ -326,8 +417,8 @@ centerStockSchema.statics.getCenterStockSummary = async function(centerId) {
         from: "products",
         localField: "product",
         foreignField: "_id",
-        as: "productDetails"
-      }
+        as: "productDetails",
+      },
     },
     {
       $project: {
@@ -337,10 +428,10 @@ centerStockSchema.statics.getCenterStockSummary = async function(centerId) {
         availableQuantity: 1,
         consumedQuantity: 1,
         inTransitQuantity: 1,
-        lastUpdated: 1
-      }
+        lastUpdated: 1,
+      },
     },
-    { $sort: { productName: 1 } }
+    { $sort: { productName: 1 } },
   ]);
 };
 

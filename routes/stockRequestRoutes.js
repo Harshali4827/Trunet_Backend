@@ -13,6 +13,7 @@ import {
   completeStockRequest,
   completeIncompleteRequest,
   updateStockRequestStatus,
+  getCenterSerialNumbers,
   updateApprovedQuantities,
   getMostRecentOrderNumber,
 } from "../controllers/stockRequestController.js";
@@ -82,6 +83,13 @@ router.post(
   protect,
   validateRejectShipment,
   rejectShipment
+);
+
+
+router.get(
+  "/serial-numbers/product/:productId",
+  protect,
+  getCenterSerialNumbers
 );
 
 router.post(

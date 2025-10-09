@@ -500,11 +500,6 @@ export const validateQueryParams = [
     .isInt({ min: 1, max: 100 })
     .withMessage("Limit must be an integer between 1 and 100"),
 
-  query("status")
-    .optional()
-    .custom(isValidStatus)
-    .withMessage("Invalid status"),
-
   query("fromCenter")
     .optional()
     .custom(isValidObjectId)

@@ -14,13 +14,16 @@ const stockTransferSchema = new mongoose.Schema(
       required: true,
       index: true,
       validate: {
-        validator: async function(toCenterId) {
+        validator: async function (toCenterId) {
           const Center = mongoose.model("Center");
           const toCenter = await Center.findById(toCenterId);
-          return toCenter && toCenter._id.toString() !== this.fromCenter.toString();
+          return (
+            toCenter && toCenter._id.toString() !== this.fromCenter.toString()
+          );
         },
-        message: "Destination center must exist and be different from source center"
-      }
+        message:
+          "Destination center must exist and be different from source center",
+      },
     },
     date: {
       type: Date,
@@ -54,6 +57,20 @@ const stockTransferSchema = new mongoose.Schema(
           min: 1,
           max: 100000,
         },
+
+        approvedSerials: [
+          {
+            type: String,
+            trim: true,
+            validate: {
+              validator: function (serial) {
+                return serial && serial.trim().length > 0;
+              },
+              message: "Serial number cannot be empty",
+            },
+          },
+        ],
+
         serialNumbers: [
           {
             type: String,
@@ -136,7 +153,6 @@ const stockTransferSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Simplified admin approval - only status and user/timestamp
     adminApproval: {
       status: {
         type: String,
@@ -192,14 +208,19 @@ const stockTransferSchema = new mongoose.Schema(
           message: "Shipped date cannot be before transfer date",
         },
       },
+
       expectedDeliveryDate: {
         type: Date,
         validate: {
           validator: function (value) {
-            return (
-              !this.shippingInfo.shippedDate ||
-              value >= this.shippingInfo.shippedDate
-            );
+            if (
+              !value ||
+              !this.shippingInfo ||
+              !this.shippingInfo.shippedDate
+            ) {
+              return true;
+            }
+            return value >= this.shippingInfo.shippedDate;
           },
           message: "Expected delivery date cannot be before shipped date",
         },
@@ -213,6 +234,31 @@ const stockTransferSchema = new mongoose.Schema(
         name: String,
         trackingNumber: String,
         contact: String,
+      },
+    },
+
+    shipmentRejected: {
+      rejectedAt: Date,
+      rejectedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      rejectionRemark: String,
+      previousShippingData: {
+        shippedAt: Date,
+        shippedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+        shippedDate: Date,
+        expectedDeliveryDate: Date,
+        shipmentDetails: String,
+        carrierInfo: {
+          name: String,
+          trackingNumber: String,
+          contact: String,
+        },
+        documents: [String],
       },
     },
 
@@ -256,7 +302,29 @@ const stockTransferSchema = new mongoose.Schema(
       trim: true,
       default: null,
     },
-
+    // In your stockTransferSchema, update the centerApproval section:
+    centerApproval: {
+      approvedAt: Date,
+      approvedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      // ADD THESE FIELDS FOR CENTER REJECTION:
+      rejectedAt: Date,
+      rejectedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      rejectionRemark: {
+        type: String,
+        maxlength: 500,
+      },
+      status: {
+        type: String,
+        enum: ["Approved", "Rejected"],
+        default: null,
+      },
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -278,9 +346,10 @@ const stockTransferSchema = new mongoose.Schema(
   }
 );
 
-// Virtuals
-stockTransferSchema.virtual("transferDirection").get(function() {
-  return `${this.fromCenter?.centerCode || 'Unknown'} → ${this.toCenter?.centerCode || 'Unknown'}`;
+stockTransferSchema.virtual("transferDirection").get(function () {
+  return `${
+    this.fromCenter?.centerCode || "Unknown"
+  } → ${this.toCenter?.centerCode || "Unknown"}`;
 });
 
 stockTransferSchema.virtual("statusDuration").get(function () {
@@ -300,15 +369,17 @@ stockTransferSchema.virtual("isAdminRejected").get(function () {
   return this.adminApproval.status === "Rejected";
 });
 
-// Static Methods
-stockTransferSchema.statics.findByUserCenter = function(userCenterId, options = {}) {
+stockTransferSchema.statics.findByUserCenter = function (
+  userCenterId,
+  options = {}
+) {
   const { page = 1, limit = 10, status, populate = true } = options;
   const skip = (page - 1) * limit;
 
   let query = this.find({ fromCenter: userCenterId });
 
   if (status) {
-    query = query.where('status', status);
+    query = query.where("status", status);
   }
 
   query = query.sort({ createdAt: -1 }).skip(skip).limit(limit);
@@ -351,15 +422,20 @@ stockTransferSchema.statics.findByStatus = function (status, options = {}) {
 };
 
 stockTransferSchema.statics.findPendingAdminApproval = function (options = {}) {
-  const { page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = options;
+  const {
+    page = 1,
+    limit = 10,
+    sortBy = "createdAt",
+    sortOrder = "desc",
+  } = options;
   const skip = (page - 1) * limit;
 
   const sortOptions = {};
-  sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
+  sortOptions[sortBy] = sortOrder === "desc" ? -1 : 1;
 
   return this.find({
     status: "Submitted",
-    "adminApproval.status": { $exists: false }
+    "adminApproval.status": { $exists: false },
   })
     .populate("fromCenter", "_id centerName centerCode")
     .populate("toCenter", "_id centerName centerCode")
@@ -371,11 +447,16 @@ stockTransferSchema.statics.findPendingAdminApproval = function (options = {}) {
 };
 
 stockTransferSchema.statics.findAdminApproved = function (options = {}) {
-  const { page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = options;
+  const {
+    page = 1,
+    limit = 10,
+    sortBy = "createdAt",
+    sortOrder = "desc",
+  } = options;
   const skip = (page - 1) * limit;
 
   const sortOptions = {};
-  sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
+  sortOptions[sortBy] = sortOrder === "desc" ? -1 : 1;
 
   return this.find({
     "adminApproval.status": "Approved",
@@ -391,11 +472,16 @@ stockTransferSchema.statics.findAdminApproved = function (options = {}) {
 };
 
 stockTransferSchema.statics.findAdminRejected = function (options = {}) {
-  const { page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = options;
+  const {
+    page = 1,
+    limit = 10,
+    sortBy = "createdAt",
+    sortOrder = "desc",
+  } = options;
   const skip = (page - 1) * limit;
 
   const sortOptions = {};
-  sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
+  sortOptions[sortBy] = sortOrder === "desc" ? -1 : 1;
 
   return this.find({
     "adminApproval.status": "Rejected",
@@ -410,14 +496,17 @@ stockTransferSchema.statics.findAdminRejected = function (options = {}) {
     .skip(skip);
 };
 
-stockTransferSchema.statics.findByDestinationCenter = function(toCenterId, options = {}) {
+stockTransferSchema.statics.findByDestinationCenter = function (
+  toCenterId,
+  options = {}
+) {
   const { page = 1, limit = 10, status, populate = true } = options;
   const skip = (page - 1) * limit;
 
   let query = this.find({ toCenter: toCenterId });
 
   if (status) {
-    query = query.where('status', status);
+    query = query.where("status", status);
   }
 
   query = query.sort({ createdAt: -1 }).skip(skip).limit(limit);
@@ -436,7 +525,9 @@ stockTransferSchema.statics.findByDestinationCenter = function(toCenterId, optio
   return query;
 };
 
-stockTransferSchema.statics.getTransferStats = async function (centerId = null) {
+stockTransferSchema.statics.getTransferStats = async function (
+  centerId = null
+) {
   const matchStage = centerId
     ? { $match: { fromCenter: new mongoose.Types.ObjectId(centerId) } }
     : { $match: {} };
@@ -470,16 +561,20 @@ stockTransferSchema.statics.getDestinationStats = async function (centerId) {
       $group: {
         _id: "$status",
         count: { $sum: 1 },
-        totalReceivedQuantity: { 
-          $sum: { 
-            $sum: "$products.receivedQuantity" 
-          } 
+        totalReceivedQuantity: {
+          $sum: {
+            $sum: "$products.receivedQuantity",
+          },
         },
         pendingCount: {
           $sum: {
-            $cond: [{ $in: ["$status", ["Shipped", "Confirmed", "Admin_Approved"]] }, 1, 0]
-          }
-        }
+            $cond: [
+              { $in: ["$status", ["Shipped", "Confirmed", "Admin_Approved"]] },
+              1,
+              0,
+            ],
+          },
+        },
       },
     },
     {
@@ -494,44 +589,99 @@ stockTransferSchema.statics.getDestinationStats = async function (centerId) {
   ]);
 };
 
-// Instance Methods
 stockTransferSchema.methods.submitTransfer = async function () {
   if (this.status !== "Draft") {
     throw new Error("Only draft transfers can be submitted");
   }
 
-  await this.validateSerialNumbers();
   await this.validateStockAvailability();
-  
+
   this.status = "Submitted";
   this.lastStatusChange = new Date();
 
   return this.save();
 };
 
-stockTransferSchema.methods.validateSerialNumbers = async function () {
+stockTransferSchema.methods.validateSerialNumbers = async function (
+  productApprovals
+) {
+  const CenterStock = mongoose.model("CenterStock");
   const Product = mongoose.model("Product");
-  
+  const validationResults = [];
+
+  for (const approval of productApprovals) {
+    const productDoc = await Product.findById(approval.productId);
+    const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
+
+    if (tracksSerialNumbers && approval.approvedSerials) {
+      const centerStock = await CenterStock.findOne({
+        center: this.fromCenter,
+        product: approval.productId,
+      });
+
+      if (!centerStock) {
+        validationResults.push({
+          productId: approval.productId,
+          productName: productDoc.productTitle,
+          valid: false,
+          error: `No stock found in source center for this product`,
+        });
+        continue;
+      }
+
+      const availableSerials = centerStock.validateAndGetSerials(
+        approval.approvedSerials,
+        this.fromCenter
+      );
+
+      const unavailableSerials = approval.approvedSerials.filter(
+        (sn) => !availableSerials.includes(sn)
+      );
+
+      validationResults.push({
+        productId: approval.productId,
+        productName: productDoc.productTitle,
+        valid: unavailableSerials.length === 0,
+        availableSerials: availableSerials,
+        unavailableSerials: unavailableSerials,
+        error:
+          unavailableSerials.length > 0
+            ? `Serial numbers not available: ${unavailableSerials.join(", ")}`
+            : null,
+      });
+    } else {
+      validationResults.push({
+        productId: approval.productId,
+        productName: productDoc.productTitle,
+        valid: true,
+        availableSerials: [],
+        unavailableSerials: [],
+        error: null,
+      });
+    }
+  }
+
+  return validationResults;
+};
+
+stockTransferSchema.methods.validateTransferSerialNumbers = async function () {
+  const Product = mongoose.model("Product");
+
   for (const item of this.products) {
     const product = await Product.findById(item.product);
     if (product && product.trackSerialNumbers) {
-      if (!item.serialNumbers || item.serialNumbers.length !== item.quantity) {
-        throw new Error(
-          `Product "${product.productTitle}" requires exactly ${item.quantity} serial numbers`
-        );
-      }
-      
-      const uniqueSerials = new Set(item.serialNumbers);
-      if (uniqueSerials.size !== item.serialNumbers.length) {
-        throw new Error(
-          `Product "${product.productTitle}" has duplicate serial numbers`
-        );
+      if (item.serialNumbers && item.serialNumbers.length > 0) {
+        const uniqueSerials = new Set(item.serialNumbers);
+        if (uniqueSerials.size !== item.serialNumbers.length) {
+          throw new Error(
+            `Product "${product.productTitle}" has duplicate serial numbers`
+          );
+        }
       }
     }
   }
 };
 
-// Simplified Admin Approval Methods - No modifications or remarks
 stockTransferSchema.methods.approveByAdmin = async function (approvedBy) {
   if (this.status !== "Submitted") {
     throw new Error("Only submitted transfers can be approved by admin");
@@ -541,7 +691,6 @@ stockTransferSchema.methods.approveByAdmin = async function (approvedBy) {
     throw new Error("Transfer has already been processed by admin");
   }
 
-  // Set approved quantity equal to requested quantity for all products
   this.products.forEach((product) => {
     product.approvedQuantity = product.quantity;
   });
@@ -575,9 +724,45 @@ stockTransferSchema.methods.rejectByAdmin = async function (rejectedBy) {
   return this.save();
 };
 
-stockTransferSchema.methods.confirmTransfer = async function (confirmedBy) {
+stockTransferSchema.methods.confirmTransfer = async function (
+  confirmedBy,
+  productApprovals = []
+) {
   if (this.status !== "Admin_Approved") {
-    throw new Error("Transfer must be admin approved before center confirmation");
+    throw new Error(
+      "Transfer must be admin approved before center confirmation"
+    );
+  }
+
+  if (productApprovals && productApprovals.length > 0) {
+    const validationResults = await this.validateSerialNumbers(
+      productApprovals
+    );
+    const invalidResults = validationResults.filter((result) => !result.valid);
+
+    if (invalidResults.length > 0) {
+      throw new Error(
+        `Serial number validation failed: ${invalidResults
+          .map((r) => r.error)
+          .join(", ")}`
+      );
+    }
+
+    this.products = this.products.map((productItem) => {
+      const approval = productApprovals.find(
+        (pa) => pa.productId.toString() === productItem.product.toString()
+      );
+
+      if (approval) {
+        return {
+          ...productItem.toObject(),
+          approvedQuantity: approval.approvedQuantity || productItem.quantity,
+          approvedRemark: approval.approvedRemark || "",
+          approvedSerials: approval.approvedSerials || [],
+        };
+      }
+      return productItem;
+    });
   }
 
   this.status = "Confirmed";
@@ -588,16 +773,144 @@ stockTransferSchema.methods.confirmTransfer = async function (confirmedBy) {
   return this.save();
 };
 
+stockTransferSchema.methods.processSourceDeduction = async function () {
+  const CenterStock = mongoose.model("CenterStock");
+
+  for (const item of this.products) {
+    const quantityToTransfer = item.approvedQuantity || item.quantity;
+    if (quantityToTransfer <= 0) {
+      console.log(
+        `[DEBUG] Skipping product ${item.product} - approved quantity is 0`
+      );
+      continue;
+    }
+
+    const centerStock = await CenterStock.findOne({
+      center: this.fromCenter,
+      product: item.product,
+    });
+
+    if (!centerStock) {
+      throw new Error(`Stock not found for product in source center`);
+    }
+
+    let serialNumbersToTransfer = [];
+
+    if (item.requiresSerialNumbers) {
+      if (!item.approvedSerials || item.approvedSerials.length === 0) {
+        throw new Error(
+          `No serial numbers assigned for product. Please assign serial numbers during confirmation.`
+        );
+      }
+
+      serialNumbersToTransfer = item.approvedSerials.slice(
+        0,
+        quantityToTransfer
+      );
+
+      const availableSerials = centerStock.validateAndGetSerials(
+        serialNumbersToTransfer,
+        this.fromCenter
+      );
+
+      if (availableSerials.length !== serialNumbersToTransfer.length) {
+        const missingSerials = serialNumbersToTransfer.filter(
+          (sn) => !availableSerials.includes(sn)
+        );
+        throw new Error(
+          `Some serial numbers are not available in source center: ${missingSerials.join(
+            ", "
+          )}`
+        );
+      }
+
+      item.serialNumbers = serialNumbersToTransfer;
+    }
+
+    await centerStock.transferToCenter(
+      this.toCenter,
+      quantityToTransfer,
+      serialNumbersToTransfer
+    );
+  }
+
+  this.stockStatus.sourceDeducted = true;
+  this.stockStatus.deductedAt = new Date();
+  this.stockStatus.lastStockCheck = new Date();
+};
+
+stockTransferSchema.methods.processDestinationAddition = async function () {
+  const CenterStock = mongoose.model("CenterStock");
+
+  for (const item of this.products) {
+    let serialNumbers = [];
+    const quantityToAdd =
+      item.receivedQuantity || item.approvedQuantity || item.quantity;
+
+    if (item.requiresSerialNumbers) {
+      serialNumbers = item.serialNumbers || item.approvedSerials || [];
+
+      serialNumbers = serialNumbers.slice(0, quantityToAdd);
+    }
+
+    await CenterStock.updateStock(
+      this.toCenter,
+      item.product,
+      quantityToAdd,
+      serialNumbers,
+      this.fromCenter,
+      "inbound_transfer"
+    );
+  }
+
+  this.stockStatus.destinationAdded = true;
+  this.stockStatus.addedAt = new Date();
+  this.stockStatus.lastStockCheck = new Date();
+};
+
+stockTransferSchema.methods.getAvailableSerials = async function () {
+  const CenterStock = mongoose.model("CenterStock");
+  const Product = mongoose.model("Product");
+  const availableSerials = [];
+
+  for (const item of this.products) {
+    const productDoc = await Product.findById(item.product);
+    const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
+
+    if (tracksSerialNumbers) {
+      const centerStock = await CenterStock.findOne({
+        center: this.fromCenter,
+        product: item.product,
+      });
+
+      if (centerStock) {
+        const available = centerStock.serialNumbers
+          .filter(
+            (sn) =>
+              sn.status === "available" &&
+              sn.currentLocation?.toString() === this.fromCenter.toString()
+          )
+          .map((sn) => sn.serialNumber);
+
+        availableSerials.push({
+          productId: item.product,
+          productName: productDoc.productTitle,
+          availableSerials: available,
+          requestedQuantity: item.quantity,
+        });
+      }
+    }
+  }
+
+  return availableSerials;
+};
+
 stockTransferSchema.methods.shipTransfer = async function (
   shippedBy,
   shippingDetails = {}
 ) {
   if (this.status !== "Confirmed") {
     throw new Error("Transfer must be confirmed before shipping");
-  }
-
-  if (!this.stockStatus.sourceDeducted) {
-    await this.processSourceDeduction();
   }
 
   this.status = "Shipped";
@@ -618,8 +931,14 @@ stockTransferSchema.methods.completeTransfer = async function (
   completedBy,
   productReceipts = []
 ) {
-  if (this.status !== "Shipped") {
-    throw new Error("Transfer must be shipped before completion");
+  if (this.status !== "Shipped" && this.status !== "Incompleted") {
+    throw new Error(
+      "Transfer must be shipped or Incompleted before completion"
+    );
+  }
+
+  if (!this.stockStatus.sourceDeducted) {
+    await this.processSourceDeduction();
   }
 
   if (!this.stockStatus.destinationAdded) {
@@ -659,7 +978,13 @@ stockTransferSchema.methods.markAsIncomplete = async function (
   incompleteRemark = ""
 ) {
   if (!["Shipped", "Confirmed"].includes(this.status)) {
-    throw new Error("Only shipped or confirmed transfers can be marked as incomplete");
+    throw new Error(
+      "Only shipped or confirmed transfers can be marked as incomplete"
+    );
+  }
+
+  if (this.status === "Shipped" && this.stockStatus.sourceDeducted) {
+    await this.reverseSourceDeduction();
   }
 
   this.status = "Incompleted";
@@ -676,7 +1001,13 @@ stockTransferSchema.methods.rejectTransfer = async function (
   rejectionRemark = ""
 ) {
   if (!["Admin_Approved", "Confirmed"].includes(this.status)) {
-    throw new Error("Only admin approved or confirmed transfers can be rejected");
+    throw new Error(
+      "Only admin approved or confirmed transfers can be rejected"
+    );
+  }
+
+  if (this.stockStatus.sourceDeducted) {
+    await this.reverseSourceDeduction();
   }
 
   this.status = "Rejected";
@@ -686,6 +1017,104 @@ stockTransferSchema.methods.rejectTransfer = async function (
   this.lastStatusChange = new Date();
 
   return this.save();
+};
+
+stockTransferSchema.methods.reverseSourceDeduction = async function () {
+  const CenterStock = mongoose.model("CenterStock");
+
+  for (const item of this.products) {
+    const quantityToReverse = item.approvedQuantity || item.quantity;
+    if (quantityToReverse <= 0) continue;
+
+    const centerStock = await CenterStock.findOne({
+      center: this.fromCenter,
+      product: item.product,
+    });
+
+    if (!centerStock) {
+      console.warn(
+        `Stock not found for product ${item.product} in source center during reversal`
+      );
+      continue;
+    }
+
+    if (
+      item.requiresSerialNumbers &&
+      item.serialNumbers &&
+      item.serialNumbers.length > 0
+    ) {
+      for (const serialNumber of item.serialNumbers) {
+        const serial = centerStock.serialNumbers.find(
+          (sn) =>
+            sn.serialNumber === serialNumber && sn.status === "transferred"
+        );
+
+        if (serial) {
+          serial.status = "available";
+          serial.currentLocation = this.fromCenter;
+
+          if (serial.transferHistory.length > 0) {
+            serial.transferHistory.pop();
+          }
+        }
+      }
+    }
+
+    centerStock.availableQuantity += quantityToReverse;
+    centerStock.totalQuantity += quantityToReverse;
+
+    await centerStock.save();
+  }
+
+  this.stockStatus.sourceDeducted = false;
+  this.stockStatus.deductedAt = null;
+  this.stockStatus.lastStockCheck = new Date();
+};
+
+stockTransferSchema.methods.reverseDestinationAddition = async function () {
+  const CenterStock = mongoose.model("CenterStock");
+
+  for (const item of this.products) {
+    const quantityToReverse =
+      item.receivedQuantity || item.approvedQuantity || item.quantity;
+    if (quantityToReverse <= 0) continue;
+
+    const centerStock = await CenterStock.findOne({
+      center: this.toCenter,
+      product: item.product,
+    });
+
+    if (!centerStock) {
+      console.warn(
+        `Stock not found for product ${item.product} in destination center during reversal`
+      );
+      continue;
+    }
+
+    if (
+      item.requiresSerialNumbers &&
+      item.serialNumbers &&
+      item.serialNumbers.length > 0
+    ) {
+      const serialsToRemove = item.serialNumbers.slice(0, quantityToReverse);
+      centerStock.serialNumbers = centerStock.serialNumbers.filter(
+        (sn) => !serialsToRemove.includes(sn.serialNumber)
+      );
+    }
+
+    centerStock.availableQuantity -= quantityToReverse;
+    centerStock.totalQuantity -= quantityToReverse;
+
+    if (centerStock.totalQuantity <= 0) {
+      await CenterStock.findByIdAndDelete(centerStock._id);
+    } else {
+      await centerStock.save();
+    }
+  }
+
+  this.stockStatus.destinationAdded = false;
+  this.stockStatus.addedAt = null;
+  this.stockStatus.lastStockCheck = new Date();
 };
 
 stockTransferSchema.methods.validateStockAvailability = async function () {
@@ -737,87 +1166,52 @@ stockTransferSchema.methods.validateStockAvailability = async function () {
   }
 };
 
-stockTransferSchema.methods.processSourceDeduction = async function () {
-  const CenterStock = mongoose.model("CenterStock");
-
-  for (const item of this.products) {
-    const centerStock = await CenterStock.findOne({
-      center: this.fromCenter,
-      product: item.product,
-    });
-
-    if (!centerStock) {
-      throw new Error(`Stock not found for product in source center`);
-    }
-
-    let serialNumbersToTransfer = [];
-    const quantityToTransfer = item.approvedQuantity || item.quantity;
-
-    if (item.requiresSerialNumbers) {
-      const availableSerials = centerStock.serialNumbers
-        .filter((sn) => sn.status === "available")
-        .sort(
-          (a, b) =>
-            new Date(a.createdAt || a.transferHistory[0]?.transferDate) -
-            new Date(b.createdAt || b.transferHistory[0]?.transferDate)
-        )
-        .slice(0, quantityToTransfer);
-
-      serialNumbersToTransfer = availableSerials.map((sn) => sn.serialNumber);
-      item.serialNumbers = serialNumbersToTransfer;
-    }
-
-    await centerStock.transferToCenter(
-      this.toCenter,
-      quantityToTransfer,
-      serialNumbersToTransfer
-    );
+stockTransferSchema.methods.rejectByCenter = async function (
+  rejectedBy,
+  rejectionRemark = ""
+) {
+  if (this.status !== "Confirmed") {
+    throw new Error("Only admin approved transfers can be rejected by center");
   }
 
-  this.stockStatus.sourceDeducted = true;
-  this.stockStatus.deductedAt = new Date();
-  this.stockStatus.lastStockCheck = new Date();
-};
-
-stockTransferSchema.methods.processDestinationAddition = async function () {
-  const CenterStock = mongoose.model("CenterStock");
-
-  for (const item of this.products) {
-    let serialNumbers = [];
-    const quantityToAdd =
-      item.receivedQuantity || item.approvedQuantity || item.quantity;
-
-    if (
-      item.requiresSerialNumbers &&
-      item.serialNumbers &&
-      item.serialNumbers.length > 0
-    ) {
-      serialNumbers = item.serialNumbers.slice(0, quantityToAdd);
-    }
-
-    await CenterStock.updateStock(
-      this.toCenter,
-      item.product,
-      quantityToAdd,
-      serialNumbers,
-      this.fromCenter,
-      "inbound_transfer"
-    );
+  if (this.centerApproval.status) {
+    throw new Error("Transfer has already been processed by center");
   }
 
-  this.stockStatus.destinationAdded = true;
-  this.stockStatus.addedAt = new Date();
-  this.stockStatus.lastStockCheck = new Date();
+  this.centerApproval.status = "Rejected";
+  this.centerApproval.rejectedBy = rejectedBy;
+  this.centerApproval.rejectedAt = new Date();
+  this.centerApproval.rejectionRemark = rejectionRemark;
+
+  this.status = "Rejected";
+  this.lastStatusChange = new Date();
+
+  return this.save();
 };
 
-// Middleware
+// Update the existing rejectTransfer method to be more generic
+stockTransferSchema.methods.rejectTransfer = async function (
+  rejectedBy,
+  rejectionRemark = ""
+) {
+  // This method now handles both admin and center rejections based on current status
+  if (this.status === "Submitted") {
+    return this.rejectByAdmin(rejectedBy, rejectionRemark);
+  } else if (this.status === "Admin_Approved") {
+    return this.rejectByCenter(rejectedBy, rejectionRemark);
+  } else {
+    throw new Error(
+      "Only submitted or admin approved transfers can be rejected"
+    );
+  }
+};
+
 stockTransferSchema.pre("save", async function (next) {
   try {
     if (this.isModified("status")) {
       this.lastStatusChange = new Date();
     }
 
-    // Auto-update main status based on admin approval
     if (this.isModified("adminApproval.status")) {
       if (this.adminApproval.status === "Approved") {
         this.status = "Admin_Approved";
@@ -830,7 +1224,6 @@ stockTransferSchema.pre("save", async function (next) {
       return next();
     }
 
-    // Validate status transitions - Admin approval is mandatory after submission
     if (this.isModified("status")) {
       const validTransitions = {
         Draft: ["Submitted"],
@@ -838,7 +1231,7 @@ stockTransferSchema.pre("save", async function (next) {
         Admin_Approved: ["Confirmed", "Rejected"],
         Admin_Rejected: [],
         Confirmed: ["Shipped", "Incompleted", "Rejected"],
-        Shipped: ["Completed", "Incompleted"],
+        Shipped: ["Completed", "Incompleted", "Confirmed"],
         Incompleted: ["Confirmed", "Shipped", "Completed"],
         Completed: [],
         Rejected: [],
@@ -877,10 +1270,16 @@ stockTransferSchema.pre("validate", async function (next) {
       return next(new Error("At least one product is required for transfer"));
     }
 
-    // Validate that center cannot proceed without admin approval
-    if (this.isModified("status") && ["Confirmed", "Shipped", "Completed", "Incompleted"].includes(this.status)) {
+    if (
+      this.isModified("status") &&
+      ["Confirmed", "Shipped", "Completed", "Incompleted"].includes(this.status)
+    ) {
       if (this.adminApproval.status !== "Approved") {
-        return next(new Error("Admin approval is required before center can process the transfer"));
+        return next(
+          new Error(
+            "Admin approval is required before center can process the transfer"
+          )
+        );
       }
     }
 
@@ -901,13 +1300,12 @@ stockTransferSchema.pre("validate", async function (next) {
   }
 });
 
-stockTransferSchema.post("save", function() {
+stockTransferSchema.post("save", function () {
   if (this._originalStatus !== undefined) {
     delete this._originalStatus;
   }
 });
 
-// Indexes
 stockTransferSchema.index({ createdAt: -1 });
 stockTransferSchema.index({ updatedAt: -1 });
 stockTransferSchema.index({ status: 1, createdAt: -1 });

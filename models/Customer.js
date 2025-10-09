@@ -32,6 +32,32 @@ const customerSchema = new mongoose.Schema(
     address2: { type: String },
     city: { type: String },
     state: { type: String },
+    shiftingHistory: [{
+      fromCenter: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Center',
+        required: true
+      },
+      toCenter: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Center',
+        required: true
+      },
+      shiftingRequest: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'ShiftingRequest',
+        required: true
+      },
+      shiftedAt: {
+        type: Date,
+        default: Date.now
+      },
+      shiftedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true
+      }
+    }]
   },
   { timestamps: true }
 );

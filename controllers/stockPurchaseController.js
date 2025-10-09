@@ -3,7 +3,7 @@ import OutletStock from "../models/OutletStock.js";
 import CenterStock from "../models/CenterStock.js";
 import Product from "../models/Product.js";
 import Center from "../models/Center.js";
-import User from "../models/User.js"; 
+import User from "../models/User.js";
 import mongoose from "mongoose";
 
 const getUserOutletId = async (userId) => {
@@ -11,20 +11,17 @@ const getUserOutletId = async (userId) => {
     throw new Error("User ID is required");
   }
 
-  
-  const user = await User.findById(userId)
-    .populate('center', 'centerName centerCode centerType');
-  
+  const user = await User.findById(userId).populate(
+    "center",
+    "centerName centerCode centerType"
+  );
+
   if (!user) {
     throw new Error("User not found");
   }
 
   if (!user.center) {
     throw new Error("User center information not found");
-  }
-
-  if (user.center.centerType !== "Outlet") {
-    throw new Error("User does not have outlet access");
   }
 
   return user.center._id;
@@ -35,10 +32,11 @@ const validateUserOutletAccess = async (userId) => {
     throw new Error("User authentication required");
   }
 
-  
-  const user = await User.findById(userId)
-    .populate('center', 'centerName centerCode centerType');
-  
+  const user = await User.findById(userId).populate(
+    "center",
+    "centerName centerCode centerType"
+  );
+
   if (!user) {
     throw new Error("User not found");
   }
@@ -54,11 +52,9 @@ const validateUserOutletAccess = async (userId) => {
   return user.center._id;
 };
 
-
 const getQuickOutletId = async (userId) => {
-  const user = await User.findById(userId)
-    .populate('center', 'centerType');
-  
+  const user = await User.findById(userId).populate("center", "centerType");
+
   return user?.center?.centerType === "Outlet" ? user.center._id : null;
 };
 
@@ -80,7 +76,6 @@ export const createStockPurchase = async (req, res) => {
 
     let outletId = outlet;
     if (!outletId) {
-      
       outletId = await getUserOutletId(req.user._id);
     }
 
@@ -171,7 +166,6 @@ export const getAllStockPurchases = async (req, res) => {
       sortOrder = "desc",
     } = req.query;
 
-    
     const outletId = await validateUserOutletAccess(req.user._id);
 
     const filter = { outlet: outletId };
@@ -239,7 +233,7 @@ export const getAllStockPurchases = async (req, res) => {
 export const getStockPurchaseById = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const outletId = await validateUserOutletAccess(req.user._id);
 
     const purchase = await StockPurchase.findOne({
@@ -274,7 +268,7 @@ export const getStockPurchaseById = async (req, res) => {
 export const updateStockPurchase = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const outletId = await validateUserOutletAccess(req.user._id);
 
     const {
@@ -406,7 +400,7 @@ export const updateStockPurchase = async (req, res) => {
 export const deleteStockPurchase = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const outletId = await validateUserOutletAccess(req.user._id);
 
     const purchase = await StockPurchase.findOne({
@@ -463,7 +457,7 @@ export const getPurchasesByVendor = async (req, res) => {
   try {
     const { vendorId } = req.params;
     const { page = 1, limit = 10 } = req.query;
-    
+
     const outletId = await validateUserOutletAccess(req.user._id);
 
     const purchases = await StockPurchase.find({
@@ -502,11 +496,12 @@ export const getPurchasesByVendor = async (req, res) => {
 export const getAllProductsWithStock = async (req, res) => {
   try {
     const { page = 1, limit = 50, search, category } = req.query;
-    
-    // Get user's center information
-    const user = await User.findById(req.user._id)
-      .populate('center', 'centerName centerCode centerType');
-    
+
+    const user = await User.findById(req.user._id).populate(
+      "center",
+      "centerName centerCode centerType"
+    );
+
     if (!user || !user.center) {
       return res.status(400).json({
         success: false,
@@ -532,7 +527,9 @@ export const getAllProductsWithStock = async (req, res) => {
     }
 
     const products = await Product.find(productFilter)
-      .select("productTitle productCode description category productPrice trackSerialNumber productImage")
+      .select(
+        "productTitle productCode description category productPrice trackSerialNumber productImage"
+      )
       .sort({ productTitle: 1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
@@ -543,7 +540,6 @@ export const getAllProductsWithStock = async (req, res) => {
     let centerDetails = null;
 
     if (centerType === "Outlet") {
-      // For outlets, get stock from StockPurchase and OutletStock
       centerDetails = await Center.findById(centerId).select(
         "_id partner area centerType centerName centerCode"
       );
@@ -565,41 +561,36 @@ export const getAllProductsWithStock = async (req, res) => {
         },
       ]);
 
-      // Also get current stock status from OutletStock
       const outletStockData = await OutletStock.aggregate([
         {
-          $match: { outlet: centerId }
+          $match: { outlet: centerId },
         },
         {
           $group: {
             _id: "$product",
             currentTotalQuantity: { $sum: "$totalQuantity" },
-            currentAvailableQuantity: { $sum: "$availableQuantity" }
-          }
-        }
+            currentAvailableQuantity: { $sum: "$availableQuantity" },
+          },
+        },
       ]);
 
-      // Merge both data sources
       const outletStockMap = new Map();
-      outletStockData.forEach(item => {
+      outletStockData.forEach((item) => {
         outletStockMap.set(item._id.toString(), {
           currentTotalQuantity: item.currentTotalQuantity,
-          currentAvailableQuantity: item.currentAvailableQuantity
+          currentAvailableQuantity: item.currentAvailableQuantity,
         });
       });
 
-      // Update stockData with current quantities
-      stockData = stockData.map(item => {
+      stockData = stockData.map((item) => {
         const currentStock = outletStockMap.get(item._id.toString());
         return {
           ...item,
           currentTotalQuantity: currentStock?.currentTotalQuantity || 0,
-          currentAvailableQuantity: currentStock?.currentAvailableQuantity || 0
+          currentAvailableQuantity: currentStock?.currentAvailableQuantity || 0,
         };
       });
-
     } else if (centerType === "Center") {
-      // For centers, get stock from CenterStock
       centerDetails = await Center.findById(centerId).select(
         "_id partner area centerType centerName centerCode"
       );
@@ -632,7 +623,7 @@ export const getAllProductsWithStock = async (req, res) => {
           totalAvailable: item.totalAvailable || item.currentAvailableQuantity,
           purchaseCount: item.purchaseCount,
           currentTotalQuantity: item.currentTotalQuantity,
-          currentAvailableQuantity: item.currentAvailableQuantity
+          currentAvailableQuantity: item.currentAvailableQuantity,
         });
       } else {
         stockMap.set(item._id.toString(), {
@@ -653,14 +644,16 @@ export const getAllProductsWithStock = async (req, res) => {
           totalAvailable: 0,
           purchaseCount: 0,
           currentTotalQuantity: 0,
-          currentAvailableQuantity: 0
+          currentAvailableQuantity: 0,
         };
-        
+
         stockInfo = {
           totalPurchased: stockData.totalPurchased,
-          totalAvailable: stockData.currentAvailableQuantity || stockData.totalAvailable,
+          totalAvailable:
+            stockData.currentAvailableQuantity || stockData.totalAvailable,
           purchaseCount: stockData.purchaseCount,
-          currentStock: stockData.currentAvailableQuantity || stockData.totalAvailable
+          currentStock:
+            stockData.currentAvailableQuantity || stockData.totalAvailable,
         };
       } else {
         const stockData = stockMap.get(productId) || {
@@ -668,12 +661,12 @@ export const getAllProductsWithStock = async (req, res) => {
           availableQuantity: 0,
           stockEntries: 0,
         };
-        
+
         stockInfo = {
           totalQuantity: stockData.totalQuantity,
           availableQuantity: stockData.availableQuantity,
           stockEntries: stockData.stockEntries,
-          currentStock: stockData.availableQuantity
+          currentStock: stockData.availableQuantity,
         };
       }
 
@@ -683,17 +676,17 @@ export const getAllProductsWithStock = async (req, res) => {
       };
     });
 
-    // Calculate total stock summary
     const totalStockSummary = {
       totalProducts: productsWithStock.length,
       totalItemsInStock: 0,
-      totalAvailableItems: 0
+      totalAvailableItems: 0,
     };
 
-    productsWithStock.forEach(product => {
-      totalStockSummary.totalItemsInStock += centerType === "Outlet" 
-        ? product.stock.totalPurchased 
-        : product.stock.totalQuantity;
+    productsWithStock.forEach((product) => {
+      totalStockSummary.totalItemsInStock +=
+        centerType === "Outlet"
+          ? product.stock.totalPurchased
+          : product.stock.totalQuantity;
       totalStockSummary.totalAvailableItems += product.stock.currentStock;
     });
 
@@ -704,7 +697,7 @@ export const getAllProductsWithStock = async (req, res) => {
       center: centerDetails,
       stockSummary: {
         centerType,
-        ...totalStockSummary
+        ...totalStockSummary,
       },
       pagination: {
         currentPage: parseInt(page),
@@ -722,7 +715,7 @@ export const getAllProductsWithStock = async (req, res) => {
 export const getAvailableStock = async (req, res) => {
   try {
     const { productId } = req.params;
-    
+
     const outletId = await getUserOutletId(req.user._id);
 
     const outletStock = await OutletStock.findOne({
@@ -811,7 +804,6 @@ export const getAvailableStock = async (req, res) => {
 
 export const getOutletStockSummary = async (req, res) => {
   try {
-    
     const outletId = await getUserOutletId(req.user._id);
 
     const outlet = await Center.findById(outletId).select(
@@ -903,9 +895,14 @@ export const getCenterStockSummary = async (req, res) => {
 
 export const getOutletSerialNumbers = async (req, res) => {
   try {
-    const { productId } = req.params;
-    
-    const outletId = await getUserOutletId(req.user._id);
+    const { productId, outletId } = req.params;
+
+    if (!outletId) {
+      return res.status(400).json({
+        success: false,
+        message: "Outlet ID is required",
+      });
+    }
 
     const outletStock = await OutletStock.findOne({
       outlet: outletId,
@@ -965,7 +962,7 @@ export const updateOutletSerialNumber = async (req, res) => {
   try {
     const { productId, serialNumber } = req.params;
     const { newSerialNumber } = req.body;
-    
+
     const outletId = await getUserOutletId(req.user._id);
 
     const outletStock = await OutletStock.findOne({
@@ -1040,7 +1037,7 @@ export const updateOutletSerialNumber = async (req, res) => {
 export const deleteOutletSerialNumber = async (req, res) => {
   try {
     const { productId, serialNumber } = req.params;
-    
+
     const outletId = await getUserOutletId(req.user._id);
 
     const outletStock = await OutletStock.findOne({
@@ -1124,7 +1121,6 @@ const handleControllerError = (error, res) => {
   if (
     error.message.includes("User center information not found") ||
     error.message.includes("User authentication required") ||
-    error.message.includes("User does not have outlet access") ||
     error.message.includes("User not found") ||
     error.message.includes("User ID is required")
   ) {

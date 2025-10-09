@@ -73,7 +73,7 @@ router.get(
 );
 
 router.get(
-  "/serial-numbers/product/:productId",
+  "/serial-numbers/product/:outletId/:productId",
   protect,
   getOutletSerialNumbers
 );
