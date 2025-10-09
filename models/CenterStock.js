@@ -85,7 +85,16 @@ const centerStockSchema = new mongoose.Schema(
             transferDate: Date,
             transferType: {
               type: String,
-              enum: ["inbound_transfer", "outbound_transfer", "field_usage", "damage_approved", "damage_reserved", "damage_rejected", "transfer_rejected", "transfer_updated"],
+              enum: [
+                "inbound_transfer",
+                "outbound_transfer",
+                "field_usage",
+                "damage_approved",
+                "damage_reserved",
+                "damage_rejected",
+                "transfer_rejected",
+                "transfer_updated",
+              ],
             },
           },
         ],
@@ -177,15 +186,14 @@ centerStockSchema.methods.validateAndGetSerials = function (
   currentLocation
 ) {
   try {
-
-       console.log('validateAndGetSerials called with:', {
+    console.log("validateAndGetSerials called with:", {
       requestedSerials,
       currentLocation: currentLocation?.toString?.(),
-      availableSerials: this.serialNumbers.map(sn => ({
+      availableSerials: this.serialNumbers.map((sn) => ({
         serialNumber: sn.serialNumber,
         status: sn.status,
-        currentLocation: sn.currentLocation?.toString?.()
-      }))
+        currentLocation: sn.currentLocation?.toString?.(),
+      })),
     });
     const availableSerials = [];
 
@@ -202,7 +210,7 @@ centerStockSchema.methods.validateAndGetSerials = function (
       }
     }
 
-      console.log('Final availableSerials:', availableSerials);
+    console.log("Final availableSerials:", availableSerials);
 
     return availableSerials;
   } catch (error) {

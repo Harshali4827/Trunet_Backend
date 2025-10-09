@@ -4,6 +4,22 @@ import Area from "../models/Area.js";
 
 export const createCenter = async (req, res) => {
   try {
+    const userPermissions = req.user.role?.permissions || [];
+    const centerModule = userPermissions.find(
+      (perm) => perm.module === "Center"
+    );
+
+    if (
+      !centerModule ||
+      !centerModule.permissions.includes("manage_all_center")
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. manage_all_centers permission required to create centers.",
+      });
+    }
+
     const {
       partnerId,
       areaId,
@@ -73,6 +89,28 @@ export const getCenters = async (req, res) => {
 
     const filter = {};
 
+    const userPermissions = req.user.role?.permissions || [];
+    const centerModule = userPermissions.find(
+      (perm) => perm.module === "Center"
+    );
+
+    const canViewAll =
+      centerModule && centerModule.permissions.includes("view_all_center");
+    const canViewOwn =
+      centerModule && centerModule.permissions.includes("view_own_center");
+
+    if (!canViewAll && !canViewOwn) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_own_center or view_all_centers permission required.",
+      });
+    }
+
+    if (canViewOwn && !canViewAll && req.user.center) {
+      filter._id = req.user.center._id || req.user.center;
+    }
+
     if (centerType) {
       filter.centerType = centerType;
     }
@@ -93,10 +131,8 @@ export const getCenters = async (req, res) => {
       filter.$or = [
         { centerName: { $regex: search, $options: "i" } },
         { centerCode: { $regex: search, $options: "i" } },
-        { location: { $regex: search, $options: "i" } },
-        { contactPerson: { $regex: search, $options: "i" } },
         { email: { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
+        { mobile: { $regex: search, $options: "i" } },
       ];
     }
 
@@ -167,17 +203,125 @@ export const getCenters = async (req, res) => {
     });
   }
 };
+
 export const getCenterById = async (req, res) => {
   try {
     const center = await Center.findById(req.params.id)
       .populate("partner", "partnerName")
       .populate("area", "areaName");
 
-    if (!center)
+    if (!center) {
       return res
         .status(404)
         .json({ success: false, message: "Center not found" });
+    }
+    const userPermissions = req.user.role?.permissions || [];
+    const centerModule = userPermissions.find(
+      (perm) => perm.module === "Center"
+    );
+
+    const canViewAll =
+      centerModule && centerModule.permissions.includes("view_all_centers");
+    const canViewOwn =
+      centerModule && centerModule.permissions.includes("view_own_center");
+
+    if (canViewOwn && !canViewAll && req.user.center) {
+      const userCenterId = req.user.center._id || req.user.center;
+      if (center._id.toString() !== userCenterId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You can only view your own center.",
+        });
+      }
+    }
+
     res.status(200).json({ success: true, data: center });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const updateCenter = async (req, res) => {
+  try {
+    const center = await Center.findById(req.params.id);
+
+    if (!center) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Center not found" });
+    }
+    const userPermissions = req.user.role?.permissions || [];
+    const centerModule = userPermissions.find(
+      (perm) => perm.module === "Center"
+    );
+
+    const canManageAll =
+      centerModule && centerModule.permissions.includes("manage_all_centers");
+    const canManageOwn =
+      centerModule && centerModule.permissions.includes("manage_own_center");
+
+    if (!canManageAll && !canManageOwn) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. manage_own_center or manage_all_centers permission required.",
+      });
+    }
+    if (canManageOwn && !canManageAll && req.user.center) {
+      const userCenterId = req.user.center._id || req.user.center;
+      if (center._id.toString() !== userCenterId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You can only manage your own center.",
+        });
+      }
+    }
+    const updatedCenter = await Center.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      {
+        new: true,
+        runValidators: true,
+      }
+    )
+      .populate("partner", "partnerName")
+      .populate("area", "areaName");
+
+    res.status(200).json({ success: true, data: updatedCenter });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const deleteCenter = async (req, res) => {
+  try {
+    const center = await Center.findById(req.params.id);
+
+    if (!center) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Center not found" });
+    }
+    const userPermissions = req.user.role?.permissions || [];
+    const centerModule = userPermissions.find(
+      (perm) => perm.module === "Center"
+    );
+
+    if (
+      !centerModule ||
+      !centerModule.permissions.includes("manage_all_centers")
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. manage_all_centers permission required to delete centers.",
+      });
+    }
+
+    await Center.findByIdAndDelete(req.params.id);
+    res
+      .status(200)
+      .json({ success: true, message: "Center deleted successfully" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -185,7 +329,33 @@ export const getCenterById = async (req, res) => {
 
 export const getCentersByPartner = async (req, res) => {
   try {
-    const centers = await Center.find({ partner: req.params.partnerId })
+    const userPermissions = req.user.role?.permissions || [];
+    const centerModule = userPermissions.find(
+      (perm) => perm.module === "Center"
+    );
+
+    const canViewAll =
+      centerModule && centerModule.permissions.includes("view_all_centers");
+    const canViewOwn =
+      centerModule && centerModule.permissions.includes("view_own_center");
+
+    let filter = { partner: req.params.partnerId };
+
+    if (canViewOwn && !canViewAll && req.user.center) {
+      const userCenter = await Center.findById(req.user.center);
+      if (
+        !userCenter ||
+        userCenter.partner.toString() !== req.params.partnerId
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You can only view centers in your partner.",
+        });
+      }
+      filter._id = req.user.center._id || req.user.center;
+    }
+
+    const centers = await Center.find(filter)
       .populate("partner", "partnerName")
       .populate("area", "areaName");
 
@@ -197,46 +367,34 @@ export const getCentersByPartner = async (req, res) => {
 
 export const getCentersByArea = async (req, res) => {
   try {
-    const centers = await Center.find({ area: req.params.areaId })
+    const userPermissions = req.user.role?.permissions || [];
+    const centerModule = userPermissions.find(
+      (perm) => perm.module === "Center"
+    );
+
+    const canViewAll =
+      centerModule && centerModule.permissions.includes("view_all_centers");
+    const canViewOwn =
+      centerModule && centerModule.permissions.includes("view_own_center");
+
+    let filter = { area: req.params.areaId };
+
+    if (canViewOwn && !canViewAll && req.user.center) {
+      const userCenter = await Center.findById(req.user.center);
+      if (!userCenter || userCenter.area.toString() !== req.params.areaId) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You can only view centers in your area.",
+        });
+      }
+      filter._id = req.user.center._id || req.user.center;
+    }
+
+    const centers = await Center.find(filter)
       .populate("partner", "partnerName")
       .populate("area", "areaName");
 
     res.status(200).json({ success: true, data: centers });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-export const updateCenter = async (req, res) => {
-  try {
-    const center = await Center.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    })
-      .populate("partner", "partnerName")
-      .populate("area", "areaName");
-
-    if (!center)
-      return res
-        .status(404)
-        .json({ success: false, message: "Center not found" });
-
-    res.status(200).json({ success: true, data: center });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-export const deleteCenter = async (req, res) => {
-  try {
-    const center = await Center.findByIdAndDelete(req.params.id);
-    if (!center)
-      return res
-        .status(404)
-        .json({ success: false, message: "Center not found" });
-    res
-      .status(200)
-      .json({ success: true, message: "Center deleted successfully" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

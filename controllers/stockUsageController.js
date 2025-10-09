@@ -1858,7 +1858,6 @@ const buildDateFilter = (dateFilter, startDate, endDate) => {
   return dateQuery;
 };
 
-
 export const getStockUsageByCustomer = async (req, res) => {
   try {
     const { customerId } = req.params;
@@ -1869,73 +1868,67 @@ export const getStockUsageByCustomer = async (req, res) => {
       endDate,
       status,
       product,
-      sortBy = 'date',
-      sortOrder = 'desc'
+      sortBy = "date",
+      sortOrder = "desc",
     } = req.query;
 
-    // Get center from authenticated user
     const userCenter = req.user.center?._id || req.user.center;
-    
+
     if (!userCenter) {
       return res.status(400).json({
         success: false,
-        message: "User must be associated with a center"
+        message: "User must be associated with a center",
       });
     }
 
-    // Validate customer exists AND belongs to user's center
     const customer = await Customer.findOne({
       _id: customerId,
-      center: userCenter
-    }).populate('center', 'centerName centerCode');
-    
+      center: userCenter,
+    }).populate("center", "centerName centerCode");
+
     if (!customer) {
       return res.status(404).json({
         success: false,
-        message: "Customer not found or you don't have access to this customer"
+        message: "Customer not found or you don't have access to this customer",
       });
     }
 
-    // Build query with center enforcement
-    const query = { 
+    const query = {
       usageType: "Customer",
       customer: customerId,
-      center: userCenter // ENFORCE CENTER FILTER
+      center: userCenter,
     };
 
-    // Add date range filter
     if (startDate || endDate) {
       query.date = {};
       if (startDate) query.date.$gte = new Date(startDate);
       if (endDate) query.date.$lte = new Date(endDate);
     }
 
-    if (status && status !== 'all') query.status = status;
-    if (product) query['items.product'] = product;
+    if (status && status !== "all") query.status = status;
+    if (product) query["items.product"] = product;
 
     const total = await StockUsage.countDocuments(query);
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const sortConfig = {};
-    sortConfig[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
 
     const stockUsages = await StockUsage.find(query)
       .populate("center", "centerName centerCode address")
       .populate({
         path: "items.product",
-        select: "productTitle productCode category"
+        select: "productTitle productCode category",
       })
       .populate("createdBy", "name email")
       .sort(sortConfig)
       .skip(skip)
       .limit(parseInt(limit));
 
-    // Transform data to match requested format
     const formattedData = [];
-    
-    stockUsages.forEach(usage => {
-      usage.items.forEach(item => {
-        // Calculate damage quantity based on usage type and status
+
+    stockUsages.forEach((usage) => {
+      usage.items.forEach((item) => {
         let damageQty = 0;
         if (usage.usageType === "Damage" && usage.status === "completed") {
           damageQty = item.quantity;
@@ -1945,16 +1938,16 @@ export const getStockUsageByCustomer = async (req, res) => {
           _id: usage._id,
           Date: usage.date.toLocaleDateString(),
           Type: usage.usageType,
-          Center: usage.center?.centerName || 'Unknown Center',
-          Product: item.product?.productTitle || 'Unknown Product',
+          Center: usage.center?.centerName || "Unknown Center",
+          Product: item.product?.productTitle || "Unknown Product",
           "Old Stock": item.oldStock || 0,
           Qty: item.quantity,
           "Damage Qty": damageQty,
           "New Stock": item.newStock || 0,
-          "Connection Type": usage.connectionType || 'N/A',
-          "Remark": usage.remark || '',
-          "Status": usage.status,
-          "Created At": usage.createdAt.toLocaleDateString()
+          "Connection Type": usage.connectionType || "N/A",
+          Remark: usage.remark || "",
+          Status: usage.status,
+          "Created At": usage.createdAt.toLocaleDateString(),
         });
       });
     });
@@ -1967,21 +1960,20 @@ export const getStockUsageByCustomer = async (req, res) => {
         name: customer.name,
         username: customer.username,
         mobile: customer.mobile,
-        currentCenter: customer.center
+        currentCenter: customer.center,
       },
       pagination: {
         total,
         page: parseInt(page),
         limit: parseInt(limit),
         totalPages: Math.ceil(total / limit),
-      }
+      },
     });
-
   } catch (error) {
     console.error("Error fetching stock usage by customer:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error"
+    res.status(500).json({
+      success: false,
+      message: "Server error",
     });
   }
 };
@@ -1999,73 +1991,68 @@ export const getStockUsageByBuilding = async (req, res) => {
       endDate,
       status,
       product,
-      usageType = 'all',
-      sortBy = 'date',
-      sortOrder = 'desc'
+      usageType = "all",
+      sortBy = "date",
+      sortOrder = "desc",
     } = req.query;
 
-    // Get center from authenticated user
     const userCenter = req.user.center?._id || req.user.center;
-    
+
     if (!userCenter) {
       return res.status(400).json({
         success: false,
-        message: "User must be associated with a center"
+        message: "User must be associated with a center",
       });
     }
 
-    // Validate building exists AND belongs to user's center
     const building = await Building.findOne({
       _id: buildingId,
-      center: userCenter
+      center: userCenter,
     });
-    
+
     if (!building) {
       return res.status(404).json({
         success: false,
-        message: "Building not found or you don't have access to this building"
+        message: "Building not found or you don't have access to this building",
       });
     }
 
-    // Build query with center enforcement
     const query = {
-      center: userCenter, // ENFORCE CENTER FILTER
+      center: userCenter,
       $or: [
         { usageType: "Building", fromBuilding: buildingId },
-        { usageType: "Building to Building", $or: [
-          { fromBuilding: buildingId },
-          { toBuilding: buildingId }
-        ]}
-      ]
+        {
+          usageType: "Building to Building",
+          $or: [{ fromBuilding: buildingId }, { toBuilding: buildingId }],
+        },
+      ],
     };
 
-    // Filter by specific usage type if provided
-    if (usageType && usageType !== 'all') {
+    if (usageType && usageType !== "all") {
       if (usageType === "Building") {
         query.$or = [{ usageType: "Building", fromBuilding: buildingId }];
       } else if (usageType === "Building to Building") {
         query.$or = [
           { usageType: "Building to Building", fromBuilding: buildingId },
-          { usageType: "Building to Building", toBuilding: buildingId }
+          { usageType: "Building to Building", toBuilding: buildingId },
         ];
       }
     }
 
-    // Add filters
     if (startDate || endDate) {
       query.date = {};
       if (startDate) query.date.$gte = new Date(startDate);
       if (endDate) query.date.$lte = new Date(endDate);
     }
 
-    if (status && status !== 'all') query.status = status;
-    if (product) query['items.product'] = product;
+    if (status && status !== "all") query.status = status;
+    if (product) query["items.product"] = product;
 
     const total = await StockUsage.countDocuments(query);
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const sortConfig = {};
-    sortConfig[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
 
     const stockUsages = await StockUsage.find(query)
       .populate("center", "centerName centerCode address")
@@ -2073,25 +2060,23 @@ export const getStockUsageByBuilding = async (req, res) => {
       .populate("toBuilding", "buildingName displayName address1")
       .populate({
         path: "items.product",
-        select: "productTitle productCode category"
+        select: "productTitle productCode category",
       })
       .populate("createdBy", "name email")
       .sort(sortConfig)
       .skip(skip)
       .limit(parseInt(limit));
 
-    // Transform data to match requested format
     const formattedData = [];
-    
-    stockUsages.forEach(usage => {
-      usage.items.forEach(item => {
-        // Determine if this is incoming or outgoing transfer
-        let transferType = 'Usage';
+
+    stockUsages.forEach((usage) => {
+      usage.items.forEach((item) => {
+        let transferType = "Usage";
         if (usage.usageType === "Building to Building") {
           if (usage.fromBuilding?._id.toString() === buildingId) {
-            transferType = 'Outgoing Transfer';
+            transferType = "Outgoing Transfer";
           } else if (usage.toBuilding?._id.toString() === buildingId) {
-            transferType = 'Incoming Transfer';
+            transferType = "Incoming Transfer";
           }
         }
 
@@ -2099,17 +2084,17 @@ export const getStockUsageByBuilding = async (req, res) => {
           _id: usage._id,
           Date: usage.date.toLocaleDateString(),
           Type: transferType,
-          Center: usage.center?.centerName || 'Unknown Center',
-          Product: item.product?.productTitle || 'Unknown Product',
+          Center: usage.center?.centerName || "Unknown Center",
+          Product: item.product?.productTitle || "Unknown Product",
           "Old Stock": item.oldStock || 0,
           Qty: item.quantity,
-          "Damage Qty": 0, // Building usage typically doesn't have damage
+          "Damage Qty": 0,
           "New Stock": item.newStock || 0,
-          "From Building": usage.fromBuilding?.buildingName || 'N/A',
-          "To Building": usage.toBuilding?.buildingName || 'N/A',
-          "Remark": usage.remark || '',
-          "Status": usage.status,
-          "Created At": usage.createdAt.toLocaleDateString()
+          "From Building": usage.fromBuilding?.buildingName || "N/A",
+          "To Building": usage.toBuilding?.buildingName || "N/A",
+          Remark: usage.remark || "",
+          Status: usage.status,
+          "Created At": usage.createdAt.toLocaleDateString(),
         });
       });
     });
@@ -2121,21 +2106,20 @@ export const getStockUsageByBuilding = async (req, res) => {
         id: building._id,
         name: building.buildingName,
         displayName: building.displayName,
-        address: building.address1
+        address: building.address1,
       },
       pagination: {
         total,
         page: parseInt(page),
         limit: parseInt(limit),
         totalPages: Math.ceil(total / limit),
-      }
+      },
     });
-
   } catch (error) {
     console.error("Error fetching stock usage by building:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
+    res.status(500).json({
+      success: false,
+      message: "Server error",
     });
   }
 };
@@ -2153,87 +2137,84 @@ export const getStockUsageByControlRoom = async (req, res) => {
       endDate,
       status,
       product,
-      sortBy = 'date',
-      sortOrder = 'desc'
+      sortBy = "date",
+      sortOrder = "desc",
     } = req.query;
 
-    // Get center from authenticated user
     const userCenter = req.user.center?._id || req.user.center;
-    
+
     if (!userCenter) {
       return res.status(400).json({
         success: false,
-        message: "User must be associated with a center"
+        message: "User must be associated with a center",
       });
     }
 
-    // Validate control room exists AND belongs to user's center
     const controlRoom = await ControlRoom.findOne({
       _id: controlRoomId,
-      center: userCenter
+      center: userCenter,
     });
-    
+
     if (!controlRoom) {
       return res.status(404).json({
         success: false,
-        message: "Control room not found or you don't have access to this control room"
+        message:
+          "Control room not found or you don't have access to this control room",
       });
     }
 
-    // Build query with center enforcement
-    const query = { 
+    const query = {
       usageType: "Control Room",
       fromControlRoom: controlRoomId,
-      center: userCenter // ENFORCE CENTER FILTER
+      center: userCenter,
     };
 
-    // Add filters
     if (startDate || endDate) {
       query.date = {};
       if (startDate) query.date.$gte = new Date(startDate);
       if (endDate) query.date.$lte = new Date(endDate);
     }
 
-    if (status && status !== 'all') query.status = status;
-    if (product) query['items.product'] = product;
+    if (status && status !== "all") query.status = status;
+    if (product) query["items.product"] = product;
 
     const total = await StockUsage.countDocuments(query);
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const sortConfig = {};
-    sortConfig[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
 
     const stockUsages = await StockUsage.find(query)
       .populate("center", "centerName centerCode address")
       .populate("fromControlRoom", "buildingName displayName address1")
       .populate({
         path: "items.product",
-        select: "productTitle productCode category"
+        select: "productTitle productCode category",
       })
       .populate("createdBy", "name email")
       .sort(sortConfig)
       .skip(skip)
       .limit(parseInt(limit));
 
-    // Transform data to match requested format
     const formattedData = [];
-    
-    stockUsages.forEach(usage => {
-      usage.items.forEach(item => {
+
+    stockUsages.forEach((usage) => {
+      usage.items.forEach((item) => {
         formattedData.push({
           _id: usage._id,
           Date: usage.date.toLocaleDateString(),
           Type: usage.usageType,
-          Center: usage.center?.centerName || 'Unknown Center',
-          Product: item.product?.productTitle || 'Unknown Product',
+          Center: usage.center?.centerName || "Unknown Center",
+          Product: item.product?.productTitle || "Unknown Product",
           "Old Stock": item.oldStock || 0,
           Qty: item.quantity,
-          "Damage Qty": 0, // Control room usage typically doesn't have damage
+          "Damage Qty": 0,
           "New Stock": item.newStock || 0,
-          "Control Room": usage.fromControlRoom?.buildingName || 'Unknown Control Room',
-          "Remark": usage.remark || '',
-          "Status": usage.status,
-          "Created At": usage.createdAt.toLocaleDateString()
+          "Control Room":
+            usage.fromControlRoom?.buildingName || "Unknown Control Room",
+          Remark: usage.remark || "",
+          Status: usage.status,
+          "Created At": usage.createdAt.toLocaleDateString(),
         });
       });
     });
@@ -2245,21 +2226,20 @@ export const getStockUsageByControlRoom = async (req, res) => {
         id: controlRoom._id,
         name: controlRoom.buildingName,
         displayName: controlRoom.displayName,
-        address: controlRoom.address1
+        address: controlRoom.address1,
       },
       pagination: {
         total,
         page: parseInt(page),
         limit: parseInt(limit),
         totalPages: Math.ceil(total / limit),
-      }
+      },
     });
-
   } catch (error) {
     console.error("Error fetching stock usage by control room:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
+    res.status(500).json({
+      success: false,
+      message: "Server error",
     });
   }
 };
@@ -2278,57 +2258,52 @@ export const getStockUsageByCenter = async (req, res) => {
       usageType,
       status,
       product,
-      sortBy = 'date',
-      sortOrder = 'desc'
+      sortBy = "date",
+      sortOrder = "desc",
     } = req.query;
 
-    // Get center from authenticated user
     const userCenter = req.user.center?._id || req.user.center;
-    
+
     if (!userCenter) {
       return res.status(400).json({
         success: false,
-        message: "User must be associated with a center"
+        message: "User must be associated with a center",
       });
     }
 
-    // ENFORCE: Users can only access their own center's data
     if (centerId !== userCenter.toString()) {
       return res.status(403).json({
         success: false,
-        message: "Access denied. You can only access your own center's data"
+        message: "Access denied. You can only access your own center's data",
       });
     }
 
-    // Validate center exists
     const center = await Center.findById(userCenter);
     if (!center) {
       return res.status(404).json({
         success: false,
-        message: "Center not found"
+        message: "Center not found",
       });
     }
 
-    // Build query - only user's center
     const query = { center: userCenter };
 
-    // Add filters
-    if (usageType && usageType !== 'all') query.usageType = usageType;
-    
+    if (usageType && usageType !== "all") query.usageType = usageType;
+
     if (startDate || endDate) {
       query.date = {};
       if (startDate) query.date.$gte = new Date(startDate);
       if (endDate) query.date.$lte = new Date(endDate);
     }
 
-    if (status && status !== 'all') query.status = status;
-    if (product) query['items.product'] = product;
+    if (status && status !== "all") query.status = status;
+    if (product) query["items.product"] = product;
 
     const total = await StockUsage.countDocuments(query);
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const sortConfig = {};
-    sortConfig[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
 
     const stockUsages = await StockUsage.find(query)
       .populate("customer", "name username mobile")
@@ -2337,38 +2312,38 @@ export const getStockUsageByCenter = async (req, res) => {
       .populate("fromControlRoom", "buildingName displayName")
       .populate({
         path: "items.product",
-        select: "productTitle productCode category"
+        select: "productTitle productCode category",
       })
       .populate("createdBy", "name email")
       .sort(sortConfig)
       .skip(skip)
       .limit(parseInt(limit));
 
-    // Transform data to match requested format
     const formattedData = [];
-    
-    stockUsages.forEach(usage => {
-      usage.items.forEach(item => {
-        // Calculate damage quantity
+
+    stockUsages.forEach((usage) => {
+      usage.items.forEach((item) => {
         let damageQty = 0;
         if (usage.usageType === "Damage" && usage.status === "completed") {
           damageQty = item.quantity;
         }
 
-        // Determine entity name based on usage type
-        let entityName = 'N/A';
+        let entityName = "N/A";
         switch (usage.usageType) {
           case "Customer":
-            entityName = usage.customer?.name || 'Unknown Customer';
+            entityName = usage.customer?.name || "Unknown Customer";
             break;
           case "Building":
-            entityName = usage.fromBuilding?.buildingName || 'Unknown Building';
+            entityName = usage.fromBuilding?.buildingName || "Unknown Building";
             break;
           case "Building to Building":
-            entityName = `${usage.fromBuilding?.buildingName || 'Unknown'} → ${usage.toBuilding?.buildingName || 'Unknown'}`;
+            entityName = `${usage.fromBuilding?.buildingName || "Unknown"} → ${
+              usage.toBuilding?.buildingName || "Unknown"
+            }`;
             break;
           case "Control Room":
-            entityName = usage.fromControlRoom?.buildingName || 'Unknown Control Room';
+            entityName =
+              usage.fromControlRoom?.buildingName || "Unknown Control Room";
             break;
           default:
             entityName = usage.usageType;
@@ -2378,17 +2353,17 @@ export const getStockUsageByCenter = async (req, res) => {
           _id: usage._id,
           Date: usage.date.toLocaleDateString(),
           Type: usage.usageType,
-          Center: usage.center?.centerName || 'Unknown Center',
-          Product: item.product?.productTitle || 'Unknown Product',
+          Center: usage.center?.centerName || "Unknown Center",
+          Product: item.product?.productTitle || "Unknown Product",
           "Old Stock": item.oldStock || 0,
           Qty: item.quantity,
           "Damage Qty": damageQty,
           "New Stock": item.newStock || 0,
-          "Entity": entityName,
-          "Remark": usage.remark || '',
-          "Status": usage.status,
-          "Created By": usage.createdBy?.name || 'Unknown',
-          "Created At": usage.createdAt.toLocaleDateString()
+          Entity: entityName,
+          Remark: usage.remark || "",
+          Status: usage.status,
+          "Created By": usage.createdBy?.name || "Unknown",
+          "Created At": usage.createdAt.toLocaleDateString(),
         });
       });
     });
@@ -2399,25 +2374,23 @@ export const getStockUsageByCenter = async (req, res) => {
       center: {
         id: center._id,
         name: center.centerName,
-        code: center.centerCode
+        code: center.centerCode,
       },
       pagination: {
         total,
         page: parseInt(page),
         limit: parseInt(limit),
         totalPages: Math.ceil(total / limit),
-      }
+      },
     });
-
   } catch (error) {
     console.error("Error fetching stock usage by center:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
+    res.status(500).json({
+      success: false,
+      message: "Server error",
     });
   }
 };
-
 
 export const getProductDevicesByCustomer = async (req, res) => {
   try {
@@ -2429,102 +2402,105 @@ export const getProductDevicesByCustomer = async (req, res) => {
       endDate,
       product,
       connectionType,
-      sortBy = 'date',
-      sortOrder = 'desc'
+      sortBy = "date",
+      sortOrder = "desc",
     } = req.query;
 
-    // Get center from authenticated user
     const userCenter = req.user.center?._id || req.user.center;
-    
+
     if (!userCenter) {
       return res.status(400).json({
         success: false,
-        message: "User must be associated with a center"
+        message: "User must be associated with a center",
       });
     }
 
-    // Validate customer exists AND belongs to user's center
     const customer = await Customer.findOne({
       _id: customerId,
-      center: userCenter
-    }).populate('center', 'centerName centerCode');
-    
+      center: userCenter,
+    }).populate("center", "centerName centerCode");
+
     if (!customer) {
       return res.status(404).json({
         success: false,
-        message: "Customer not found or you don't have access to this customer"
+        message: "Customer not found or you don't have access to this customer",
       });
     }
 
-    // Build query for customer stock usage with serial numbers
-    const query = { 
+    const query = {
       usageType: "Customer",
       customer: customerId,
       center: userCenter,
-      status: "completed", // Only completed transactions
-      "items.serialNumbers.0": { $exists: true } // Only items with serial numbers
+      status: "completed",
+      "items.serialNumbers.0": { $exists: true },
     };
 
-    // Add date range filter
     if (startDate || endDate) {
       query.date = {};
       if (startDate) query.date.$gte = new Date(startDate);
       if (endDate) query.date.$lte = new Date(endDate);
     }
 
-    if (product) query['items.product'] = product;
+    if (product) query["items.product"] = product;
     if (connectionType) query.connectionType = connectionType;
 
     const total = await StockUsage.countDocuments(query);
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const sortConfig = {};
-    sortConfig[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
 
-    // Fetch stock usage records with serial numbers
     const stockUsages = await StockUsage.find(query)
       .populate("center", "centerName centerCode")
       .populate({
         path: "items.product",
         select: "productTitle productCode category trackSerialNumber",
-        match: { trackSerialNumber: "Yes" } // ONLY products with trackSerialNumber = "Yes"
+        match: { trackSerialNumber: "Yes" },
       })
       .populate("createdBy", "name email")
       .sort(sortConfig)
       .skip(skip)
       .limit(parseInt(limit));
 
-    // Filter out items where product is null (due to trackSerialNumber filter)
-    const filteredUsages = stockUsages.map(usage => ({
-      ...usage.toObject(),
-      items: usage.items.filter(item => item.product !== null && item.serialNumbers && item.serialNumbers.length > 0)
-    })).filter(usage => usage.items.length > 0);
+    const filteredUsages = stockUsages
+      .map((usage) => ({
+        ...usage.toObject(),
+        items: usage.items.filter(
+          (item) =>
+            item.product !== null &&
+            item.serialNumbers &&
+            item.serialNumbers.length > 0
+        ),
+      }))
+      .filter((usage) => usage.items.length > 0);
 
-    // Transform data - treat each serial number as unique product
     const formattedData = [];
-    
-    filteredUsages.forEach(usage => {
-      usage.items.forEach(item => {
-        // Only process items with serial numbers and valid products
-        if (item.serialNumbers && item.serialNumbers.length > 0 && item.product) {
-          item.serialNumbers.forEach(serialNumber => {
+
+    filteredUsages.forEach((usage) => {
+      usage.items.forEach((item) => {
+        if (
+          item.serialNumbers &&
+          item.serialNumbers.length > 0 &&
+          item.product
+        ) {
+          item.serialNumbers.forEach((serialNumber) => {
             formattedData.push({
               _id: `${usage._id}_${serialNumber}`,
-              Product: item.product.productTitle || 'Unknown Product',
+              Product: item.product.productTitle || "Unknown Product",
               "Serial No.": serialNumber,
               Type: usage.usageType,
               Date: usage.date.toLocaleDateString(),
-              "Connection Type": usage.connectionType || 'N/A',
+              "Connection Type": usage.connectionType || "N/A",
               "Package Amount": usage.packageAmount || 0,
-              "Package Duration": usage.packageDuration || 'N/A',
+              "Package Duration": usage.packageDuration || "N/A",
               "ONU Charges": usage.onuCharges || 0,
               "Installation Charges": usage.installationCharges || 0,
-              "Remark": usage.remark || '',
-              "Option": getConnectionOption(usage.connectionType, usage.reason),
-              "Status": usage.status,
-              "Product Code": item.product.productCode || 'N/A',
+              Remark: usage.remark || "",
+              Option: getConnectionOption(usage.connectionType, usage.reason),
+              Status: usage.status,
+              "Product Code": item.product.productCode || "N/A",
               "Assigned Date": usage.date.toLocaleDateString(),
-              "Product Category": item.product.category || 'N/A'
+              "Product Category": item.product.category || "N/A",
             });
           });
         }
@@ -2539,7 +2515,7 @@ export const getProductDevicesByCustomer = async (req, res) => {
         name: customer.name,
         username: customer.username,
         mobile: customer.mobile,
-        email: customer.email
+        email: customer.email,
       },
       pagination: {
         total: formattedData.length,
@@ -2549,16 +2525,16 @@ export const getProductDevicesByCustomer = async (req, res) => {
       },
       summary: {
         totalDevices: formattedData.length,
-        uniqueProducts: [...new Set(formattedData.map(item => item.Product))].length,
-        connectionTypes: getConnectionTypeSummary(formattedData)
-      }
+        uniqueProducts: [...new Set(formattedData.map((item) => item.Product))]
+          .length,
+        connectionTypes: getConnectionTypeSummary(formattedData),
+      },
     });
-
   } catch (error) {
     console.error("Error fetching product devices by customer:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error"
+    res.status(500).json({
+      success: false,
+      message: "Server error",
     });
   }
 };
@@ -2575,74 +2551,69 @@ export const getProductDevicesByBuilding = async (req, res) => {
       startDate,
       endDate,
       product,
-      usageType = 'all',
-      sortBy = 'date',
-      sortOrder = 'desc'
+      usageType = "all",
+      sortBy = "date",
+      sortOrder = "desc",
     } = req.query;
 
-    // Get center from authenticated user
     const userCenter = req.user.center?._id || req.user.center;
-    
+
     if (!userCenter) {
       return res.status(400).json({
         success: false,
-        message: "User must be associated with a center"
+        message: "User must be associated with a center",
       });
     }
 
-    // Validate building exists AND belongs to user's center
     const building = await Building.findOne({
       _id: buildingId,
-      center: userCenter
+      center: userCenter,
     });
-    
+
     if (!building) {
       return res.status(404).json({
         success: false,
-        message: "Building not found or you don't have access to this building"
+        message: "Building not found or you don't have access to this building",
       });
     }
 
-    // Build query for building stock usage with serial numbers
     const query = {
       center: userCenter,
       status: "completed",
-      "items.serialNumbers.0": { $exists: true }, // Only items with serial numbers
+      "items.serialNumbers.0": { $exists: true },
       $or: [
         { usageType: "Building", fromBuilding: buildingId },
-        { usageType: "Building to Building", $or: [
-          { fromBuilding: buildingId },
-          { toBuilding: buildingId }
-        ]}
-      ]
+        {
+          usageType: "Building to Building",
+          $or: [{ fromBuilding: buildingId }, { toBuilding: buildingId }],
+        },
+      ],
     };
 
-    // Filter by specific usage type if provided
-    if (usageType && usageType !== 'all') {
+    if (usageType && usageType !== "all") {
       if (usageType === "Building") {
         query.$or = [{ usageType: "Building", fromBuilding: buildingId }];
       } else if (usageType === "Building to Building") {
         query.$or = [
           { usageType: "Building to Building", fromBuilding: buildingId },
-          { usageType: "Building to Building", toBuilding: buildingId }
+          { usageType: "Building to Building", toBuilding: buildingId },
         ];
       }
     }
 
-    // Add date range filter
     if (startDate || endDate) {
       query.date = {};
       if (startDate) query.date.$gte = new Date(startDate);
       if (endDate) query.date.$lte = new Date(endDate);
     }
 
-    if (product) query['items.product'] = product;
+    if (product) query["items.product"] = product;
 
     const total = await StockUsage.countDocuments(query);
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const sortConfig = {};
-    sortConfig[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
 
     const stockUsages = await StockUsage.find(query)
       .populate("center", "centerName centerCode")
@@ -2651,56 +2622,63 @@ export const getProductDevicesByBuilding = async (req, res) => {
       .populate({
         path: "items.product",
         select: "productTitle productCode category trackSerialNumber",
-        match: { trackSerialNumber: "Yes" } // ONLY products with trackSerialNumber = "Yes"
+        match: { trackSerialNumber: "Yes" },
       })
       .populate("createdBy", "name email")
       .sort(sortConfig)
       .skip(skip)
       .limit(parseInt(limit));
 
-    // Filter out items where product is null (due to trackSerialNumber filter)
-    const filteredUsages = stockUsages.map(usage => ({
-      ...usage.toObject(),
-      items: usage.items.filter(item => item.product !== null && item.serialNumbers && item.serialNumbers.length > 0)
-    })).filter(usage => usage.items.length > 0);
+    const filteredUsages = stockUsages
+      .map((usage) => ({
+        ...usage.toObject(),
+        items: usage.items.filter(
+          (item) =>
+            item.product !== null &&
+            item.serialNumbers &&
+            item.serialNumbers.length > 0
+        ),
+      }))
+      .filter((usage) => usage.items.length > 0);
 
-    // Transform data - treat each serial number as unique product
     const formattedData = [];
-    
-    filteredUsages.forEach(usage => {
-      usage.items.forEach(item => {
-        // Only process items with serial numbers and valid products
-        if (item.serialNumbers && item.serialNumbers.length > 0 && item.product) {
-          // Determine transfer type
-          let transferType = 'Building Usage';
+
+    filteredUsages.forEach((usage) => {
+      usage.items.forEach((item) => {
+        if (
+          item.serialNumbers &&
+          item.serialNumbers.length > 0 &&
+          item.product
+        ) {
+          let transferType = "Building Usage";
           if (usage.usageType === "Building to Building") {
             if (usage.fromBuilding?._id.toString() === buildingId) {
-              transferType = 'Outgoing Transfer';
+              transferType = "Outgoing Transfer";
             } else if (usage.toBuilding?._id.toString() === buildingId) {
-              transferType = 'Incoming Transfer';
+              transferType = "Incoming Transfer";
             }
           }
 
-          item.serialNumbers.forEach(serialNumber => {
+          item.serialNumbers.forEach((serialNumber) => {
             formattedData.push({
               _id: `${usage._id}_${serialNumber}`,
-              Product: item.product.productTitle || 'Unknown Product',
+              Product: item.product.productTitle || "Unknown Product",
               "Serial No.": serialNumber,
               Type: transferType,
               Date: usage.date.toLocaleDateString(),
-              "Connection Type": 'Building Assignment',
+              "Connection Type": "Building Assignment",
               "Package Amount": 0,
-              "Package Duration": 'N/A',
+              "Package Duration": "N/A",
               "ONU Charges": 0,
               "Installation Charges": 0,
-              "Remark": usage.remark || `Building: ${building.buildingName}`,
-              "Option": transferType,
-              "Status": usage.status,
-              "Product Code": item.product.productCode || 'N/A',
-              "From Building": usage.fromBuilding?.buildingName || 'N/A',
-              "To Building": usage.toBuilding?.buildingName || 'N/A',
+              Remark: usage.remark || `Building: ${building.buildingName}`,
+              Option: transferType,
+              Status: usage.status,
+              "Product Code": item.product.productCode || "N/A",
+              "From Building": usage.fromBuilding?.buildingName || "N/A",
+              "To Building": usage.toBuilding?.buildingName || "N/A",
               "Assigned Date": usage.date.toLocaleDateString(),
-              "Product Category": item.product.category || 'N/A'
+              "Product Category": item.product.category || "N/A",
             });
           });
         }
@@ -2714,7 +2692,7 @@ export const getProductDevicesByBuilding = async (req, res) => {
         id: building._id,
         name: building.buildingName,
         displayName: building.displayName,
-        address: building.address1
+        address: building.address1,
       },
       pagination: {
         total: formattedData.length,
@@ -2724,18 +2702,24 @@ export const getProductDevicesByBuilding = async (req, res) => {
       },
       summary: {
         totalDevices: formattedData.length,
-        uniqueProducts: [...new Set(formattedData.map(item => item.Product))].length,
-        incomingTransfers: formattedData.filter(item => item.Type === 'Incoming Transfer').length,
-        outgoingTransfers: formattedData.filter(item => item.Type === 'Outgoing Transfer').length,
-        buildingUsage: formattedData.filter(item => item.Type === 'Building Usage').length
-      }
+        uniqueProducts: [...new Set(formattedData.map((item) => item.Product))]
+          .length,
+        incomingTransfers: formattedData.filter(
+          (item) => item.Type === "Incoming Transfer"
+        ).length,
+        outgoingTransfers: formattedData.filter(
+          (item) => item.Type === "Outgoing Transfer"
+        ).length,
+        buildingUsage: formattedData.filter(
+          (item) => item.Type === "Building Usage"
+        ).length,
+      },
     });
-
   } catch (error) {
     console.error("Error fetching product devices by building:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
+    res.status(500).json({
+      success: false,
+      message: "Server error",
     });
   }
 };
@@ -2752,56 +2736,53 @@ export const getProductDevicesByControlRoom = async (req, res) => {
       startDate,
       endDate,
       product,
-      sortBy = 'date',
-      sortOrder = 'desc'
+      sortBy = "date",
+      sortOrder = "desc",
     } = req.query;
 
-    // Get center from authenticated user
     const userCenter = req.user.center?._id || req.user.center;
-    
+
     if (!userCenter) {
       return res.status(400).json({
         success: false,
-        message: "User must be associated with a center"
+        message: "User must be associated with a center",
       });
     }
 
-    // Validate control room exists AND belongs to user's center
     const controlRoom = await ControlRoom.findOne({
       _id: controlRoomId,
-      center: userCenter
+      center: userCenter,
     });
-    
+
     if (!controlRoom) {
       return res.status(404).json({
         success: false,
-        message: "Control room not found or you don't have access to this control room"
+        message:
+          "Control room not found or you don't have access to this control room",
       });
     }
 
-    // Build query for control room stock usage with serial numbers
-    const query = { 
+    const query = {
       usageType: "Control Room",
       fromControlRoom: controlRoomId,
       center: userCenter,
       status: "completed",
-      "items.serialNumbers.0": { $exists: true } // Only items with serial numbers
+      "items.serialNumbers.0": { $exists: true },
     };
 
-    // Add date range filter
     if (startDate || endDate) {
       query.date = {};
       if (startDate) query.date.$gte = new Date(startDate);
       if (endDate) query.date.$lte = new Date(endDate);
     }
 
-    if (product) query['items.product'] = product;
+    if (product) query["items.product"] = product;
 
     const total = await StockUsage.countDocuments(query);
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const sortConfig = {};
-    sortConfig[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
 
     const stockUsages = await StockUsage.find(query)
       .populate("center", "centerName centerCode")
@@ -2809,45 +2790,54 @@ export const getProductDevicesByControlRoom = async (req, res) => {
       .populate({
         path: "items.product",
         select: "productTitle productCode category trackSerialNumber",
-        match: { trackSerialNumber: "Yes" } // ONLY products with trackSerialNumber = "Yes"
+        match: { trackSerialNumber: "Yes" },
       })
       .populate("createdBy", "name email")
       .sort(sortConfig)
       .skip(skip)
       .limit(parseInt(limit));
 
-    // Filter out items where product is null (due to trackSerialNumber filter)
-    const filteredUsages = stockUsages.map(usage => ({
-      ...usage.toObject(),
-      items: usage.items.filter(item => item.product !== null && item.serialNumbers && item.serialNumbers.length > 0)
-    })).filter(usage => usage.items.length > 0);
+    const filteredUsages = stockUsages
+      .map((usage) => ({
+        ...usage.toObject(),
+        items: usage.items.filter(
+          (item) =>
+            item.product !== null &&
+            item.serialNumbers &&
+            item.serialNumbers.length > 0
+        ),
+      }))
+      .filter((usage) => usage.items.length > 0);
 
-    // Transform data - treat each serial number as unique product
     const formattedData = [];
-    
-    filteredUsages.forEach(usage => {
-      usage.items.forEach(item => {
-        // Only process items with serial numbers and valid products
-        if (item.serialNumbers && item.serialNumbers.length > 0 && item.product) {
-          item.serialNumbers.forEach(serialNumber => {
+
+    filteredUsages.forEach((usage) => {
+      usage.items.forEach((item) => {
+        if (
+          item.serialNumbers &&
+          item.serialNumbers.length > 0 &&
+          item.product
+        ) {
+          item.serialNumbers.forEach((serialNumber) => {
             formattedData.push({
               _id: `${usage._id}_${serialNumber}`,
-              Product: item.product.productTitle || 'Unknown Product',
+              Product: item.product.productTitle || "Unknown Product",
               "Serial No.": serialNumber,
               Type: usage.usageType,
               Date: usage.date.toLocaleDateString(),
-              "Connection Type": 'Control Room Assignment',
+              "Connection Type": "Control Room Assignment",
               "Package Amount": 0,
-              "Package Duration": 'N/A',
+              "Package Duration": "N/A",
               "ONU Charges": 0,
               "Installation Charges": 0,
-              "Remark": usage.remark || `Control Room: ${controlRoom.buildingName}`,
-              "Option": 'Infrastructure',
-              "Status": usage.status,
-              "Product Code": item.product.productCode || 'N/A',
-              "Control Room": usage.fromControlRoom?.buildingName || 'Unknown',
+              Remark:
+                usage.remark || `Control Room: ${controlRoom.buildingName}`,
+              Option: "Infrastructure",
+              Status: usage.status,
+              "Product Code": item.product.productCode || "N/A",
+              "Control Room": usage.fromControlRoom?.buildingName || "Unknown",
               "Assigned Date": usage.date.toLocaleDateString(),
-              "Product Category": item.product.category || 'N/A'
+              "Product Category": item.product.category || "N/A",
             });
           });
         }
@@ -2861,7 +2851,7 @@ export const getProductDevicesByControlRoom = async (req, res) => {
         id: controlRoom._id,
         name: controlRoom.buildingName,
         displayName: controlRoom.displayName,
-        address: controlRoom.address1
+        address: controlRoom.address1,
       },
       pagination: {
         total: formattedData.length,
@@ -2871,19 +2861,18 @@ export const getProductDevicesByControlRoom = async (req, res) => {
       },
       summary: {
         totalDevices: formattedData.length,
-        uniqueProducts: [...new Set(formattedData.map(item => item.Product))].length
-      }
+        uniqueProducts: [...new Set(formattedData.map((item) => item.Product))]
+          .length,
+      },
     });
-
   } catch (error) {
     console.error("Error fetching product devices by control room:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
+    res.status(500).json({
+      success: false,
+      message: "Server error",
     });
   }
 };
-
 
 const getConnectionOption = (connectionType, reason) => {
   if (connectionType === "NC") return "New Connection";
@@ -2897,80 +2886,85 @@ const getConnectionOption = (connectionType, reason) => {
   return "Other";
 };
 
-// Helper function to get entity information
 const getEntityInfo = (usage, serialNumber) => {
   switch (usage.usageType) {
     case "Customer":
       return {
-        name: usage.customer?.name || 'Unknown Customer',
-        type: 'Customer',
-        connectionType: usage.connectionType || 'Customer Assignment',
-        remark: usage.remark || `Customer: ${usage.customer?.name || 'Unknown'}`,
-        option: getConnectionOption(usage.connectionType, usage.reason)
+        name: usage.customer?.name || "Unknown Customer",
+        type: "Customer",
+        connectionType: usage.connectionType || "Customer Assignment",
+        remark:
+          usage.remark || `Customer: ${usage.customer?.name || "Unknown"}`,
+        option: getConnectionOption(usage.connectionType, usage.reason),
       };
     case "Building":
       return {
-        name: usage.fromBuilding?.buildingName || 'Unknown Building',
-        type: 'Building',
-        connectionType: 'Building Assignment',
-        remark: usage.remark || `Building: ${usage.fromBuilding?.buildingName || 'Unknown'}`,
-        option: 'Infrastructure'
+        name: usage.fromBuilding?.buildingName || "Unknown Building",
+        type: "Building",
+        connectionType: "Building Assignment",
+        remark:
+          usage.remark ||
+          `Building: ${usage.fromBuilding?.buildingName || "Unknown"}`,
+        option: "Infrastructure",
       };
     case "Building to Building":
       const isFromBuilding = usage.fromBuilding ? true : false;
       return {
-        name: isFromBuilding ? 
-          `From: ${usage.fromBuilding?.buildingName || 'Unknown'}` : 
-          `To: ${usage.toBuilding?.buildingName || 'Unknown'}`,
-        type: 'Building Transfer',
-        connectionType: 'Building Transfer',
-        remark: usage.remark || `Transfer: ${usage.fromBuilding?.buildingName || 'Unknown'} → ${usage.toBuilding?.buildingName || 'Unknown'}`,
-        option: isFromBuilding ? 'Outgoing Transfer' : 'Incoming Transfer'
+        name: isFromBuilding
+          ? `From: ${usage.fromBuilding?.buildingName || "Unknown"}`
+          : `To: ${usage.toBuilding?.buildingName || "Unknown"}`,
+        type: "Building Transfer",
+        connectionType: "Building Transfer",
+        remark:
+          usage.remark ||
+          `Transfer: ${usage.fromBuilding?.buildingName || "Unknown"} → ${
+            usage.toBuilding?.buildingName || "Unknown"
+          }`,
+        option: isFromBuilding ? "Outgoing Transfer" : "Incoming Transfer",
       };
     case "Control Room":
       return {
-        name: usage.fromControlRoom?.buildingName || 'Unknown Control Room',
-        type: 'Control Room',
-        connectionType: 'Control Room Assignment',
-        remark: usage.remark || `Control Room: ${usage.fromControlRoom?.buildingName || 'Unknown'}`,
-        option: 'Infrastructure'
+        name: usage.fromControlRoom?.buildingName || "Unknown Control Room",
+        type: "Control Room",
+        connectionType: "Control Room Assignment",
+        remark:
+          usage.remark ||
+          `Control Room: ${usage.fromControlRoom?.buildingName || "Unknown"}`,
+        option: "Infrastructure",
       };
     default:
       return {
-        name: 'Unknown Entity',
+        name: "Unknown Entity",
         type: usage.usageType,
         connectionType: usage.usageType,
         remark: usage.remark || usage.usageType,
-        option: usage.usageType
+        option: usage.usageType,
       };
   }
 };
 
-// Helper function to get entity type summary
 const getEntityTypeSummary = (data) => {
   const summary = {};
-  data.forEach(item => {
-    const entityType = item["Entity Type"] || 'Unknown';
+  data.forEach((item) => {
+    const entityType = item["Entity Type"] || "Unknown";
     summary[entityType] = (summary[entityType] || 0) + 1;
   });
   return summary;
 };
 
-// Helper function to get product summary
 const getProductSummary = (data) => {
   const summary = {};
-  data.forEach(item => {
+  data.forEach((item) => {
     const product = item.Product;
     summary[product] = (summary[product] || 0) + 1;
   });
   return summary;
 };
 
-// Helper function to get connection type summary
 const getConnectionTypeSummary = (data) => {
   const summary = {};
-  data.forEach(item => {
-    const connectionType = item["Connection Type"] || 'Unknown';
+  data.forEach((item) => {
+    const connectionType = item["Connection Type"] || "Unknown";
     summary[connectionType] = (summary[connectionType] || 0) + 1;
   });
   return summary;

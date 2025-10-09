@@ -1,21 +1,20 @@
 import Product from "../models/Product.js";
 import ProductCategory from "../models/ProductCategory.js";
 import { validationResult } from "express-validator";
-import path from 'path';
-import fs from 'fs';
+import path from "path";
+import fs from "fs";
 
 const categoryCache = new Map();
 
-
 const deleteOldImage = async (imagePath) => {
-  if (imagePath && !imagePath.startsWith('http')) {
+  if (imagePath && !imagePath.startsWith("http")) {
     const fullPath = path.join(process.cwd(), imagePath);
     try {
       if (fs.existsSync(fullPath)) {
         fs.unlinkSync(fullPath);
       }
     } catch (error) {
-      console.error('Error deleting old image:', error);
+      console.error("Error deleting old image:", error);
     }
   }
 };
@@ -23,32 +22,31 @@ const deleteOldImage = async (imagePath) => {
 export const createProduct = async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({ 
-      success: false, 
+    return res.status(400).json({
+      success: false,
       message: "Validation failed",
-      errors: errors.array() 
+      errors: errors.array(),
     });
   }
 
   try {
-    let productImage = '';
+    let productImage = "";
     if (req.file) {
       productImage = `uploads/products/${req.file.filename}`;
     }
 
     const productData = {
       ...req.body,
-      productImage
+      productImage,
     };
 
     const product = await Product.create(productData);
-    res.status(201).json({ 
-      success: true, 
+    res.status(201).json({
+      success: true,
       message: "Product created successfully",
-      data: product 
+      data: product,
     });
   } catch (error) {
- 
     if (req.file) {
       await deleteOldImage(`uploads/products/${req.file.filename}`);
     }
@@ -58,7 +56,6 @@ export const createProduct = async (req, res) => {
   }
 };
 
-
 const handleProductError = (error, bodyData = {}) => {
   let statusCode = 500;
   let message = "Internal server error";
@@ -67,16 +64,15 @@ const handleProductError = (error, bodyData = {}) => {
     statusCode = 409;
     const duplicateField = Object.keys(error.keyPattern || {})[0];
     const duplicateValue = bodyData[duplicateField];
-    
-    message = duplicateField === 'productCode' 
-      ? `Product code ${duplicateValue} is already in use. Please choose a different code.`
-      : `This ${duplicateField} already exists in the system.`;
-  } 
-  else if (error.name === 'ValidationError') {
+
+    message =
+      duplicateField === "productCode"
+        ? `Product code ${duplicateValue} is already in use. Please choose a different code.`
+        : `This ${duplicateField} already exists in the system.`;
+  } else if (error.name === "ValidationError") {
     statusCode = 400;
     message = "Invalid product data provided";
-  }
-  else if (error.name === 'CastError') {
+  } else if (error.name === "CastError") {
     statusCode = 400;
     message = "Invalid data format";
   }
@@ -85,7 +81,7 @@ const handleProductError = (error, bodyData = {}) => {
     success: false,
     message,
     statusCode,
-    ...(process.env.NODE_ENV === 'development' && { debug: error.message })
+    ...(process.env.NODE_ENV === "development" && { debug: error.message }),
   };
 };
 
@@ -225,7 +221,7 @@ export const getAllProducts = async (req, res) => {
       pagination: {
         currentPage: Number(page),
         totalPages,
-        totalProducts
+        totalProducts,
       },
     });
   } catch (error) {
@@ -273,12 +269,12 @@ export const updateProduct = async (req, res) => {
 
     const updateData = {
       ...req.body,
-      productImage
+      productImage,
     };
 
     const updatedProduct = await Product.findByIdAndUpdate(
-      req.params.id, 
-      updateData, 
+      req.params.id,
+      updateData,
       { new: true, runValidators: true }
     );
 

@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const packageDurationSchema = new mongoose.Schema(
   {
@@ -11,4 +11,4 @@ const packageDurationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-export default mongoose.model('PackageDuration', packageDurationSchema);
+export default mongoose.model("PackageDuration", packageDurationSchema);

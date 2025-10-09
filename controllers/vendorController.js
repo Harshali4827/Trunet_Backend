@@ -1,17 +1,17 @@
-import Vendor from '../models/Vendor.js';
-import { validationResult } from 'express-validator';
-import path from 'path';
-import fs from 'fs';
+import Vendor from "../models/Vendor.js";
+import { validationResult } from "express-validator";
+import path from "path";
+import fs from "fs";
 
 const deleteOldImage = async (imagePath) => {
-  if (imagePath && !imagePath.startsWith('http')) {
+  if (imagePath && !imagePath.startsWith("http")) {
     const fullPath = path.join(process.cwd(), imagePath);
     try {
       if (fs.existsSync(fullPath)) {
         fs.unlinkSync(fullPath);
       }
     } catch (error) {
-      console.error('Error deleting old image:', error);
+      console.error("Error deleting old image:", error);
     }
   }
 };
@@ -19,32 +19,31 @@ const deleteOldImage = async (imagePath) => {
 export const createVendor = async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({ 
-      success: false, 
+    return res.status(400).json({
+      success: false,
       message: "Validation failed",
-      errors: errors.array() 
+      errors: errors.array(),
     });
   }
 
   try {
-    let vendorLogo = '';
+    let vendorLogo = "";
     if (req.file) {
       vendorLogo = `uploads/vendors/${req.file.filename}`;
     }
 
     const vendorData = {
       ...req.body,
-      logo: vendorLogo
+      logo: vendorLogo,
     };
 
     const vendor = await Vendor.create(vendorData);
-    res.status(201).json({ 
-      success: true, 
+    res.status(201).json({
+      success: true,
       message: "Vendor created successfully",
-      data: vendor 
+      data: vendor,
     });
   } catch (error) {
-   
     if (req.file) {
       await deleteOldImage(`uploads/vendors/${req.file.filename}`);
     }
@@ -62,20 +61,18 @@ const handleVendorError = (error, bodyData = {}) => {
     statusCode = 409;
     const duplicateField = Object.keys(error.keyPattern || {})[0];
     const duplicateValue = bodyData[duplicateField];
-    
-    if (duplicateField === 'email') {
+
+    if (duplicateField === "email") {
       message = `Email ${duplicateValue} is already registered. Please use a different email.`;
-    } else if (duplicateField === 'mobile') {
+    } else if (duplicateField === "mobile") {
       message = `Mobile number ${duplicateValue} is already registered.`;
     } else {
       message = `This ${duplicateField} already exists in the system.`;
     }
-  } 
-  else if (error.name === 'ValidationError') {
+  } else if (error.name === "ValidationError") {
     statusCode = 400;
     message = "Invalid vendor data provided";
-  }
-  else if (error.name === 'CastError') {
+  } else if (error.name === "CastError") {
     statusCode = 400;
     message = "Invalid data format";
   }
@@ -84,51 +81,45 @@ const handleVendorError = (error, bodyData = {}) => {
     success: false,
     message,
     statusCode,
-    ...(process.env.NODE_ENV === 'development' && { debug: error.message })
+    ...(process.env.NODE_ENV === "development" && { debug: error.message }),
   };
 };
 
 const buildVendorSearchFilters = (queryParams) => {
-  const {
-    search,
-    city,
-    state,
-    status,
-    hasGst,
-  } = queryParams;
+  const { search, city, state, status, hasGst } = queryParams;
 
   const filters = {};
 
   if (search) {
     filters.$or = [
-      { businessName: { $regex: search, $options: 'i' } },
-      { name: { $regex: search, $options: 'i' } },
-      { email: { $regex: search, $options: 'i' } },
-      { contactNumber: { $regex: search, $options: 'i' } },
-      { mobile: { $regex: search, $options: 'i' } },
-      { gstNumber: { $regex: search, $options: 'i' } }
+      { businessName: { $regex: search, $options: "i" } },
+      { name: { $regex: search, $options: "i" } },
+      { email: { $regex: search, $options: "i" } },
+      { contactNumber: { $regex: search, $options: "i" } },
+      { mobile: { $regex: search, $options: "i" } },
+      { gstNumber: { $regex: search, $options: "i" } },
     ];
   }
 
   if (city) {
-    filters.city = { $regex: city, $options: 'i' };
+    filters.city = { $regex: city, $options: "i" };
   }
 
   if (state) {
-    filters.state = { $regex: state, $options: 'i' };
+    filters.state = { $regex: state, $options: "i" };
   }
 
-  if (status && ['Active', 'Inactive'].includes(status)) {
+  if (status && ["Active", "Inactive"].includes(status)) {
     filters.status = status;
   }
 
-  if (hasGst === 'true') {
-    filters.gstNumber = { $exists: true, $ne: '' };
-  } else if (hasGst === 'false') {
+  if (hasGst === "true") {
+    filters.gstNumber = { $exists: true, $ne: "" };
+  } else if (hasGst === "false") {
     filters.$or = [
       { gstNumber: { $exists: false } },
-      { gstNumber: '' },
-      { gstNumber: null }
+      { gstNumber: "" },
+      { gstNumber: null },
     ];
   }
 
@@ -145,8 +136,8 @@ export const getAllVendors = async (req, res) => {
       hasGst,
       page = 1,
       limit = 10,
-      sortBy = 'createdAt',
-      sortOrder = 'desc',
+      sortBy = "createdAt",
+      sortOrder = "desc",
     } = req.query;
 
     const filters = buildVendorSearchFilters({
@@ -158,7 +149,7 @@ export const getAllVendors = async (req, res) => {
     });
 
     const skip = (page - 1) * limit;
-    const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+    const sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
 
     const [totalVendors, vendors] = await Promise.all([
       Vendor.countDocuments(filters),
@@ -166,7 +157,7 @@ export const getAllVendors = async (req, res) => {
         .sort(sort)
         .skip(skip)
         .limit(Number(limit))
-        .select('-__v'),
+        .select("-__v"),
     ]);
 
     const totalPages = Math.ceil(totalVendors / limit);
@@ -195,15 +186,15 @@ export const getVendorById = async (req, res) => {
   try {
     const vendor = await Vendor.findById(req.params.id);
     if (!vendor) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: "Vendor not found" 
+        message: "Vendor not found",
       });
     }
-    
-    res.status(200).json({ 
-      success: true, 
-      data: vendor 
+
+    res.status(200).json({
+      success: true,
+      data: vendor,
     });
   } catch (error) {
     const errorResponse = handleVendorError(error);
@@ -214,10 +205,10 @@ export const getVendorById = async (req, res) => {
 export const updateVendor = async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({ 
-      success: false, 
+    return res.status(400).json({
+      success: false,
       message: "Validation failed",
-      errors: errors.array() 
+      errors: errors.array(),
     });
   }
 
@@ -227,9 +218,9 @@ export const updateVendor = async (req, res) => {
       if (req.file) {
         await deleteOldImage(`uploads/vendors/${req.file.filename}`);
       }
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: "Vendor not found" 
+        message: "Vendor not found",
       });
     }
 
@@ -243,22 +234,21 @@ export const updateVendor = async (req, res) => {
 
     const updateData = {
       ...req.body,
-      logo: vendorLogo
+      logo: vendorLogo,
     };
 
     const updatedVendor = await Vendor.findByIdAndUpdate(
-      req.params.id, 
-      updateData, 
+      req.params.id,
+      updateData,
       { new: true, runValidators: true }
     );
 
-    res.status(200).json({ 
-      success: true, 
+    res.status(200).json({
+      success: true,
       message: "Vendor updated successfully",
-      data: updatedVendor 
+      data: updatedVendor,
     });
   } catch (error) {
-
     if (req.file) {
       await deleteOldImage(`uploads/vendors/${req.file.filename}`);
     }
@@ -272,9 +262,9 @@ export const deleteVendor = async (req, res) => {
   try {
     const vendor = await Vendor.findById(req.params.id);
     if (!vendor) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: "Vendor not found" 
+        message: "Vendor not found",
       });
     }
 
@@ -283,14 +273,13 @@ export const deleteVendor = async (req, res) => {
     }
 
     await Vendor.findByIdAndDelete(req.params.id);
-    
-    res.status(200).json({ 
-      success: true, 
-      message: "Vendor deleted successfully" 
+
+    res.status(200).json({
+      success: true,
+      message: "Vendor deleted successfully",
     });
   } catch (error) {
     const errorResponse = handleVendorError(error);
     res.status(errorResponse.statusCode).json(errorResponse);
   }
 };
-

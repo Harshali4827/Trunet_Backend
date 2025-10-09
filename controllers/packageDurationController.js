@@ -1,10 +1,12 @@
-import PackageDuration from '../models/PackageDuration.js';
+import PackageDuration from "../models/PackageDuration.js";
 
 export const createPackageDuration = async (req, res) => {
   try {
     const { packageDuration } = req.body;
     if (!packageDuration) {
-      return res.status(400).json({ success: false, message: 'Package Duration is required' });
+      return res
+        .status(400)
+        .json({ success: false, message: "Package Duration is required" });
     }
 
     const newPackageDuration = new PackageDuration({ packageDuration });
@@ -27,7 +29,10 @@ export const getPackageDurations = async (req, res) => {
 export const getPackageDurationById = async (req, res) => {
   try {
     const packageDuration = await PackageDuration.findById(req.params.id);
-    if (!packageDuration) return res.status(404).json({ success: false, message: 'Package Duration not found' });
+    if (!packageDuration)
+      return res
+        .status(404)
+        .json({ success: false, message: "Package Duration not found" });
     res.status(200).json({ success: true, data: packageDuration });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -42,7 +47,10 @@ export const updatePackageDuration = async (req, res) => {
       { packageDuration },
       { new: true, runValidators: true }
     );
-    if (!updatedPackageDuration) return res.status(404).json({ success: false, message: 'Package Duration not found' });
+    if (!updatedPackageDuration)
+      return res
+        .status(404)
+        .json({ success: false, message: "Package Duration not found" });
     res.status(200).json({ success: true, data: updatedPackageDuration });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -51,9 +59,19 @@ export const updatePackageDuration = async (req, res) => {
 
 export const deletePackageDuration = async (req, res) => {
   try {
-    const packageDuration = await PackageDuration.findByIdAndDelete(req.params.id);
-    if (!packageDuration) return res.status(404).json({ success: false, message: 'Package Duration not found' });
-    res.status(200).json({ success: true, message: 'Package Duration deleted successfully' });
+    const packageDuration = await PackageDuration.findByIdAndDelete(
+      req.params.id
+    );
+    if (!packageDuration)
+      return res
+        .status(404)
+        .json({ success: false, message: "Package Duration not found" });
+    res
+      .status(200)
+      .json({
+        success: true,
+        message: "Package Duration deleted successfully",
+      });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

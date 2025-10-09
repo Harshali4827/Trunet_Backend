@@ -1,10 +1,10 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const productSchema = new mongoose.Schema(
   {
     productCategory: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'ProductCategory',
+      ref: "ProductCategory",
       required: true,
     },
     productTitle: {
@@ -24,42 +24,42 @@ const productSchema = new mongoose.Schema(
     },
     productImage: {
       type: String,
-      default: '',
+      default: "",
     },
     productWeight: {
       type: String,
-      default: '',
+      default: "",
     },
     productBarcode: {
       type: String,
-      default: '',
+      default: "",
     },
     status: {
       type: String,
-      enum: ['Enable', 'Disable'],
-      default: 'Enable',
+      enum: ["Enable", "Disable"],
+      default: "Enable",
     },
     description: {
       type: String,
-      default: '',
+      default: "",
     },
     trackSerialNumber: {
-        type: String,
-        enum: ['Yes', 'No'],
-        default: 'No',
+      type: String,
+      enum: ["Yes", "No"],
+      default: "No",
     },
     repairable: {
-        type: String,
-        enum: ['Yes', 'No'],
-        default: 'No',
+      type: String,
+      enum: ["Yes", "No"],
+      default: "No",
     },
     replaceable: {
-        type: String,
-        enum: ['Yes', 'No'],
-        default: 'No',
+      type: String,
+      enum: ["Yes", "No"],
+      default: "No",
     },
   },
   { timestamps: true }
 );
 
-export default mongoose.model('Product', productSchema);
+export default mongoose.model("Product", productSchema);

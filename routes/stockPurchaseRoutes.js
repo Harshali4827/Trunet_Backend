@@ -55,7 +55,6 @@ router.get(
   getPurchasesByVendor
 );
 
-
 router.get(
   "/stock/available/:productId",
   protect,

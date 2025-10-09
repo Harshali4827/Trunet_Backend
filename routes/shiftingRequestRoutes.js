@@ -8,7 +8,7 @@ import {
   getCustomerCurrentCenter,
   deleteShiftingRequest,
   updateShiftingRequest,
-  getShiftingRequestsByCustomer
+  getShiftingRequestsByCustomer,
 } from "../controllers/shiftingRequestController.js";
 import { validateShiftingRequest } from "../validations/shiftingRequestValidator.js";
 import { protect } from "../middlewares/authMiddleware.js";
@@ -18,9 +18,13 @@ const router = express.Router();
 router.post("/", protect, validateShiftingRequest, createShiftingRequest);
 router.get("/", protect, getAllShiftingRequests);
 router.get("/:id", protect, getShiftingRequestById);
-router.get('/customer/:customerId/requests',protect, getShiftingRequestsByCustomer);
-router.put('/:id', protect, updateShiftingRequest);
-router.delete('/:id', protect, deleteShiftingRequest);
+router.get(
+  "/customer/:customerId/requests",
+  protect,
+  getShiftingRequestsByCustomer
+);
+router.put("/:id", protect, updateShiftingRequest);
+router.delete("/:id", protect, deleteShiftingRequest);
 router.put("/:id/status", protect, updateShiftingRequestStatus);
 
 router.get(

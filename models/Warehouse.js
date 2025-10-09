@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const wareHouseSchema = new mongoose.Schema(
   {
@@ -11,4 +11,4 @@ const wareHouseSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-export default mongoose.model('Warehouse', wareHouseSchema);
+export default mongoose.model("Warehouse", wareHouseSchema);

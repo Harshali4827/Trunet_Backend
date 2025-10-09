@@ -1,10 +1,10 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const productCategorySchema = new mongoose.Schema(
   {
     productCategory: {
       type: String,
-      required: [true, 'Product category is required'],
+      required: [true, "Product category is required"],
       unique: true,
       trim: true,
     },
@@ -16,5 +16,4 @@ const productCategorySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-
-export default mongoose.model('ProductCategory', productCategorySchema);
+export default mongoose.model("ProductCategory", productCategorySchema);

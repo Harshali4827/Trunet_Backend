@@ -85,7 +85,6 @@ router.post(
   rejectShipment
 );
 
-
 router.get(
   "/serial-numbers/product/:productId",
   protect,

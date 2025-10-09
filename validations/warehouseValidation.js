@@ -1,6 +1,6 @@
-import { body, param, validationResult } from 'express-validator';
-import mongoose from 'mongoose';
-import Warehouse from '../models/Warehouse.js';
+import { body, param, validationResult } from "express-validator";
+import mongoose from "mongoose";
+import Warehouse from "../models/Warehouse.js";
 
 export const validate = (req, res, next) => {
   const errors = validationResult(req);
@@ -11,29 +11,31 @@ export const validate = (req, res, next) => {
 };
 
 export const validateWarehouseId = [
-  param('id')
-    .custom((value) => {
-      if (!mongoose.Types.ObjectId.isValid(value)) {
-        throw new Error('Invalid warehouse ID');
-      }
-      return true;
-    }),
+  param("id").custom((value) => {
+    if (!mongoose.Types.ObjectId.isValid(value)) {
+      throw new Error("Invalid warehouse ID");
+    }
+    return true;
+  }),
   validate,
 ];
 
 export const validateCreateWarehouse = [
-  body('warehouseName')
-    .isString().withMessage('Warehouse name must be a string')
+  body("warehouseName")
+    .isString()
+    .withMessage("Warehouse name must be a string")
     .trim()
-    .notEmpty().withMessage('Warehouse name is required')
-    .isLength({ min: 2, max: 100 }).withMessage('Warehouse name must be between 2 and 100 characters')
+    .notEmpty()
+    .withMessage("Warehouse name is required")
+    .isLength({ min: 2, max: 100 })
+    .withMessage("Warehouse name must be between 2 and 100 characters")
     .custom(async (value) => {
-      const existingWarehouse = await Warehouse.findOne({ 
-        warehouseName: { $regex: new RegExp(`^${value}$`, 'i') } 
+      const existingWarehouse = await Warehouse.findOne({
+        warehouseName: { $regex: new RegExp(`^${value}$`, "i") },
       });
-      
+
       if (existingWarehouse) {
-        throw new Error('Warehouse name already exists');
+        throw new Error("Warehouse name already exists");
       }
       return true;
     }),
@@ -41,27 +43,29 @@ export const validateCreateWarehouse = [
 ];
 
 export const validateUpdateWarehouse = [
-  param('id')
-    .custom((value) => {
-      if (!mongoose.Types.ObjectId.isValid(value)) {
-        throw new Error('Invalid warehouse ID');
-      }
-      return true;
-    }),
-  body('warehouseName')
+  param("id").custom((value) => {
+    if (!mongoose.Types.ObjectId.isValid(value)) {
+      throw new Error("Invalid warehouse ID");
+    }
+    return true;
+  }),
+  body("warehouseName")
     .optional()
-    .isString().withMessage('Warehouse name must be a string')
+    .isString()
+    .withMessage("Warehouse name must be a string")
     .trim()
-    .notEmpty().withMessage('Warehouse name cannot be empty')
-    .isLength({ min: 2, max: 100 }).withMessage('Warehouse name must be between 2 and 100 characters')
+    .notEmpty()
+    .withMessage("Warehouse name cannot be empty")
+    .isLength({ min: 2, max: 100 })
+    .withMessage("Warehouse name must be between 2 and 100 characters")
     .custom(async (value, { req }) => {
-      const existingWarehouse = await Warehouse.findOne({ 
-        warehouseName: { $regex: new RegExp(`^${value}$`, 'i') },
-        _id: { $ne: req.params.id } 
+      const existingWarehouse = await Warehouse.findOne({
+        warehouseName: { $regex: new RegExp(`^${value}$`, "i") },
+        _id: { $ne: req.params.id },
       });
-      
+
       if (existingWarehouse) {
-        throw new Error('Warehouse name already exists');
+        throw new Error("Warehouse name already exists");
       }
       return true;
     }),
@@ -69,10 +73,13 @@ export const validateUpdateWarehouse = [
 ];
 
 export const validateWarehouseName = [
-  body('warehouseName')
-    .isString().withMessage('Warehouse name must be a string')
+  body("warehouseName")
+    .isString()
+    .withMessage("Warehouse name must be a string")
     .trim()
-    .notEmpty().withMessage('Warehouse name is required')
-    .isLength({ min: 2, max: 100 }).withMessage('Warehouse name must be between 2 and 100 characters'),
+    .notEmpty()
+    .withMessage("Warehouse name is required")
+    .isLength({ min: 2, max: 100 })
+    .withMessage("Warehouse name must be between 2 and 100 characters"),
   validate,
 ];

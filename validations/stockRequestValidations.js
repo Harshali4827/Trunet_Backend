@@ -22,7 +22,6 @@ const customValidators = {
     if (!centerId) return false;
     const center = await Center.findById(centerId);
     return center && center.centerType?.toLowerCase() === "center";
-
   },
 
   productExists: async (productId) => {
@@ -66,13 +65,13 @@ const customValidators = {
     if (!stockRequest) return false;
 
     const validTransitions = {
-      'Draft': ['Submitted', 'Rejected'],
-      'Submitted': ['Confirmed', 'Rejected'],
-      'Confirmed': ['Shipped', 'Rejected'],
-      'Shipped': ['Completed', 'Incompleted', 'Rejected'],
-      'Incompleted': ['Completed', 'Rejected'],
-      'Completed': [],
-      'Rejected': ['Submitted']
+      Draft: ["Submitted", "Rejected"],
+      Submitted: ["Confirmed", "Rejected"],
+      Confirmed: ["Shipped", "Rejected"],
+      Shipped: ["Completed", "Incompleted", "Rejected"],
+      Incompleted: ["Completed", "Rejected"],
+      Completed: [],
+      Rejected: ["Submitted"],
     };
 
     return validTransitions[stockRequest.status]?.includes(newStatus) || false;
@@ -83,14 +82,19 @@ const customValidators = {
       return false;
     }
     return products.every(
-      (product) =>
-        product.product && product.quantity >= 1
+      (product) => product.product && product.quantity >= 1
     );
   },
 
   validateProductApprovals: async (productApprovals, { req }) => {
-    if (!productApprovals || !Array.isArray(productApprovals) || productApprovals.length === 0) {
-      throw new Error("Product approvals are required with approved quantities");
+    if (
+      !productApprovals ||
+      !Array.isArray(productApprovals) ||
+      productApprovals.length === 0
+    ) {
+      throw new Error(
+        "Product approvals are required with approved quantities"
+      );
     }
 
     const { id } = req.params;
@@ -101,34 +105,46 @@ const customValidators = {
 
     for (const approval of productApprovals) {
       if (!approval.productId || approval.approvedQuantity === undefined) {
-        throw new Error("Each product approval must have productId and approvedQuantity");
+        throw new Error(
+          "Each product approval must have productId and approvedQuantity"
+        );
       }
 
       const productExists = stockRequest.products.some(
-        p => p.product.toString() === approval.productId.toString()
+        (p) => p.product.toString() === approval.productId.toString()
       );
-      
+
       if (!productExists) {
-        throw new Error(`Product with ID ${approval.productId} not found in this stock request`);
+        throw new Error(
+          `Product with ID ${approval.productId} not found in this stock request`
+        );
       }
 
       const product = stockRequest.products.find(
-        p => p.product.toString() === approval.productId.toString()
+        (p) => p.product.toString() === approval.productId.toString()
       );
-      
+
       if (approval.approvedQuantity > product.quantity) {
-        throw new Error(`Approved quantity (${approval.approvedQuantity}) cannot be greater than requested quantity (${product.quantity}) for product ${approval.productId}`);
+        throw new Error(
+          `Approved quantity (${approval.approvedQuantity}) cannot be greater than requested quantity (${product.quantity}) for product ${approval.productId}`
+        );
       }
 
       if (approval.approvedQuantity < 0) {
-        throw new Error(`Approved quantity cannot be negative for product ${approval.productId}`);
+        throw new Error(
+          `Approved quantity cannot be negative for product ${approval.productId}`
+        );
       }
     }
     return true;
   },
 
   validateProductReceipts: async (productReceipts, { req }) => {
-    if (!productReceipts || !Array.isArray(productReceipts) || productReceipts.length === 0) {
+    if (
+      !productReceipts ||
+      !Array.isArray(productReceipts) ||
+      productReceipts.length === 0
+    ) {
       throw new Error("Product receipts are required with received quantities");
     }
 
@@ -140,27 +156,42 @@ const customValidators = {
 
     for (const receipt of productReceipts) {
       if (!receipt.productId || receipt.receivedQuantity === undefined) {
-        throw new Error("Each product receipt must have productId and receivedQuantity");
+        throw new Error(
+          "Each product receipt must have productId and receivedQuantity"
+        );
       }
 
       const productExists = stockRequest.products.some(
-        p => p.product.toString() === receipt.productId.toString()
+        (p) => p.product.toString() === receipt.productId.toString()
       );
-      
+
       if (!productExists) {
-        throw new Error(`Product with ID ${receipt.productId} not found in this stock request`);
+        throw new Error(
+          `Product with ID ${receipt.productId} not found in this stock request`
+        );
       }
 
       const product = stockRequest.products.find(
-        p => p.product.toString() === receipt.productId.toString()
+        (p) => p.product.toString() === receipt.productId.toString()
       );
-      
-      if (receipt.receivedQuantity > (product.approvedQuantity || product.quantity)) {
-        throw new Error(`Received quantity (${receipt.receivedQuantity}) cannot be greater than approved quantity (${product.approvedQuantity || product.quantity}) for product ${receipt.productId}`);
+
+      if (
+        receipt.receivedQuantity >
+        (product.approvedQuantity || product.quantity)
+      ) {
+        throw new Error(
+          `Received quantity (${
+            receipt.receivedQuantity
+          }) cannot be greater than approved quantity (${
+            product.approvedQuantity || product.quantity
+          }) for product ${receipt.productId}`
+        );
       }
 
       if (receipt.receivedQuantity < 0) {
-        throw new Error(`Received quantity cannot be negative for product ${receipt.productId}`);
+        throw new Error(
+          `Received quantity cannot be negative for product ${receipt.productId}`
+        );
       }
     }
     return true;
@@ -169,23 +200,29 @@ const customValidators = {
   validateStockAvailability: async (warehouseId, productTransfers) => {
     for (const transfer of productTransfers) {
       const { productId, quantity } = transfer;
-      
+
       const outletStock = await OutletStock.findOne({
         outlet: warehouseId,
-        product: productId
+        product: productId,
       });
 
       if (!outletStock || outletStock.availableQuantity < quantity) {
         const productDoc = await Product.findById(productId);
         const productName = productDoc ? productDoc.productTitle : productId;
-        throw new Error(`Insufficient stock in outlet for product "${productName}". Required: ${quantity}, Available: ${outletStock ? outletStock.availableQuantity : 0}`);
+        throw new Error(
+          `Insufficient stock in outlet for product "${productName}". Required: ${quantity}, Available: ${
+            outletStock ? outletStock.availableQuantity : 0
+          }`
+        );
       }
 
       const productDoc = await Product.findById(productId);
       if (productDoc?.trackSerialNumber === "Yes") {
         const fifoResult = outletStock.getFIFOStock(quantity);
         if (fifoResult.availableSerials.length < quantity) {
-          throw new Error(`Insufficient serial numbers available for product ${productDoc.productTitle}. Requested: ${quantity}, Available: ${fifoResult.availableSerials.length}`);
+          throw new Error(
+            `Insufficient serial numbers available for product ${productDoc.productTitle}. Requested: ${quantity}, Available: ${fifoResult.availableSerials.length}`
+          );
         }
       }
     }
@@ -200,7 +237,7 @@ const customValidators = {
 
   isValidSerialNumbers: async (serialNumbers, { req }) => {
     if (!serialNumbers || !Array.isArray(serialNumbers)) {
-      return true; // Serial numbers are optional
+      return true;
     }
 
     const serialSet = new Set(serialNumbers);
@@ -228,7 +265,6 @@ export const handleValidationErrors = (req, res, next) => {
   next();
 };
 
-// Common validators
 export const validateIdParam = [
   param("id")
     .custom(customValidators.isObjectId)
@@ -256,7 +292,6 @@ export const validateCenterParam = [
   handleValidationErrors,
 ];
 
-// Stock Request CRUD Validations
 export const validateCreateStockRequest = [
   body("warehouse")
     .notEmpty()
@@ -322,7 +357,15 @@ export const validateCreateStockRequest = [
 
   body("status")
     .optional()
-    .isIn(['Draft', 'Submitted', 'Confirmed', 'Shipped', 'Incompleted', 'Completed', 'Rejected'])
+    .isIn([
+      "Draft",
+      "Submitted",
+      "Confirmed",
+      "Shipped",
+      "Incompleted",
+      "Completed",
+      "Rejected",
+    ])
     .withMessage("Invalid status"),
 
   handleValidationErrors,
@@ -372,7 +415,15 @@ export const validateUpdateStockRequest = [
 
   body("status")
     .optional()
-    .isIn(['Draft', 'Submitted', 'Confirmed', 'Shipped', 'Incompleted', 'Completed', 'Rejected'])
+    .isIn([
+      "Draft",
+      "Submitted",
+      "Confirmed",
+      "Shipped",
+      "Incompleted",
+      "Completed",
+      "Rejected",
+    ])
     .withMessage("Invalid status")
     .custom(customValidators.isValidStatusTransition)
     .withMessage("Invalid status transition"),
@@ -380,7 +431,6 @@ export const validateUpdateStockRequest = [
   handleValidationErrors,
 ];
 
-// Status-specific validations
 export const validateApproveStockRequest = [
   ...validateIdParam,
 
@@ -494,7 +544,6 @@ export const validateUpdateApprovedQuantities = [
   handleValidationErrors,
 ];
 
-// Query validations
 export const validateStockRequestQuery = [
   query("page")
     .optional()
@@ -508,7 +557,15 @@ export const validateStockRequestQuery = [
 
   query("status")
     .optional()
-    .isIn(['Draft', 'Submitted', 'Confirmed', 'Shipped', 'Incompleted', 'Completed', 'Rejected'])
+    .isIn([
+      "Draft",
+      "Submitted",
+      "Confirmed",
+      "Shipped",
+      "Incompleted",
+      "Completed",
+      "Rejected",
+    ])
     .withMessage("Invalid status"),
 
   query("center")
@@ -553,18 +610,26 @@ export const validateStockRequestQuery = [
 
   query("sortBy")
     .optional()
-    .isIn(['createdAt', 'updatedAt', 'date', 'orderNumber', 'status', 'approvalInfo.approvedAt', 'shippingInfo.shippedAt', 'receivingInfo.receivedAt'])
+    .isIn([
+      "createdAt",
+      "updatedAt",
+      "date",
+      "orderNumber",
+      "status",
+      "approvalInfo.approvedAt",
+      "shippingInfo.shippedAt",
+      "receivingInfo.receivedAt",
+    ])
     .withMessage("Invalid sort field"),
 
   query("sortOrder")
     .optional()
-    .isIn(['asc', 'desc'])
+    .isIn(["asc", "desc"])
     .withMessage('Sort order must be either "asc" or "desc"'),
 
   handleValidationErrors,
 ];
 
-// Stock transfer validations
 export const validateStockTransfer = [
   ...validateIdParam,
 
@@ -584,7 +649,6 @@ export const validateStockTransfer = [
   handleValidationErrors,
 ];
 
-// Additional specific validations
 export const validateRejectShipment = [
   ...validateIdParam,
 
@@ -638,7 +702,6 @@ export const validateUpdateShippingInfo = [
   handleValidationErrors,
 ];
 
-// Export all validators
 export default {
   customValidators,
   handleValidationErrors,

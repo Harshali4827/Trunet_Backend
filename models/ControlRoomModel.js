@@ -1,10 +1,10 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const controlRoomSchema = new mongoose.Schema(
   {
     center: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Center',
+      ref: "Center",
       required: true,
     },
     buildingName: {
@@ -35,6 +35,6 @@ const controlRoomSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-const ControlRoom = mongoose.model('ControlRoom', controlRoomSchema);
+const ControlRoom = mongoose.model("ControlRoom", controlRoomSchema);
 
 export default ControlRoom;

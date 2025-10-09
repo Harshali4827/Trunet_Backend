@@ -20,6 +20,8 @@ import {
   getMostRecentTransferNumber,
   completeIncompleteStockTransfer,
   updateApprovedQuantities,
+  getWarehouseProductSummary,
+  getWarehouseProductMovement,
 } from "../controllers/stockTransferController.js";
 import {
   validateCreateStockTransfer,
@@ -50,6 +52,10 @@ router
 router
   .route("/latest-transfer-number")
   .get(protect, getMostRecentTransferNumber);
+
+router.get("/summary/original-outlet", protect, getWarehouseProductSummary);
+
+router.get("/movement", protect, getWarehouseProductMovement);
 
 router.route("/stats").get(protect, getTransferStats);
 
