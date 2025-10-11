@@ -17,8 +17,6 @@ import {
   updateApprovedQuantities,
   getMostRecentOrderNumber,
 } from "../controllers/stockRequestController.js";
-import { protect } from "../middlewares/authMiddleware.js";
-
 import {
   validateCreateStockRequest,
   validateUpdateStockRequest,
@@ -33,33 +31,112 @@ import {
   validateMarkAsIncomplete,
   validateUpdateShippingInfo,
 } from "../validations/stockRequestValidations.js";
+import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
-router.post("/", protect, validateCreateStockRequest, createStockRequest);
+const MODULE = "Indent";
 
-router.get("/", protect, validateStockRequestQuery, getAllStockRequests);
+router.post(
+  "/",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "manage_indent"
+  ),
+  validateCreateStockRequest,
+  createStockRequest
+);
 
-router.get("/recent-order-number", protect, getMostRecentOrderNumber);
+router.get(
+  "/",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "indent_all_center",
+    "indent_own_center"
+  ),
+  validateStockRequestQuery,
+  getAllStockRequests
+);
 
-router.get("/:id", protect, validateIdParam, getStockRequestById);
+router.get(
+  "/recent-order-number",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "indent_all_center",
+    "indent_own_center"
+  ),
+  getMostRecentOrderNumber
+);
 
-router.put("/:id", protect, validateUpdateStockRequest, updateStockRequest);
+router.get(
+  "/:id",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "indent_all_center",
+    "indent_own_center"
+  ),
+  validateIdParam,
+  getStockRequestById
+);
 
-router.delete("/:id", protect, validateIdParam, deleteStockRequest);
+router.put(
+  "/:id",
+  protect,
+  authorizeAccess(
+    MODULE,
+     "manage_indent"
+  ),
+  validateUpdateStockRequest,
+  updateStockRequest
+);
+
+router.delete(
+  "/:id",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "delete_indent_own_center",
+    "delete_indent_all_center"
+  ),
+  validateIdParam,
+  deleteStockRequest
+);
 
 router.post(
   "/:id/approve",
   protect,
+  authorizeAccess(
+    MODULE,
+    "stock_transfer_approve_from_outlet",
+    "manage_indent"
+  ),
   validateApproveStockRequest,
   approveStockRequest
 );
 
-router.post("/:id/ship", protect, validateShipStockRequest, shipStockRequest);
+router.post(
+  "/:id/ship",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "manage_indent"
+  ),
+  validateShipStockRequest,
+  shipStockRequest
+);
 
 router.post(
   "/:id/complete",
   protect,
+  authorizeAccess(
+    MODULE,
+    "complete_indent",
+    "manage_indent"
+  ),
   validateCompleteStockRequest,
   completeStockRequest
 );
@@ -67,6 +144,10 @@ router.post(
 router.patch(
   "/:id/complete-incomplete",
   protect,
+  authorizeAccess(
+    MODULE,
+    "manage_indent"
+  ),
   validateCompleteIncompleteRequest,
   completeIncompleteRequest
 );
@@ -74,6 +155,10 @@ router.patch(
 router.patch(
   "/:id/shipping-info",
   protect,
+  authorizeAccess(
+    MODULE,
+    "manage_indent"
+  ),
   validateUpdateShippingInfo,
   updateShippingInfo
 );
@@ -81,6 +166,10 @@ router.patch(
 router.post(
   "/:id/reject-shipment",
   protect,
+  authorizeAccess(
+    MODULE,
+    "manage_indent"
+  ),
   validateRejectShipment,
   rejectShipment
 );
@@ -88,12 +177,21 @@ router.post(
 router.get(
   "/serial-numbers/product/:productId",
   protect,
+  authorizeAccess(
+    MODULE,
+   "indent_all_center",
+    "indent_own_center"
+  ),
   getCenterSerialNumbers
 );
 
 router.post(
   "/:id/mark-incomplete",
   protect,
+  authorizeAccess(
+    MODULE,
+    "manage_indent"
+  ),
   validateMarkAsIncomplete,
   markAsIncomplete
 );
@@ -101,10 +199,23 @@ router.post(
 router.patch(
   "/:id/approved-quantities",
   protect,
+  authorizeAccess(
+    MODULE,
+    "manage_indent"
+  ),
   validateUpdateApprovedQuantities,
   updateApprovedQuantities
 );
 
-router.patch("/:id/status", protect, validateIdParam, updateStockRequestStatus);
+router.patch(
+  "/:id/status",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "manage_indent"
+  ),
+  validateIdParam,
+  updateStockRequestStatus
+);
 
 export default router;

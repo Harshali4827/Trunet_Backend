@@ -27,15 +27,15 @@ const stockPurchaseSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Center",
       required: true,
-      validate: {
-        validator: async function (outletId) {
-          if (!outletId) return false;
-          const Center = mongoose.model("Center");
-          const outlet = await Center.findById(outletId);
-          return outlet && outlet.centerType === "Outlet";
-        },
-        message: 'Outlet must be a valid center with centerType "Outlet"',
-      },
+      // validate: {
+      //   validator: async function (outletId) {
+      //     if (!outletId) return false;
+      //     const Center = mongoose.model("Center");
+      //     const outlet = await Center.findById(outletId);
+      //     return outlet && outlet.centerType === "Outlet";
+      //   },
+      //   message: 'Outlet must be a valid center with centerType "Outlet"',
+      // },
     },
     transportAmount: {
       type: Number,

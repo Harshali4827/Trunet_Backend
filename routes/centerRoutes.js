@@ -17,12 +17,13 @@ router.use(protect);
 
 router.post(
   "/",
-  authorizeAccess(MODULE, "manage_all_centers", "manage_own_centers"),
+  authorizeAccess(MODULE, "manage_all_center", "manage_own_center"),
   createCenter
 );
 
 router.get(
   "/",
+  protect,
   authorizeAccess(MODULE, "view_own_center", "view_all_center"),
   getCenters
 );
@@ -47,13 +48,13 @@ router.get(
 
 router.put(
   "/:id",
-  authorizeAccess(MODULE, "manage_own_center", "manage_all_centers"),
+  authorizeAccess(MODULE, "manage_own_center", "manage_all_center"),
   updateCenter
 );
 
 router.delete(
   "/:id",
-  authorizeAccess(MODULE, "manage_own_center", "manage_all_centers"),
+  authorizeAccess(MODULE, "manage_own_center", "manage_all_center"),
   deleteCenter
 );
 

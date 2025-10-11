@@ -14,7 +14,7 @@ import {
   updateOutletSerialNumber,
   deleteOutletSerialNumber,
 } from "../controllers/stockPurchaseController.js";
-import { protect } from "../middlewares/authMiddleware.js";
+import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
 import {
   validateCreateStockPurchase,
@@ -31,26 +31,77 @@ import {
 
 const router = express.Router();
 
-router.post("/", protect, validateCreateStockPurchase, createStockPurchase);
+const MODULE = "Purchase";
 
-router.get("/", protect, validateStockPurchaseQuery, getAllStockPurchases);
+router.post(
+  "/",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "add_purchase_stock"
+  ),
+  validateCreateStockPurchase,
+  createStockPurchase
+);
+
+router.get(
+  "/",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "view_own_purchase_stock",
+    "view_all_purchase_stock"
+  ),
+  validateStockPurchaseQuery,
+  getAllStockPurchases
+);
 
 router.get(
   "/products/with-stock",
   protect,
+  authorizeAccess(
+    MODULE,
+    "view_own_purchase_stock",
+    "view_all_purchase_stock"
+  ),
   validateProductQuery,
   getAllProductsWithStock
 );
 
-router.get("/:id", protect, validateIdParam, getStockPurchaseById);
+router.get(
+  "/:id",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "view_own_purchase_stock",
+    "view_all_purchase_stock"
+  ),
+  validateIdParam,
+  getStockPurchaseById
+);
 
-router.put("/:id", protect, validateUpdateStockPurchase, updateStockPurchase);
+router.put(
+  "/:id",
+  protect,
+  validateUpdateStockPurchase,
+  updateStockPurchase
+);
 
-router.delete("/:id", protect, validateIdParam, deleteStockPurchase);
+router.delete(
+  "/:id",
+  protect,
+  validateIdParam,
+  deleteStockPurchase
+);
 
 router.get(
   "/vendor/:vendorId",
   protect,
+  authorizeAccess(
+    MODULE,
+    "view_own_purchase_stock",
+    "view_all_purchase_stock"
+  ),
   validateVendorIdParam,
   getPurchasesByVendor
 );
@@ -58,15 +109,34 @@ router.get(
 router.get(
   "/stock/available/:productId",
   protect,
+  authorizeAccess(
+    MODULE,
+    "view_own_purchase_stock",
+    "view_all_purchase_stock"
+  ),
   validateStockAvailabilityParams,
   getAvailableStock
 );
 
-router.get("/stock/outlet-summary", protect, getOutletStockSummary);
+router.get(
+  "/stock/outlet-summary",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "view_own_purchase_stock",
+    "view_all_purchase_stock"
+  ),
+  getOutletStockSummary
+);
 
 router.get(
   "/stock/center-summary/:centerId",
   protect,
+  authorizeAccess(
+    MODULE,
+    "view_own_purchase_stock",
+    "view_all_purchase_stock"
+  ),
   validateCenterIdParam,
   getCenterStockSummary
 );
@@ -74,6 +144,11 @@ router.get(
 router.get(
   "/serial-numbers/product/:outletId/:productId",
   protect,
+  authorizeAccess(
+    MODULE,
+    "view_own_purchase_stock",
+    "view_all_purchase_stock"
+  ),
   getOutletSerialNumbers
 );
 

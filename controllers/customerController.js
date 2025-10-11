@@ -3,6 +3,26 @@ import Center from "../models/Center.js";
 
 export const createCustomer = async (req, res) => {
   try {
+    const userPermissions = req.user.role?.permissions || [];
+    const customerModule = userPermissions.find(
+      (perm) => perm.module === "Customer"
+    );
+
+    const canManageAll =
+      customerModule &&
+      customerModule.permissions.includes("manage_customer_all_center");
+    const canManageOwn =
+      customerModule &&
+      customerModule.permissions.includes("manage_customer_own_center");
+
+    if (!canManageAll && !canManageOwn) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. manage_customer_own_center or manage_customer_all_center permission required.",
+      });
+    }
+
     const {
       username,
       name,
@@ -14,6 +34,18 @@ export const createCustomer = async (req, res) => {
       city,
       state,
     } = req.body;
+
+    // Check if user has permission to create customer for this center
+    if (canManageOwn && !canManageAll && req.user.center) {
+      const userCenterId = req.user.center._id || req.user.center;
+      if (centerId !== userCenterId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Access denied. You can only create customers in your own center.",
+        });
+      }
+    }
 
     const center = await Center.findById(centerId);
     if (!center) {
@@ -37,12 +69,42 @@ export const createCustomer = async (req, res) => {
     await customer.save();
     res.status(201).json({ success: true, data: customer });
   } catch (error) {
+    console.error(error);
+
+    if (error.name === "ValidationError") {
+      return res.status(400).json({
+        success: false,
+        message: "Validation error",
+        errors: Object.values(error.errors).map((err) => err.message),
+      });
+    }
+
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
 export const getCustomers = async (req, res) => {
   try {
+    const userPermissions = req.user.role?.permissions || [];
+    const customerModule = userPermissions.find(
+      (perm) => perm.module === "Customer"
+    );
+
+    const canViewAll =
+      customerModule &&
+      customerModule.permissions.includes("view_customer_all_center");
+    const canViewOwn =
+      customerModule &&
+      customerModule.permissions.includes("view_customer_own_center");
+
+    if (!canViewAll && !canViewOwn) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_customer_own_center or view_customer_all_center permission required.",
+      });
+    }
+
     const {
       search,
       center,
@@ -52,10 +114,16 @@ export const getCustomers = async (req, res) => {
       sortOrder = "desc",
     } = req.query;
 
-    const filter = {};
+    let filter = {};
 
-    if (center) {
-      filter.center = center;
+    // Apply center filter based on user permissions
+    if (canViewOwn && !canViewAll && req.user.center) {
+      const userCenterId = req.user.center._id || req.user.center;
+      filter.center = userCenterId;
+    } else {
+      if (center) {
+        filter.center = center;
+      }
     }
 
     if (search?.trim()) {
@@ -106,13 +174,18 @@ export const getCustomers = async (req, res) => {
         currentPage: Number(page),
         totalPages,
         totalCustomers,
+        itemsPerPage: Number(limit),
       },
     });
   } catch (error) {
+    console.error("Error fetching customers:", error);
     res.status(500).json({
       success: false,
       message: "Error fetching customers",
-      error: error.message,
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : "Internal server error",
     });
   }
 };
@@ -127,10 +200,34 @@ export const getCustomerById = async (req, res) => {
       ],
     });
 
-    if (!customer)
+    if (!customer) {
       return res
         .status(404)
         .json({ success: false, message: "Customer not found" });
+    }
+
+    const userPermissions = req.user.role?.permissions || [];
+    const customerModule = userPermissions.find(
+      (perm) => perm.module === "Customer"
+    );
+
+    const canViewAll =
+      customerModule &&
+      customerModule.permissions.includes("view_customer_all_center");
+    const canViewOwn =
+      customerModule &&
+      customerModule.permissions.includes("view_customer_own_center");
+
+    if (canViewOwn && !canViewAll && req.user.center) {
+      const userCenterId = req.user.center._id || req.user.center;
+      if (customer.center._id.toString() !== userCenterId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Access denied. You can only view customers in your own center.",
+        });
+      }
+    }
 
     res.status(200).json({ success: true, data: customer });
   } catch (error) {
@@ -138,43 +235,68 @@ export const getCustomerById = async (req, res) => {
   }
 };
 
-// export const updateCustomer = async (req, res) => {
-//   try {
-//     const customer = await Customer.findByIdAndUpdate(req.params.id, req.body, {
-//       new: true,
-//       runValidators: true,
-//     })
-//       .populate({
-//         path: 'center',
-//         populate: [
-//           { path: 'partner', select: 'partnerName' },
-//           { path: 'area', select: 'areaName' },
-//         ],
-//       });
-
-//     if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
-
-//     res.status(200).json({ success: true, data: customer });
-//   } catch (error) {
-//     res.status(500).json({ success: false, message: error.message });
-//   }
-// };
-
 export const updateCustomer = async (req, res) => {
   try {
-    const updateData = { ...req.body };
+    const customer = await Customer.findById(req.params.id);
+
+    if (!customer) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Customer not found" });
+    }
+
+    const userPermissions = req.user.role?.permissions || [];
+    const customerModule = userPermissions.find(
+      (perm) => perm.module === "Customer"
+    );
+
+    const canManageAll =
+      customerModule &&
+      customerModule.permissions.includes("manage_customer_all_center");
+    const canManageOwn =
+      customerModule &&
+      customerModule.permissions.includes("manage_customer_own_center");
+
+    // Check permission for existing customer
+    if (canManageOwn && !canManageAll && req.user.center) {
+      const userCenterId = req.user.center._id || req.user.center;
+      if (customer.center.toString() !== userCenterId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Access denied. You can only manage customers in your own center.",
+        });
+      }
+    }
+
+    // If updating center, check permission for new center
     if (req.body.centerId) {
+      if (canManageOwn && !canManageAll && req.user.center) {
+        const userCenterId = req.user.center._id || req.user.center;
+        if (req.body.centerId !== userCenterId.toString()) {
+          return res.status(403).json({
+            success: false,
+            message:
+              "Access denied. You can only assign customers to your own center.",
+          });
+        }
+      }
+
       const center = await Center.findById(req.body.centerId);
       if (!center) {
         return res
           .status(404)
           .json({ success: false, message: "Center not found" });
       }
+    }
+
+    const updateData = { ...req.body };
+    if (req.body.centerId) {
       updateData.center = req.body.centerId;
       delete updateData.centerId;
     }
 
-    const customer = await Customer.findByIdAndUpdate(
+    const updatedCustomer = await Customer.findByIdAndUpdate(
       req.params.id,
       updateData,
       {
@@ -189,25 +311,53 @@ export const updateCustomer = async (req, res) => {
       ],
     });
 
-    if (!customer) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Customer not found" });
-    }
-
-    res.status(200).json({ success: true, data: customer });
+    res.status(200).json({ success: true, data: updatedCustomer });
   } catch (error) {
+    if (error.name === "ValidationError") {
+      return res.status(400).json({
+        success: false,
+        message: "Validation error",
+        errors: Object.values(error.errors).map((err) => err.message),
+      });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
 export const deleteCustomer = async (req, res) => {
   try {
-    const customer = await Customer.findByIdAndDelete(req.params.id);
-    if (!customer)
+    const customer = await Customer.findById(req.params.id);
+
+    if (!customer) {
       return res
         .status(404)
         .json({ success: false, message: "Customer not found" });
+    }
+
+    const userPermissions = req.user.role?.permissions || [];
+    const customerModule = userPermissions.find(
+      (perm) => perm.module === "Customer"
+    );
+
+    const canManageAll =
+      customerModule &&
+      customerModule.permissions.includes("manage_customer_all_center");
+    const canManageOwn =
+      customerModule &&
+      customerModule.permissions.includes("manage_customer_own_center");
+
+    if (canManageOwn && !canManageAll && req.user.center) {
+      const userCenterId = req.user.center._id || req.user.center;
+      if (customer.center.toString() !== userCenterId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Access denied. You can only delete customers in your own center.",
+        });
+      }
+    }
+
+    await Customer.findByIdAndDelete(req.params.id);
     res
       .status(200)
       .json({ success: true, message: "Customer deleted successfully" });

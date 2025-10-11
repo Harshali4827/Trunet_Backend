@@ -21,7 +21,6 @@ import {
   completeIncompleteStockTransfer,
   updateApprovedQuantities,
   getWarehouseProductSummary,
-  getWarehouseProductMovement,
 } from "../controllers/stockTransferController.js";
 import {
   validateCreateStockTransfer,
@@ -39,42 +38,83 @@ import {
   validateQueryParams,
   validateUpdateApprovedQuantities,
 } from "../validations/stockTransferValidations.js";
-import upload from "../config/multer.js";
-import { protect } from "../middlewares/authMiddleware.js";
+import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
+const MODULE = "Transfer";
 
 router
   .route("/")
-  .post(protect, validateCreateStockTransfer, createStockTransfer)
-  .get(protect, validateQueryParams, getAllStockTransfers);
+  .post(
+    protect,
+    authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
+    validateCreateStockTransfer,
+    createStockTransfer
+  )
+  .get(
+    protect,
+    authorizeAccess(MODULE, "stock_transfer_own_center", "stock_transfer_all_center"),
+    validateQueryParams,
+    getAllStockTransfers
+  );
 
 router
   .route("/latest-transfer-number")
-  .get(protect, getMostRecentTransferNumber);
+  .get(
+    protect,
+    authorizeAccess(MODULE, "stock_transfer_own_center", "stock_transfer_all_center"),
+    getMostRecentTransferNumber
+  );
 
-router.get("/summary/original-outlet", protect, getWarehouseProductSummary);
+router.get(
+  "/summary/original-outlet",
+  protect,
+  authorizeAccess(MODULE, "stock_transfer_own_center", "stock_transfer_all_center"),
+  getWarehouseProductSummary
+);
 
-router.get("/movement", protect, getWarehouseProductMovement);
-
-router.route("/stats").get(protect, getTransferStats);
+router
+  .route("/stats")
+  .get(
+    protect,
+    authorizeAccess(MODULE, "stock_transfer_own_center", "stock_transfer_all_center"),
+    getTransferStats
+  );
 
 router
   .route("/:id")
-  .get(protect, validateIdParam, getStockTransferById)
+  .get(
+    protect,
+    authorizeAccess(MODULE, "stock_transfer_own_center", "stock_transfer_all_center"),
+    validateIdParam,
+    getStockTransferById
+  )
   .put(
     protect,
+    authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
     validateIdParam,
     validateUpdateStockTransfer,
     updateStockTransfer
   )
-  .delete(protect, validateIdParam, deleteStockTransfer);
+  .delete(
+    protect,
+    authorizeAccess(MODULE, "delete_transfer_own_center", "delete_transfer_all_center"),
+    validateIdParam,
+    deleteStockTransfer
+  );
 
-router.post("/:id/submit", protect, validateIdParam, submitStockTransfer);
+router.post(
+  "/:id/submit",
+  protect,
+  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
+  validateIdParam,
+  submitStockTransfer
+);
 
 router.post(
   "/:id/approve",
   protect,
+  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center", "approval_transfer_center"),
   validateIdParam,
   validateConfirmation,
   confirmStockTransfer
@@ -83,6 +123,7 @@ router.post(
 router.post(
   "/:id/reject",
   protect,
+  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
   validateIdParam,
   validateRejectTransfer,
   rejectStockTransfer
@@ -91,6 +132,7 @@ router.post(
 router.patch(
   "/:id/admin/approve",
   protect,
+  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
   validateIdParam,
   validateAdminApproval,
   approveStockTransferByAdmin
@@ -99,6 +141,7 @@ router.patch(
 router.patch(
   "/:id/admin/reject",
   protect,
+  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
   validateIdParam,
   validateAdminRejection,
   rejectStockTransferByAdmin
@@ -107,6 +150,7 @@ router.patch(
 router.post(
   "/:id/ship",
   protect,
+  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
   validateIdParam,
   validateShipping,
   shipStockTransfer
@@ -115,14 +159,16 @@ router.post(
 router.patch(
   "/:id/shipping-info",
   protect,
+  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
   validateIdParam,
   validateUpdateShippingInfo,
   updateShippingInfo
 );
 
 router.patch(
-  "/:id/reject-shipping",
+  "/:id/reject-shipment",
   protect,
+  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
   validateIdParam,
   validateRejectShipment,
   rejectShipping
@@ -131,6 +177,7 @@ router.patch(
 router.post(
   "/:id/complete",
   protect,
+  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
   validateIdParam,
   validateCompletion,
   completeStockTransfer
@@ -139,6 +186,7 @@ router.post(
 router.post(
   "/:id/mark-incomplete",
   protect,
+  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
   validateIdParam,
   validateIncompleteTransfer,
   markStockTransferAsIncomplete
@@ -147,12 +195,14 @@ router.post(
 router.patch(
   "/:id/complete-incomplete",
   protect,
+  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
   completeIncompleteStockTransfer
 );
 
 router.patch(
   "/:id/approved-quantities",
   protect,
+  authorizeAccess(MODULE, "manage_stock_transfer_own_center", "manage_stock_transfer_all_center"),
   validateIdParam,
   validateUpdateApprovedQuantities,
   updateApprovedQuantities
@@ -161,6 +211,7 @@ router.patch(
 router.get(
   "/admin/pending-approval",
   protect,
+  authorizeAccess(MODULE, "indent_all_center", "indent_own_center"),
   getPendingAdminApprovalTransfers
 );
 

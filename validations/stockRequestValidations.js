@@ -254,7 +254,7 @@ export const handleValidationErrors = (req, res, next) => {
   if (!errors.isEmpty()) {
     return res.status(400).json({
       success: false,
-      message: "Validation failed",
+      message: firstError.msg,
       errors: errors.array().map((error) => ({
         field: error.path,
         message: error.msg,
@@ -431,6 +431,23 @@ export const validateUpdateStockRequest = [
   handleValidationErrors,
 ];
 
+// export const validateApproveStockRequest = [
+//   ...validateIdParam,
+
+//   body("productApprovals")
+//     .isArray({ min: 1 })
+//     .withMessage("Product approvals are required")
+//     .custom(customValidators.validateProductApprovals)
+//     .withMessage("Product approval validation failed"),
+
+//   body("approvedRemark")
+//     .optional()
+//     .isLength({ max: 500 })
+//     .withMessage("Approved remark must be less than 500 characters"),
+
+//   handleValidationErrors,
+// ];
+
 export const validateApproveStockRequest = [
   ...validateIdParam,
 
@@ -439,6 +456,38 @@ export const validateApproveStockRequest = [
     .withMessage("Product approvals are required")
     .custom(customValidators.validateProductApprovals)
     .withMessage("Product approval validation failed"),
+
+  body("productApprovals.*.approvedQuantity")
+    .notEmpty()
+    .withMessage("Approved quantity is required")
+    .isInt({ min: 0 })
+    .withMessage("Approved quantity must be a non-negative integer")
+    .custom((value, { req, path }) => {
+      // Get the index from the path (e.g., "productApprovals.0.approvedQuantity")
+      const match = path.match(/productApprovals\.(\d+)\.approvedQuantity/);
+      if (match) {
+        const index = parseInt(match[1]);
+        const approval = req.body.productApprovals[index];
+        
+        // If approved quantity is 0, require approvedRemark
+        if (value === 0 && (!approval.approvedRemark || approval.approvedRemark.trim() === '')) {
+          throw new Error('Approval remark is required when approved quantity is zero');
+        }
+      }
+      return true;
+    }),
+
+  body("productApprovals.*.approvedSerials")
+    .optional()
+    .isArray()
+    .withMessage("Approved serials must be an array"),
+
+  body("productApprovals.*.approvedSerials.*")
+    .isString()
+    .trim()
+    .isLength({ min: 1 })
+    .withMessage("Serial number cannot be empty")
+    .optional(),
 
   body("approvedRemark")
     .optional()
@@ -480,6 +529,7 @@ export const validateShipStockRequest = [
   handleValidationErrors,
 ];
 
+
 export const validateCompleteStockRequest = [
   ...validateIdParam,
 
@@ -488,6 +538,30 @@ export const validateCompleteStockRequest = [
     .withMessage("Product receipts are required")
     .custom(customValidators.validateProductReceipts)
     .withMessage("Product receipt validation failed"),
+
+  body("productReceipts.*.productId")
+    .notEmpty()
+    .withMessage("Product ID is required")
+    .isMongoId()
+    .withMessage("Invalid product ID format"),
+
+  body("productReceipts.*.receivedQuantity")
+    .notEmpty()
+    .withMessage("Received quantity is required")
+    .isInt({ min: 0 })
+    .withMessage("Received quantity must be a non-negative integer"),
+
+  body("productReceipts.*.receivedSerials")
+    .optional()
+    .isArray()
+    .withMessage("Received serials must be an array"),
+
+  body("productReceipts.*.receivedSerials.*")
+    .isString()
+    .trim()
+    .isLength({ min: 1 })
+    .withMessage("Serial number cannot be empty")
+    .optional(),
 
   body("receivedRemark")
     .optional()
@@ -512,12 +586,60 @@ export const validateCompleteIncompleteRequest = [
     .custom(customValidators.validateProductApprovals)
     .withMessage("Product approval validation failed"),
 
+  body("productApprovals.*.productId")
+    .notEmpty()
+    .withMessage("Product ID is required")
+    .isMongoId()
+    .withMessage("Invalid product ID format"),
+
+  body("productApprovals.*.approvedQuantity")
+    .notEmpty()
+    .withMessage("Approved quantity is required")
+    .isInt({ min: 0 })
+    .withMessage("Approved quantity must be a non-negative integer"),
+
+  body("productApprovals.*.approvedSerials")
+    .optional()
+    .isArray()
+    .withMessage("Approved serials must be an array"),
+
+  body("productApprovals.*.approvedSerials.*")
+    .isString()
+    .trim()
+    .isLength({ min: 1 })
+    .withMessage("Serial number cannot be empty")
+    .optional(),
+
   body("productReceipts")
     .optional()
     .isArray({ min: 1 })
     .withMessage("Product receipts array must contain at least one item")
     .custom(customValidators.validateProductReceipts)
     .withMessage("Product receipt validation failed"),
+
+  body("productReceipts.*.productId")
+    .notEmpty()
+    .withMessage("Product ID is required")
+    .isMongoId()
+    .withMessage("Invalid product ID format"),
+
+  body("productReceipts.*.receivedQuantity")
+    .notEmpty()
+    .withMessage("Received quantity is required")
+    .isInt({ min: 0 })
+    .withMessage("Received quantity must be a non-negative integer"),
+
+  body("productReceipts.*.receivedSerials")
+    .optional()
+    .isArray()
+    .withMessage("Received serials must be an array"),
+
+  body("productReceipts.*.receivedSerials.*")
+    .isString()
+    .trim()
+    .isLength({ min: 1 })
+    .withMessage("Serial number cannot be empty")
+    .optional(),
 
   body("approvedRemark")
     .optional()
@@ -531,6 +653,100 @@ export const validateCompleteIncompleteRequest = [
 
   handleValidationErrors,
 ];
+
+export const validateMarkAsIncomplete = [
+  ...validateIdParam,
+
+  body("incompleteRemark")
+    .optional()
+    .isLength({ max: 500 })
+    .withMessage("Incomplete remark must be less than 500 characters"),
+
+  body("receivedProducts")
+    .optional()
+    .isArray({ min: 1 })
+    .withMessage("Received products must be an array with at least one item")
+    .custom(customValidators.validateProductReceipts)
+    .withMessage("Received products validation failed"),
+
+  body("receivedProducts.*.productId")
+    .notEmpty()
+    .withMessage("Product ID is required")
+    .isMongoId()
+    .withMessage("Invalid product ID format"),
+
+  body("receivedProducts.*.receivedQuantity")
+    .notEmpty()
+    .withMessage("Received quantity is required")
+    .isInt({ min: 0 })
+    .withMessage("Received quantity must be a non-negative integer"),
+
+  body("receivedProducts.*.receivedSerials")
+    .optional()
+    .isArray()
+    .withMessage("Received serials must be an array"),
+
+  body("receivedProducts.*.receivedSerials.*")
+    .isString()
+    .trim()
+    .isLength({ min: 1 })
+    .withMessage("Serial number cannot be empty")
+    .optional(),
+
+  handleValidationErrors,
+];
+
+// export const validateCompleteStockRequest = [
+//   ...validateIdParam,
+
+//   body("productReceipts")
+//     .isArray({ min: 1 })
+//     .withMessage("Product receipts are required")
+//     .custom(customValidators.validateProductReceipts)
+//     .withMessage("Product receipt validation failed"),
+
+//   body("receivedRemark")
+//     .optional()
+//     .isLength({ max: 500 })
+//     .withMessage("Received remark must be less than 500 characters"),
+
+//   body("markAsIncomplete")
+//     .optional()
+//     .isBoolean()
+//     .withMessage("markAsIncomplete must be a boolean"),
+
+//   handleValidationErrors,
+// ];
+
+// export const validateCompleteIncompleteRequest = [
+//   ...validateIdParam,
+
+//   body("productApprovals")
+//     .optional()
+//     .isArray({ min: 1 })
+//     .withMessage("Product approvals array must contain at least one item")
+//     .custom(customValidators.validateProductApprovals)
+//     .withMessage("Product approval validation failed"),
+
+//   body("productReceipts")
+//     .optional()
+//     .isArray({ min: 1 })
+//     .withMessage("Product receipts array must contain at least one item")
+//     .custom(customValidators.validateProductReceipts)
+//     .withMessage("Product receipt validation failed"),
+
+//   body("approvedRemark")
+//     .optional()
+//     .isLength({ max: 500 })
+//     .withMessage("Approved remark must be less than 500 characters"),
+
+//   body("receivedRemark")
+//     .optional()
+//     .isLength({ max: 500 })
+//     .withMessage("Received remark must be less than 500 characters"),
+
+//   handleValidationErrors,
+// ];
 
 export const validateUpdateApprovedQuantities = [
   ...validateIdParam,
@@ -660,16 +876,16 @@ export const validateRejectShipment = [
   handleValidationErrors,
 ];
 
-export const validateMarkAsIncomplete = [
-  ...validateIdParam,
+// export const validateMarkAsIncomplete = [
+//   ...validateIdParam,
 
-  body("incompleteRemark")
-    .optional()
-    .isLength({ max: 500 })
-    .withMessage("Incomplete remark must be less than 500 characters"),
+//   body("incompleteRemark")
+//     .optional()
+//     .isLength({ max: 500 })
+//     .withMessage("Incomplete remark must be less than 500 characters"),
 
-  handleValidationErrors,
-];
+//   handleValidationErrors,
+// ];
 
 export const validateUpdateShippingInfo = [
   ...validateIdParam,

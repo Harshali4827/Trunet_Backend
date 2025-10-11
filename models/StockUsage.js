@@ -49,7 +49,7 @@ const stockUsageSchema = new mongoose.Schema(
     },
     onuCharges: {
       type: Number,
-      default: 0,
+      default: 0,    
     },
     installationCharges: {
       type: Number,

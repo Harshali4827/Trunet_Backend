@@ -46,6 +46,17 @@ const stockClosingSchema = new mongoose.Schema(
         return this.stockClosingForOtherCenter === true;
       },
     },
+    // New field: center for which the stock closing is being recorded
+    closingCenter: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Center",
+      required: [true, "Closing center is required"],
+    },
+    // Link to related stock closing entries
+    linkedStockClosing: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "StockClosing",
+    },
     products: [productItemSchema],
 
     createdBy: {
@@ -66,15 +77,23 @@ const stockClosingSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    remark: {
+      type: String,
+      trim: true,
+      maxlength: [500, "Remark cannot exceed 500 characters"],
+    },
   },
   {
     timestamps: true,
   }
 );
 
+stockClosingSchema.index({ date: 1, closingCenter: 1 });
 stockClosingSchema.index({ date: 1, center: 1 });
 stockClosingSchema.index({ "products.product": 1 });
 stockClosingSchema.index({ stockClosingForOtherCenter: 1 });
+stockClosingSchema.index({ closingCenter: 1 });
+stockClosingSchema.index({ linkedStockClosing: 1 });
 
 stockClosingSchema.virtual("totalQty").get(function () {
   return this.totalProductQty + this.totalDamageQty;
@@ -116,11 +135,28 @@ stockClosingSchema.statics.findByDateRange = function (startDate, endDate) {
       $gte: startDate,
       $lte: endDate,
     },
-  }).populate("center products.product");
+  }).populate("center closingCenter products.product linkedStockClosing");
+};
+
+stockClosingSchema.statics.findByClosingCenter = function (centerId, startDate, endDate) {
+  const query = { closingCenter: centerId };
+  
+  if (startDate && endDate) {
+    query.date = {
+      $gte: startDate,
+      $lte: endDate,
+    };
+  }
+  
+  return this.find(query).populate("center closingCenter products.product linkedStockClosing");
 };
 
 stockClosingSchema.methods.isForOtherCenter = function () {
   return this.stockClosingForOtherCenter;
+};
+
+stockClosingSchema.methods.getClosingCenter = function () {
+  return this.closingCenter;
 };
 
 export default mongoose.model("StockClosing", stockClosingSchema);

@@ -16,7 +16,7 @@ export const createCenter = async (req, res) => {
       return res.status(403).json({
         success: false,
         message:
-          "Access denied. manage_all_centers permission required to create centers.",
+          "Access denied. manage_all_center permission required to create centers.",
       });
     }
 
@@ -103,7 +103,7 @@ export const getCenters = async (req, res) => {
       return res.status(403).json({
         success: false,
         message:
-          "Access denied. view_own_center or view_all_centers permission required.",
+          "Access denied. view_own_center or view_all_center permission required.",
       });
     }
 
@@ -221,7 +221,7 @@ export const getCenterById = async (req, res) => {
     );
 
     const canViewAll =
-      centerModule && centerModule.permissions.includes("view_all_centers");
+      centerModule && centerModule.permissions.includes("view_all_center");
     const canViewOwn =
       centerModule && centerModule.permissions.includes("view_own_center");
 
@@ -256,7 +256,7 @@ export const updateCenter = async (req, res) => {
     );
 
     const canManageAll =
-      centerModule && centerModule.permissions.includes("manage_all_centers");
+      centerModule && centerModule.permissions.includes("manage_all_center");
     const canManageOwn =
       centerModule && centerModule.permissions.includes("manage_own_center");
 
@@ -264,7 +264,7 @@ export const updateCenter = async (req, res) => {
       return res.status(403).json({
         success: false,
         message:
-          "Access denied. manage_own_center or manage_all_centers permission required.",
+          "Access denied. manage_own_center or manage_all_center permission required.",
       });
     }
     if (canManageOwn && !canManageAll && req.user.center) {
@@ -309,12 +309,12 @@ export const deleteCenter = async (req, res) => {
 
     if (
       !centerModule ||
-      !centerModule.permissions.includes("manage_all_centers")
+      !centerModule.permissions.includes("manage_all_center")
     ) {
       return res.status(403).json({
         success: false,
         message:
-          "Access denied. manage_all_centers permission required to delete centers.",
+          "Access denied. manage_all_center permission required to delete centers.",
       });
     }
 
@@ -335,7 +335,7 @@ export const getCentersByPartner = async (req, res) => {
     );
 
     const canViewAll =
-      centerModule && centerModule.permissions.includes("view_all_centers");
+      centerModule && centerModule.permissions.includes("view_all_center");
     const canViewOwn =
       centerModule && centerModule.permissions.includes("view_own_center");
 
@@ -373,7 +373,7 @@ export const getCentersByArea = async (req, res) => {
     );
 
     const canViewAll =
-      centerModule && centerModule.permissions.includes("view_all_centers");
+      centerModule && centerModule.permissions.includes("view_all_center");
     const canViewOwn =
       centerModule && centerModule.permissions.includes("view_own_center");
 

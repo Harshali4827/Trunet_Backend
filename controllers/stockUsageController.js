@@ -6,9 +6,128 @@ import Customer from "../models/Customer.js";
 import Building from "../models/Building.js";
 import ControlRoom from "../models/ControlRoomModel.js";
 import mongoose from "mongoose";
+import User from "../models/User.js";
+
+const checkStockUsagePermissions = (req, requiredPermissions = []) => {
+  const userPermissions = req.user.role?.permissions || [];
+  const usageModule = userPermissions.find((perm) => perm.module === "Usage");
+
+  if (!usageModule) {
+    return { hasAccess: false, permissions: {} };
+  }
+
+  const permissions = {
+    manage_usage_own_center: usageModule.permissions.includes(
+      "manage_usage_own_center"
+    ),
+    manage_usage_all_center: usageModule.permissions.includes(
+      "manage_usage_all_center"
+    ),
+    view_usage_own_center: usageModule.permissions.includes(
+      "view_usage_own_center"
+    ),
+    view_usage_all_center: usageModule.permissions.includes(
+      "view_usage_all_center"
+    ),
+    allow_edit_usage: usageModule.permissions.includes("allow_edit_usage"),
+    accept_damage_return: usageModule.permissions.includes(
+      "accept_damage_return"
+    ),
+  };
+
+  const hasRequiredPermission = requiredPermissions.some(
+    (perm) => permissions[perm]
+  );
+
+  return {
+    hasAccess: hasRequiredPermission,
+    permissions,
+    userCenter: req.user.center,
+  };
+};
+
+const checkUsageCenterAccess = async (userId, targetCenterId, permissions) => {
+  if (!userId) {
+    throw new Error("User authentication required");
+  }
+
+  const user = await User.findById(userId).populate(
+    "center",
+    "centerName centerCode centerType"
+  );
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  if (!user.center) {
+    throw new Error("User is not associated with any center");
+  }
+
+  if (
+    permissions.manage_usage_all_center ||
+    permissions.view_usage_all_center
+  ) {
+    return targetCenterId || user.center._id;
+  }
+
+  if (
+    permissions.manage_usage_own_center ||
+    permissions.view_usage_own_center
+  ) {
+    const userCenterId = user.center._id || user.center;
+
+    if (
+      targetCenterId &&
+      targetCenterId.toString() !== userCenterId.toString()
+    ) {
+      throw new Error(
+        "Access denied. You can only access your own center's usage data."
+      );
+    }
+
+    return userCenterId;
+  }
+
+  throw new Error("Insufficient permissions to access usage data");
+};
+
+const getUserCenterId = async (userId) => {
+  if (!userId) {
+    throw new Error("User ID is required");
+  }
+
+  const user = await User.findById(userId).populate(
+    "center",
+    "centerName centerCode centerType"
+  );
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  if (!user.center) {
+    throw new Error("User center information not found");
+  }
+
+  return user.center._id;
+};
 
 export const createStockUsage = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["manage_usage_own_center", "manage_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. manage_usage_own_center or manage_usage_all_center permission required.",
+      });
+    }
+
     const {
       date,
       usageType,
@@ -27,6 +146,17 @@ export const createStockUsage = async (req, res) => {
       fromControlRoom,
       items,
     } = req.body;
+
+    let centerId = req.body.center;
+    if (!centerId) {
+      centerId = await getUserCenterId(req.user._id);
+    } else {
+      centerId = await checkUsageCenterAccess(
+        req.user._id,
+        centerId,
+        permissions
+      );
+    }
 
     const center = req.user.center;
     const createdBy = req.user.id;
@@ -397,6 +527,19 @@ const getEntityConfig = (usageType, stockUsage) => {
 
 export const getAllStockUsage = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
+
     const {
       center,
       usageType,
@@ -415,7 +558,16 @@ export const getAllStockUsage = async (req, res) => {
 
     const filter = {};
 
-    if (center) filter.center = center;
+    if (
+      permissions.view_usage_own_center &&
+      !permissions.view_usage_all_center &&
+      userCenter
+    ) {
+      filter.center = userCenter._id || userCenter;
+    } else if (center) {
+      filter.center = center;
+    }
+
     if (usageType) filter.usageType = usageType;
     if (status) filter.status = status;
     if (customer) filter.customer = customer;
@@ -488,6 +640,19 @@ export const getAllStockUsage = async (req, res) => {
 
 export const getStockUsageById = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -495,6 +660,16 @@ export const getStockUsageById = async (req, res) => {
         success: false,
         message: "Invalid stock usage ID",
       });
+    }
+
+    const filter = { _id: id };
+
+    if (
+      permissions.view_usage_own_center &&
+      !permissions.view_usage_all_center &&
+      userCenter
+    ) {
+      filter.center = userCenter._id || userCenter;
     }
 
     const stockUsage = await StockUsage.findById(id)
@@ -554,6 +729,15 @@ export const getStockUsageById = async (req, res) => {
 };
 export const updateStockUsage = async (req, res) => {
   try {
+    const { hasAccess } = checkStockUsagePermissions(req, ["allow_edit_usage"]);
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. allow_edit_usage permission required.",
+      });
+    }
+
     const { id } = req.params;
     const updateData = req.body;
 
@@ -562,6 +746,21 @@ export const updateStockUsage = async (req, res) => {
         success: false,
         message: "Invalid stock usage ID",
       });
+    }
+
+    const { permissions, userCenter } = checkStockUsagePermissions(req, [
+      "manage_usage_own_center",
+      "manage_usage_all_center",
+    ]);
+
+    const filter = { _id: id };
+
+    if (
+      permissions.manage_usage_own_center &&
+      !permissions.manage_usage_all_center &&
+      userCenter
+    ) {
+      filter.center = userCenter._id || userCenter;
     }
 
     const existingStockUsage = await StockUsage.findById(id);
@@ -1058,6 +1257,19 @@ const getEntityId = (stockUsage) => {
 
 export const deleteStockUsage = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["manage_usage_own_center", "manage_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. manage_usage_own_center or manage_usage_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -1065,6 +1277,16 @@ export const deleteStockUsage = async (req, res) => {
         success: false,
         message: "Invalid stock usage ID",
       });
+    }
+
+    const filter = { _id: id };
+
+    if (
+      permissions.manage_usage_own_center &&
+      !permissions.manage_usage_all_center &&
+      userCenter
+    ) {
+      filter.center = userCenter._id || userCenter;
     }
 
     const stockUsage = await StockUsage.findById(id);
@@ -1096,6 +1318,19 @@ export const deleteStockUsage = async (req, res) => {
 
 export const cancelStockUsage = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["manage_usage_own_center", "manage_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. manage_usage_own_center or manage_usage_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -1103,6 +1338,16 @@ export const cancelStockUsage = async (req, res) => {
         success: false,
         message: "Invalid stock usage ID",
       });
+    }
+
+    const filter = { _id: id };
+
+    if (
+      permissions.manage_usage_own_center &&
+      !permissions.manage_usage_all_center &&
+      userCenter
+    ) {
+      filter.center = userCenter._id || userCenter;
     }
 
     const stockUsage = await StockUsage.findById(id);
@@ -1254,6 +1499,17 @@ const restoreStock = async (stockUsage, session) => {
  */
 export const approveDamageRequest = async (req, res) => {
   try {
+    const { hasAccess } = checkStockUsagePermissions(req, [
+      "accept_damage_return",
+    ]);
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. accept_damage_return permission required.",
+      });
+    }
+
     const { id } = req.params;
     const { approvalRemark } = req.body;
 
@@ -1264,6 +1520,20 @@ export const approveDamageRequest = async (req, res) => {
         success: false,
         message: "Invalid stock usage ID",
       });
+    }
+
+    const { permissions, userCenter } = checkStockUsagePermissions(req, [
+      "view_usage_own_center",
+      "view_usage_all_center",
+    ]);
+    const filter = { _id: id, usageType: "Damage" };
+
+    if (
+      permissions.view_usage_own_center &&
+      !permissions.view_usage_all_center &&
+      userCenter
+    ) {
+      filter.center = userCenter._id || userCenter;
     }
 
     const stockUsage = await StockUsage.findById(id);
@@ -1327,6 +1597,19 @@ export const approveDamageRequest = async (req, res) => {
  */
 export const rejectDamageRequest = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["manage_usage_own_center", "manage_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. manage_usage_own_center or manage_usage_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
     const { rejectionRemark } = req.body;
 
@@ -1337,6 +1620,16 @@ export const rejectDamageRequest = async (req, res) => {
         success: false,
         message: "Invalid stock usage ID",
       });
+    }
+
+    const filter = { _id: id, usageType: "Damage" };
+
+    if (
+      permissions.manage_usage_own_center &&
+      !permissions.manage_usage_all_center &&
+      userCenter
+    ) {
+      filter.center = userCenter._id || userCenter;
     }
 
     const stockUsage = await StockUsage.findById(id);
@@ -1404,6 +1697,19 @@ export const rejectDamageRequest = async (req, res) => {
  */
 export const getPendingDamageRequests = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
+
     const { center, page = 1, limit = 10, startDate, endDate } = req.query;
 
     const filter = {
@@ -1411,7 +1717,15 @@ export const getPendingDamageRequests = async (req, res) => {
       status: "pending",
     };
 
-    if (center) filter.center = center;
+    if (
+      permissions.view_usage_own_center &&
+      !permissions.view_usage_all_center &&
+      userCenter
+    ) {
+      filter.center = userCenter._id || userCenter;
+    } else if (center) {
+      filter.center = center;
+    }
 
     if (startDate || endDate) {
       filter.date = {};
@@ -1626,6 +1940,19 @@ const processDamageRejection = async (
  */
 export const getDamageRequestsByStatus = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
+
     const {
       center,
       status,
@@ -1639,7 +1966,16 @@ export const getDamageRequestsByStatus = async (req, res) => {
       usageType: "Damage",
     };
 
-    if (center) filter.center = center;
+    if (
+      permissions.view_usage_own_center &&
+      !permissions.view_usage_all_center &&
+      userCenter
+    ) {
+      filter.center = userCenter._id || userCenter;
+    } else if (center) {
+      filter.center = center;
+    }
+
     if (status) filter.status = status;
 
     if (startDate || endDate) {
@@ -1860,6 +2196,18 @@ const buildDateFilter = (dateFilter, startDate, endDate) => {
 
 export const getStockUsageByCustomer = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
     const { customerId } = req.params;
     const {
       page = 1,
@@ -1872,9 +2220,8 @@ export const getStockUsageByCustomer = async (req, res) => {
       sortOrder = "desc",
     } = req.query;
 
-    const userCenter = req.user.center?._id || req.user.center;
-
-    if (!userCenter) {
+    const userCenterId = userCenter?._id || userCenter;
+    if (!userCenterId) {
       return res.status(400).json({
         success: false,
         message: "User must be associated with a center",
@@ -1896,7 +2243,7 @@ export const getStockUsageByCustomer = async (req, res) => {
     const query = {
       usageType: "Customer",
       customer: customerId,
-      center: userCenter,
+      center: userCenterId,
     };
 
     if (startDate || endDate) {
@@ -1983,6 +2330,19 @@ export const getStockUsageByCustomer = async (req, res) => {
  */
 export const getStockUsageByBuilding = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
+
     const { buildingId } = req.params;
     const {
       page = 1,
@@ -1996,9 +2356,8 @@ export const getStockUsageByBuilding = async (req, res) => {
       sortOrder = "desc",
     } = req.query;
 
-    const userCenter = req.user.center?._id || req.user.center;
-
-    if (!userCenter) {
+    const userCenterId = userCenter?._id || userCenter;
+    if (!userCenterId) {
       return res.status(400).json({
         success: false,
         message: "User must be associated with a center",
@@ -2018,7 +2377,7 @@ export const getStockUsageByBuilding = async (req, res) => {
     }
 
     const query = {
-      center: userCenter,
+      center: userCenterId,
       $or: [
         { usageType: "Building", fromBuilding: buildingId },
         {
@@ -2129,6 +2488,19 @@ export const getStockUsageByBuilding = async (req, res) => {
  */
 export const getStockUsageByControlRoom = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
+
     const { controlRoomId } = req.params;
     const {
       page = 1,
@@ -2141,9 +2513,8 @@ export const getStockUsageByControlRoom = async (req, res) => {
       sortOrder = "desc",
     } = req.query;
 
-    const userCenter = req.user.center?._id || req.user.center;
-
-    if (!userCenter) {
+    const userCenterId = userCenter?._id || userCenter;
+    if (!userCenterId) {
       return res.status(400).json({
         success: false,
         message: "User must be associated with a center",
@@ -2152,9 +2523,8 @@ export const getStockUsageByControlRoom = async (req, res) => {
 
     const controlRoom = await ControlRoom.findOne({
       _id: controlRoomId,
-      center: userCenter,
+      center: userCenterId,
     });
-
     if (!controlRoom) {
       return res.status(404).json({
         success: false,
@@ -2166,7 +2536,7 @@ export const getStockUsageByControlRoom = async (req, res) => {
     const query = {
       usageType: "Control Room",
       fromControlRoom: controlRoomId,
-      center: userCenter,
+      center: userCenterId,
     };
 
     if (startDate || endDate) {
@@ -2394,6 +2764,19 @@ export const getStockUsageByCenter = async (req, res) => {
 
 export const getProductDevicesByCustomer = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
+
     const { customerId } = req.params;
     const {
       page = 1,
@@ -2406,9 +2789,8 @@ export const getProductDevicesByCustomer = async (req, res) => {
       sortOrder = "desc",
     } = req.query;
 
-    const userCenter = req.user.center?._id || req.user.center;
-
-    if (!userCenter) {
+    const userCenterId = userCenter?._id || userCenter;
+    if (!userCenterId) {
       return res.status(400).json({
         success: false,
         message: "User must be associated with a center",
@@ -2417,7 +2799,7 @@ export const getProductDevicesByCustomer = async (req, res) => {
 
     const customer = await Customer.findOne({
       _id: customerId,
-      center: userCenter,
+      center: userCenterId,
     }).populate("center", "centerName centerCode");
 
     if (!customer) {
@@ -2430,7 +2812,7 @@ export const getProductDevicesByCustomer = async (req, res) => {
     const query = {
       usageType: "Customer",
       customer: customerId,
-      center: userCenter,
+      center: userCenterId,
       status: "completed",
       "items.serialNumbers.0": { $exists: true },
     };
@@ -2544,6 +2926,19 @@ export const getProductDevicesByCustomer = async (req, res) => {
  */
 export const getProductDevicesByBuilding = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
+
     const { buildingId } = req.params;
     const {
       page = 1,
@@ -2556,9 +2951,8 @@ export const getProductDevicesByBuilding = async (req, res) => {
       sortOrder = "desc",
     } = req.query;
 
-    const userCenter = req.user.center?._id || req.user.center;
-
-    if (!userCenter) {
+    const userCenterId = userCenter?._id || userCenter;
+    if (!userCenterId) {
       return res.status(400).json({
         success: false,
         message: "User must be associated with a center",
@@ -2567,7 +2961,7 @@ export const getProductDevicesByBuilding = async (req, res) => {
 
     const building = await Building.findOne({
       _id: buildingId,
-      center: userCenter,
+      center: userCenterId,
     });
 
     if (!building) {
@@ -2578,7 +2972,7 @@ export const getProductDevicesByBuilding = async (req, res) => {
     }
 
     const query = {
-      center: userCenter,
+      center: userCenterId,
       status: "completed",
       "items.serialNumbers.0": { $exists: true },
       $or: [
@@ -2729,6 +3123,19 @@ export const getProductDevicesByBuilding = async (req, res) => {
  */
 export const getProductDevicesByControlRoom = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
+
     const { controlRoomId } = req.params;
     const {
       page = 1,
@@ -2740,9 +3147,8 @@ export const getProductDevicesByControlRoom = async (req, res) => {
       sortOrder = "desc",
     } = req.query;
 
-    const userCenter = req.user.center?._id || req.user.center;
-
-    if (!userCenter) {
+    const userCenterId = userCenter?._id || userCenter;
+    if (!userCenterId) {
       return res.status(400).json({
         success: false,
         message: "User must be associated with a center",
@@ -2751,7 +3157,7 @@ export const getProductDevicesByControlRoom = async (req, res) => {
 
     const controlRoom = await ControlRoom.findOne({
       _id: controlRoomId,
-      center: userCenter,
+      center: userCenterId,
     });
 
     if (!controlRoom) {
@@ -2765,7 +3171,7 @@ export const getProductDevicesByControlRoom = async (req, res) => {
     const query = {
       usageType: "Control Room",
       fromControlRoom: controlRoomId,
-      center: userCenter,
+      center: userCenterId,
       status: "completed",
       "items.serialNumbers.0": { $exists: true },
     };

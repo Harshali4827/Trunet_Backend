@@ -5,11 +5,73 @@ import StockRequest from "../models/StockRequest.js";
 import StockPurchase from "../models/StockPurchase.js";
 import StockUsage from "../models/StockUsage.js";
 import CenterStock from "../models/CenterStock.js";
+import Product from "../models/Product.js";
 import OutletStock from "../models/OutletStock.js";
 import mongoose from "mongoose";
 
+const checkStockTransferPermissions = (req, requiredPermissions = []) => {
+  const userPermissions = req.user.role?.permissions || [];
+  const transferModule = userPermissions.find(
+    (perm) => perm.module === "Transfer"
+  );
+
+  if (!transferModule) {
+    return { hasAccess: false, permissions: {} };
+  }
+
+  const permissions = {
+    manage_stock_transfer_all_center: transferModule.permissions.includes("manage_stock_transfer_all_center"),
+    manage_stock_transfer_own_center: transferModule.permissions.includes("manage_stock_transfer_own_center"),
+    stock_transfer_all_center: transferModule.permissions.includes("stock_transfer_all_center"),
+    stock_transfer_own_center: transferModule.permissions.includes("stock_transfer_own_center"),
+    delete_transfer_all_center: transferModule.permissions.includes("delete_transfer_all_center"),
+    delete_transfer_own_center: transferModule.permissions.includes("delete_transfer_own_center"),
+    approval_transfer_center: transferModule.permissions.includes("approval_transfer_center"),
+    indent_all_center: transferModule.permissions.includes("indent_all_center"),
+    indent_own_center: transferModule.permissions.includes("indent_own_center"),
+  };
+
+  // Check if user has any of the required permissions
+  const hasRequiredPermission = requiredPermissions.some(perm => permissions[perm]);
+  
+  return { 
+    hasAccess: hasRequiredPermission, 
+    permissions,
+    userCenter: req.user.center 
+  };
+};
+
+// Helper function to check center access for specific stock transfer
+const checkTransferCenterAccess = (stockTransfer, userCenter, permissions) => {
+  if (permissions.stock_transfer_all_center || permissions.manage_stock_transfer_all_center) {
+    return true; // User can access all centers
+  }
+  
+  if ((permissions.stock_transfer_own_center || permissions.manage_stock_transfer_own_center) && userCenter) {
+    const userCenterId = userCenter._id || userCenter;
+    const fromCenterId = stockTransfer.fromCenter._id || stockTransfer.fromCenter;
+    const toCenterId = stockTransfer.toCenter._id || stockTransfer.toCenter;
+    
+    // User can access transfers where they are either the source or destination center
+    return userCenterId.toString() === fromCenterId.toString() || 
+           userCenterId.toString() === toCenterId.toString();
+  }
+  
+  return false;
+};
+
 export const createStockTransfer = async (req, res) => {
   try {
+
+     const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
     const {
       fromCenter,
       transferNumber,
@@ -19,6 +81,17 @@ export const createStockTransfer = async (req, res) => {
       status = "Draft",
       productApprovals = [],
     } = req.body;
+
+
+     if (permissions.manage_stock_transfer_own_center && !permissions.manage_stock_transfer_all_center && userCenter) {
+      const userCenterId = userCenter._id || userCenter;
+      if (fromCenter !== userCenterId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You can only create transfers from your own center.",
+        });
+      }
+    }
 
     if (!transferNumber || transferNumber.trim() === "") {
       return res.status(400).json({
@@ -68,6 +141,16 @@ export const createStockTransfer = async (req, res) => {
         success: false,
         message: "Source or destination center not found",
       });
+    }
+
+    if (permissions.manage_stock_transfer_own_center && !permissions.manage_stock_transfer_all_center && userCenter) {
+      const userCenterId = userCenter._id || userCenter;
+      if (toCenterId.toString() !== userCenterId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You can only create transfers to your own center.",
+        });
+      }
     }
 
     if (!products || !Array.isArray(products) || products.length === 0) {
@@ -230,6 +313,17 @@ export const createStockTransfer = async (req, res) => {
 
 export const submitStockTransfer = async (req, res) => {
   try {
+
+     const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
+
     const { id } = req.params;
 
     const stockTransfer = await StockTransfer.findById(id);
@@ -237,6 +331,13 @@ export const submitStockTransfer = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Stock transfer not found",
+      });
+    }
+
+    if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only submit transfers involving your own center.",
       });
     }
 
@@ -274,6 +375,16 @@ export const submitStockTransfer = async (req, res) => {
 
 export const approveStockTransferByAdmin = async (req, res) => {
   try {
+
+     const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
 
     const stockTransfer = await StockTransfer.findById(id);
@@ -283,6 +394,14 @@ export const approveStockTransferByAdmin = async (req, res) => {
         message: "Stock transfer not found",
       });
     }
+
+    if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only approve transfers involving your own center.",
+      });
+    }
+
 
     const userId = req.user?.id;
     if (!userId) {
@@ -324,6 +443,17 @@ export const approveStockTransferByAdmin = async (req, res) => {
 
 export const rejectStockTransferByAdmin = async (req, res) => {
   try {
+
+    const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
+
     const { id } = req.params;
 
     const stockTransfer = await StockTransfer.findById(id);
@@ -333,6 +463,14 @@ export const rejectStockTransferByAdmin = async (req, res) => {
         message: "Stock transfer not found",
       });
     }
+
+    if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only reject transfers involving your own center.",
+      });
+    }
+
 
     const userId = req.user?.id;
     if (!userId) {
@@ -446,6 +584,15 @@ export const getAvailableSerials = async (req, res) => {
 
 export const confirmStockTransfer = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center", "approval_transfer_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center, manage_stock_transfer_all_center, or approval_transfer_center permission required.",
+      });
+    }
+
     const { id } = req.params;
     const { productApprovals } = req.body;
 
@@ -457,6 +604,13 @@ export const confirmStockTransfer = async (req, res) => {
       });
     }
 
+    if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only confirm transfers involving your own center.",
+      });
+    }
+
     const userId = req.user?.id;
     if (!userId) {
       return res.status(400).json({
@@ -465,9 +619,132 @@ export const confirmStockTransfer = async (req, res) => {
       });
     }
 
+    const Product = mongoose.model("Product");
+
+    // Enhanced validation for product approvals
     if (productApprovals && productApprovals.length > 0) {
+      for (const approval of productApprovals) {
+        // Basic validation
+        if (!approval.productId) {
+          return res.status(400).json({
+            success: false,
+            message: "Each approval must have a productId",
+          });
+        }
+
+        if (approval.approvedQuantity === undefined || approval.approvedQuantity === null) {
+          return res.status(400).json({
+            success: false,
+            message: "Each approval must have an approvedQuantity",
+          });
+        }
+
+        if (approval.approvedQuantity < 0) {
+          return res.status(400).json({
+            success: false,
+            message: "Approved quantity cannot be negative",
+          });
+        }
+
+        if (!Number.isInteger(approval.approvedQuantity)) {
+          return res.status(400).json({
+            success: false,
+            message: "Approved quantity must be an integer",
+          });
+        }
+
+        const productItem = stockTransfer.products.find(
+          (p) => p.product.toString() === approval.productId.toString()
+        );
+
+        if (!productItem) {
+          return res.status(400).json({
+            success: false,
+            message: `Product with ID ${approval.productId} not found in this transfer`,
+          });
+        }
+
+        // Validate approved quantity doesn't exceed requested quantity
+        if (approval.approvedQuantity > productItem.quantity) {
+          return res.status(400).json({
+            success: false,
+            message: `Approved quantity (${approval.approvedQuantity}) cannot exceed requested quantity (${productItem.quantity}) for product`,
+          });
+        }
+
+        // Enhanced serial number validation based on product type
+        // FIX: Changed from receipt.productId to approval.productId
+        const productDoc = await Product.findById(approval.productId);
+        // FIX: Use trackSerialNumber (not trackSerialNumbers) and "Yes" (not true)
+        const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
+
+        if (tracksSerialNumbers) {
+          // For serialized products, validate serial numbers
+          if (approval.approvedQuantity > 0) {
+            // Check if serial numbers are provided
+            if (!approval.approvedSerials || !Array.isArray(approval.approvedSerials)) {
+              return res.status(400).json({
+                success: false,
+                message: `Serial numbers are required for product ${productDoc.productTitle} as it tracks serial numbers`,
+              });
+            }
+
+            // Check if serial numbers count matches approved quantity
+            if (approval.approvedSerials.length !== approval.approvedQuantity) {
+              return res.status(400).json({
+                success: false,
+                message: `Number of serial numbers (${approval.approvedSerials.length}) must match approved quantity (${approval.approvedQuantity}) for product ${productDoc.productTitle}`,
+              });
+            }
+
+            // Check for duplicate serial numbers
+            const uniqueSerials = new Set(approval.approvedSerials);
+            if (uniqueSerials.size !== approval.approvedSerials.length) {
+              return res.status(400).json({
+                success: false,
+                message: `Duplicate serial numbers found for product ${productDoc.productTitle}`,
+              });
+            }
+
+            // Check for empty serial numbers
+            const emptySerials = approval.approvedSerials.filter(sn => !sn || sn.trim() === '');
+            if (emptySerials.length > 0) {
+              return res.status(400).json({
+                success: false,
+                message: `Serial numbers cannot be empty for product ${productDoc.productTitle}`,
+              });
+            }
+          } else {
+            // If approved quantity is 0, serial numbers should be empty
+            if (approval.approvedSerials && approval.approvedSerials.length > 0) {
+              return res.status(400).json({
+                success: false,
+                message: `Serial numbers should not be provided when approved quantity is zero for product ${productDoc.productTitle}`,
+              });
+            }
+          }
+        } else {
+          // For non-serialized products, ensure no serial numbers are provided
+          if (approval.approvedSerials && approval.approvedSerials.length > 0) {
+            return res.status(400).json({
+              success: false,
+              message: `Serial numbers should not be provided for product ${productDoc.productTitle} as it does not track serial numbers`,
+            });
+          }
+        }
+
+        // Validate zero quantity requires remark
+        if (approval.approvedQuantity === 0 && (!approval.approvedRemark || approval.approvedRemark.trim() === '')) {
+          return res.status(400).json({
+            success: false,
+            message: `Approval remark is required when approved quantity is zero for product ${productDoc.productTitle}`,
+          });
+        }
+      }
+
+      // Validate serial number availability in source center stock
       const validationResults = await stockTransfer.validateSerialNumbers(
-        productApprovals
+        productApprovals.filter(pa => pa.approvedQuantity > 0)
       );
       const invalidResults = validationResults.filter(
         (result) => !result.valid
@@ -484,74 +761,15 @@ export const confirmStockTransfer = async (req, res) => {
           })),
         });
       }
-
-      for (const approval of productApprovals) {
-        if (!approval.productId) {
-          return res.status(400).json({
-            success: false,
-            message: "Each approval must have a productId",
-          });
-        }
-
-        if (
-          approval.approvedQuantity === undefined ||
-          approval.approvedQuantity === null
-        ) {
-          return res.status(400).json({
-            success: false,
-            message: "Each approval must have an approvedQuantity",
-          });
-        }
-
-        if (approval.approvedQuantity < 0) {
-          return res.status(400).json({
-            success: false,
-            message: "Approved quantity cannot be negative",
-          });
-        }
-
-        const productItem = stockTransfer.products.find(
-          (p) => p.product.toString() === approval.productId.toString()
-        );
-
-        if (!productItem) {
-          return res.status(400).json({
-            success: false,
-            message: `Product with ID ${approval.productId} not found in this transfer`,
-          });
-        }
-
-        if (approval.approvedQuantity > productItem.quantity) {
-          return res.status(400).json({
-            success: false,
-            message: `Approved quantity (${approval.approvedQuantity}) cannot exceed requested quantity (${productItem.quantity}) for product`,
-          });
-        }
-
-        if (approval.approvedSerials && approval.approvedSerials.length > 0) {
-          if (approval.approvedSerials.length !== approval.approvedQuantity) {
-            return res.status(400).json({
-              success: false,
-              message: `Number of serial numbers (${approval.approvedSerials.length}) must match approved quantity (${approval.approvedQuantity}) for product`,
-            });
-          }
-
-          const uniqueSerials = new Set(approval.approvedSerials);
-          if (uniqueSerials.size !== approval.approvedSerials.length) {
-            return res.status(400).json({
-              success: false,
-              message: `Duplicate serial numbers found for product`,
-            });
-          }
-        }
-      }
     }
 
+    // Process the transfer confirmation
     const confirmedTransfer = await stockTransfer.confirmTransfer(
       userId,
       productApprovals
     );
 
+    // Update center stock for serialized products
     if (productApprovals && productApprovals.length > 0) {
       const CenterStock = mongoose.model("CenterStock");
 
@@ -568,16 +786,22 @@ export const confirmStockTransfer = async (req, res) => {
                 (sn) => sn.serialNumber === serialNumber
               );
 
-              if (serial) {
+              if (serial && serial.status === "available") {
                 serial.status = "in_transit";
                 serial.transferHistory.push({
                   fromCenter: stockTransfer.fromCenter,
                   toCenter: stockTransfer.toCenter,
                   transferDate: new Date(),
                   transferType: "outbound_transfer",
+                  status: "in_transit",
                 });
               }
             }
+
+            // Update center stock quantities
+            const inTransitCount = approval.approvedSerials.length;
+            centerStock.availableQuantity -= inTransitCount;
+            centerStock.inTransitQuantity += inTransitCount;
 
             await centerStock.save();
           }
@@ -585,6 +809,7 @@ export const confirmStockTransfer = async (req, res) => {
       }
     }
 
+    // FIX: Update populate field to match Product model
     const populatedTransfer = await StockTransfer.findById(
       confirmedTransfer._id
     )
@@ -592,7 +817,7 @@ export const confirmStockTransfer = async (req, res) => {
       .populate("toCenter", "_id centerName centerCode")
       .populate(
         "products.product",
-        "_id productTitle productCode trackSerialNumbers"
+        "_id productTitle productCode trackSerialNumber" // FIX: trackSerialNumber (not trackSerialNumbers)
       )
       .populate("createdBy", "_id fullName email")
       .populate("centerApproval.approvedBy", "_id fullName email");
@@ -629,6 +854,7 @@ export const confirmStockTransfer = async (req, res) => {
         .filter((pa) => pa.approvedSerials && pa.approvedSerials.length > 0)
         .map((pa) => ({
           productId: pa.productId,
+          productName: pa.productName,
           approvedQuantity: pa.approvedQuantity,
           assignedSerials: pa.approvedSerials.length,
           newStatus: "in_transit",
@@ -643,11 +869,15 @@ export const confirmStockTransfer = async (req, res) => {
       error.message.includes("Serial number validation failed") ||
       error.message.includes("Number of serial numbers") ||
       error.message.includes("Duplicate serial numbers") ||
-      error.message.includes("serial numbers not available")
+      error.message.includes("serial numbers not available") ||
+      error.message.includes("Serial numbers are required") ||
+      error.message.includes("Serial numbers should not be provided") ||
+      error.message.includes("Approved quantity") ||
+      error.message.includes("Approval remark is required")
     ) {
       return res.status(400).json({
         success: false,
-        message: "Serial number validation failed",
+        message: "Validation failed",
         error: error.message,
       });
     }
@@ -678,9 +908,270 @@ export const confirmStockTransfer = async (req, res) => {
     });
   }
 };
+// export const confirmStockTransfer = async (req, res) => {
+//   try {
+
+//     const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center", "approval_transfer_center"]);
+    
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Access denied. manage_stock_transfer_own_center, manage_stock_transfer_all_center, or approval_transfer_center permission required.",
+//       });
+//     }
+
+//     const { id } = req.params;
+//     const { productApprovals } = req.body;
+
+//     const stockTransfer = await StockTransfer.findById(id);
+//     if (!stockTransfer) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Stock transfer not found",
+//       });
+//     }
+
+//     if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Access denied. You can only confirm transfers involving your own center.",
+//       });
+//     }
+
+//     const userId = req.user?.id;
+//     if (!userId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User authentication required",
+//       });
+//     }
+
+//     if (productApprovals && productApprovals.length > 0) {
+//       const validationResults = await stockTransfer.validateSerialNumbers(
+//         productApprovals
+//       );
+//       const invalidResults = validationResults.filter(
+//         (result) => !result.valid
+//       );
+
+//       if (invalidResults.length > 0) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "Serial number validation failed",
+//           validationErrors: invalidResults.map((result) => ({
+//             productId: result.productId,
+//             productName: result.productName,
+//             error: result.error,
+//           })),
+//         });
+//       }
+
+//       for (const approval of productApprovals) {
+//         if (!approval.productId) {
+//           return res.status(400).json({
+//             success: false,
+//             message: "Each approval must have a productId",
+//           });
+//         }
+
+//         if (
+//           approval.approvedQuantity === undefined ||
+//           approval.approvedQuantity === null
+//         ) {
+//           return res.status(400).json({
+//             success: false,
+//             message: "Each approval must have an approvedQuantity",
+//           });
+//         }
+
+//         if (approval.approvedQuantity < 0) {
+//           return res.status(400).json({
+//             success: false,
+//             message: "Approved quantity cannot be negative",
+//           });
+//         }
+
+//         const productItem = stockTransfer.products.find(
+//           (p) => p.product.toString() === approval.productId.toString()
+//         );
+
+//         if (!productItem) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Product with ID ${approval.productId} not found in this transfer`,
+//           });
+//         }
+
+//         if (approval.approvedQuantity > productItem.quantity) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Approved quantity (${approval.approvedQuantity}) cannot exceed requested quantity (${productItem.quantity}) for product`,
+//           });
+//         }
+
+//         if (approval.approvedSerials && approval.approvedSerials.length > 0) {
+//           if (approval.approvedSerials.length !== approval.approvedQuantity) {
+//             return res.status(400).json({
+//               success: false,
+//               message: `Number of serial numbers (${approval.approvedSerials.length}) must match approved quantity (${approval.approvedQuantity}) for product`,
+//             });
+//           }
+
+//           const uniqueSerials = new Set(approval.approvedSerials);
+//           if (uniqueSerials.size !== approval.approvedSerials.length) {
+//             return res.status(400).json({
+//               success: false,
+//               message: `Duplicate serial numbers found for product`,
+//             });
+//           }
+//         }
+//       }
+//     }
+
+//     const confirmedTransfer = await stockTransfer.confirmTransfer(
+//       userId,
+//       productApprovals
+//     );
+
+//     if (productApprovals && productApprovals.length > 0) {
+//       const CenterStock = mongoose.model("CenterStock");
+
+//       for (const approval of productApprovals) {
+//         if (approval.approvedSerials && approval.approvedSerials.length > 0) {
+//           const centerStock = await CenterStock.findOne({
+//             center: stockTransfer.fromCenter,
+//             product: approval.productId,
+//           });
+
+//           if (centerStock) {
+//             for (const serialNumber of approval.approvedSerials) {
+//               const serial = centerStock.serialNumbers.find(
+//                 (sn) => sn.serialNumber === serialNumber
+//               );
+
+//               if (serial) {
+//                 serial.status = "in_transit";
+//                 serial.transferHistory.push({
+//                   fromCenter: stockTransfer.fromCenter,
+//                   toCenter: stockTransfer.toCenter,
+//                   transferDate: new Date(),
+//                   transferType: "outbound_transfer",
+//                 });
+//               }
+//             }
+
+//             await centerStock.save();
+//           }
+//         }
+//       }
+//     }
+
+//     const populatedTransfer = await StockTransfer.findById(
+//       confirmedTransfer._id
+//     )
+//       .populate("fromCenter", "_id centerName centerCode")
+//       .populate("toCenter", "_id centerName centerCode")
+//       .populate(
+//         "products.product",
+//         "_id productTitle productCode trackSerialNumbers"
+//       )
+//       .populate("createdBy", "_id fullName email")
+//       .populate("centerApproval.approvedBy", "_id fullName email");
+
+//     let message = "Stock transfer confirmed successfully";
+//     let hasSerialAssignments = false;
+
+//     if (productApprovals && productApprovals.length > 0) {
+//       const quantityAdjustments = productApprovals.filter(
+//         (pa) => pa.approvedQuantity !== undefined
+//       ).length;
+//       const serialAssignments = productApprovals.filter(
+//         (pa) => pa.approvedSerials && pa.approvedSerials.length > 0
+//       ).length;
+
+//       if (quantityAdjustments > 0) {
+//         message += ` with ${quantityAdjustments} product quantity adjustment(s)`;
+//       }
+
+//       if (serialAssignments > 0) {
+//         hasSerialAssignments = true;
+//         message += ` and ${serialAssignments} serial number assignment(s) marked as in transit`;
+//       }
+//     }
+
+//     const response = {
+//       success: true,
+//       message,
+//       data: populatedTransfer,
+//     };
+
+//     if (hasSerialAssignments && productApprovals) {
+//       response.serialAssignments = productApprovals
+//         .filter((pa) => pa.approvedSerials && pa.approvedSerials.length > 0)
+//         .map((pa) => ({
+//           productId: pa.productId,
+//           approvedQuantity: pa.approvedQuantity,
+//           assignedSerials: pa.approvedSerials.length,
+//           newStatus: "in_transit",
+//         }));
+//     }
+
+//     res.status(200).json(response);
+//   } catch (error) {
+//     console.error("Error confirming stock transfer:", error);
+
+//     if (
+//       error.message.includes("Serial number validation failed") ||
+//       error.message.includes("Number of serial numbers") ||
+//       error.message.includes("Duplicate serial numbers") ||
+//       error.message.includes("serial numbers not available")
+//     ) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Serial number validation failed",
+//         error: error.message,
+//       });
+//     }
+
+//     if (error.name === "CastError") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid product ID or transfer ID",
+//       });
+//     }
+
+//     if (error.name === "ValidationError") {
+//       const errors = Object.values(error.errors).map((err) => err.message);
+//       return res.status(400).json({
+//         success: false,
+//         message: "Validation error",
+//         errors,
+//       });
+//     }
+
+//     res.status(400).json({
+//       success: false,
+//       message: error.message,
+//       error:
+//         process.env.NODE_ENV === "development"
+//           ? error.message
+//           : "Internal server error",
+//     });
+//   }
+// };
 
 export const completeStockTransfer = async (req, res) => {
   try {
+
+    const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
     const { productReceipts } = req.body;
 
@@ -691,6 +1182,14 @@ export const completeStockTransfer = async (req, res) => {
         message: "Stock transfer not found",
       });
     }
+
+    if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only complete transfers involving your own center.",
+      });
+    }
+
 
     const userId = req.user?.id;
     if (!userId) {
@@ -1024,6 +1523,17 @@ export const completeStockTransfer = async (req, res) => {
 
 export const shipStockTransfer = async (req, res) => {
   try {
+
+
+     const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
     const { shippedDate, expectedDeliveryDate, shipmentDetails, carrierInfo } =
       req.body;
@@ -1048,6 +1558,14 @@ export const shipStockTransfer = async (req, res) => {
     console.log(
       `[DEBUG] Found transfer: ${stockTransfer.transferNumber}, Status: ${stockTransfer.status}`
     );
+
+    if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only ship transfers involving your own center.",
+      });
+    }
+
 
     const userId = req.user?.id;
     if (!userId) {
@@ -1184,6 +1702,17 @@ export const shipStockTransfer = async (req, res) => {
 
 export const markStockTransferAsIncomplete = async (req, res) => {
   try {
+
+
+     const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
     const { incompleteRemark, receivedProducts } = req.body;
 
@@ -1192,6 +1721,13 @@ export const markStockTransferAsIncomplete = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Stock transfer not found",
+      });
+    }
+
+    if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only mark transfers involving your own center as incomplete.",
       });
     }
 
@@ -1259,6 +1795,18 @@ export const markStockTransferAsIncomplete = async (req, res) => {
 
 export const completeIncompleteStockTransfer = async (req, res) => {
   try {
+
+
+     const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
+
     const { id } = req.params;
     const { productApprovals, productReceipts } = req.body;
 
@@ -1267,6 +1815,14 @@ export const completeIncompleteStockTransfer = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Stock transfer not found",
+      });
+    }
+
+
+     if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only complete incomplete transfers involving your own center.",
       });
     }
 
@@ -1704,14 +2260,50 @@ export const completeIncompleteStockTransfer = async (req, res) => {
 
 export const rejectStockTransfer = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
-    const { rejectionRemark, rejectionType = "center" } = req.body;
+  
+
+    // Get the logged-in user to determine their role
+    const user = await User.findById(req.user?.id);
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Determine rejection type based on user role
+    let rejectionType;
+    if (user.role === "admin") {
+      rejectionType = "admin";
+    } else if (user.role === "manager" || user.role === "center_manager") {
+      rejectionType = "center";
+    } else {
+      // Default to center rejection for other roles
+      rejectionType = "center";
+    }
 
     const stockTransfer = await StockTransfer.findById(id);
     if (!stockTransfer) {
       return res.status(404).json({
         success: false,
         message: "Stock transfer not found",
+      });
+    }
+
+    if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only reject transfers involving your own center.",
       });
     }
 
@@ -1723,19 +2315,14 @@ export const rejectStockTransfer = async (req, res) => {
       });
     }
 
-    if (rejectionType === "admin" && stockTransfer.status !== "Submitted") {
-      return res.status(400).json({
-        success: false,
-        message: "Only submitted transfers can be rejected by admin",
-      });
-    }
+    // Validate rejection based on user role and transfer status
 
-    if (rejectionType === "center" && stockTransfer.status !== "Confirmed") {
-      return res.status(400).json({
-        success: false,
-        message: "Only admin approved transfers can be rejected by center",
-      });
-    }
+    // if (rejectionType === "center" && stockTransfer.status !== "Confirmed") {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: "Only admin approved transfers can be rejected by center",
+    //   });
+    // }
 
     const CenterStock = mongoose.model("CenterStock");
 
@@ -1784,9 +2371,7 @@ export const rejectStockTransfer = async (req, res) => {
                   toCenter: stockTransfer.toCenter,
                   transferDate: new Date(),
                   transferType: "transfer_rejected",
-                  remark: `Transfer rejected: ${
-                    rejectionRemark || "No reason provided"
-                  }`,
+                  remark: `Transfer rejected by ${rejectionType}: ${"No reason provided"}`,
                 });
               }
             }
@@ -1862,13 +2447,11 @@ export const rejectStockTransfer = async (req, res) => {
     let rejectedTransfer;
     if (rejectionType === "admin") {
       rejectedTransfer = await stockTransfer.rejectByAdmin(
-        userId,
-        rejectionRemark
+        userId
       );
     } else {
       rejectedTransfer = await stockTransfer.rejectByCenter(
-        userId,
-        rejectionRemark
+        userId
       );
     }
 
@@ -1877,14 +2460,14 @@ export const rejectStockTransfer = async (req, res) => {
       .populate("toCenter", "_id centerName centerCode")
       .populate(
         "products.product",
-        "_id productTitle productCode trackSerialNumbers"
+        "_id productTitle productCode trackSerialNumber"
       )
       .populate("createdBy", "_id fullName email")
       .populate("adminApproval.rejectedBy", "_id fullName email")
       .populate("centerApproval.rejectedBy", "_id fullName email")
       .populate("completionInfo.incompleteBy", "_id fullName email");
 
-    let summaryMessage = `Stock transfer ${rejectionType} rejected successfully. `;
+    let summaryMessage = `Stock transfer rejected by ${rejectionType} successfully. `;
 
     if (totalRestoredSerials > 0) {
       summaryMessage += `${totalRestoredSerials} serialized items restored to available status. `;
@@ -1907,6 +2490,8 @@ export const rejectStockTransfer = async (req, res) => {
         nonSerializedUnitsRegained: totalRestoredNonSerialized,
         totalItemsRestored: totalRestoredSerials + totalRestoredNonSerialized,
         rejectionType: rejectionType,
+        rejectedByRole: user.role,
+        rejectedByName: user.fullName,
       },
     });
   } catch (error) {
@@ -1922,8 +2507,256 @@ export const rejectStockTransfer = async (req, res) => {
   }
 };
 
+// export const rejectStockTransfer = async (req, res) => {
+//   try {
+
+
+//     const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+//       });
+//     }
+
+
+
+//     const { id } = req.params;
+//     const {rejectionType = "center" } = req.body;
+
+//     const stockTransfer = await StockTransfer.findById(id);
+//     if (!stockTransfer) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Stock transfer not found",
+//       });
+//     }
+
+//     if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Access denied. You can only reject transfers involving your own center.",
+//       });
+//     }
+
+
+//     const userId = req.user?.id;
+//     if (!userId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User authentication required",
+//       });
+//     }
+
+//     if (rejectionType === "admin" && stockTransfer.status !== "Submitted") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Only submitted transfers can be rejected by admin",
+//       });
+//     }
+
+//     if (rejectionType === "center" && stockTransfer.status !== "Confirmed") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Only admin approved transfers can be rejected by center",
+//       });
+//     }
+
+//     const CenterStock = mongoose.model("CenterStock");
+
+//     let totalRestoredSerials = 0;
+//     let totalRestoredNonSerialized = 0;
+
+//     for (const productItem of stockTransfer.products) {
+//       const product = await mongoose
+//         .model("Product")
+//         .findById(productItem.product);
+//       const requiresSerials = product
+//         ? product.trackSerialNumber === "Yes"
+//         : false;
+//       const approvedQuantity =
+//         productItem.approvedQuantity || productItem.quantity;
+
+//       if (
+//         requiresSerials &&
+//         productItem.approvedSerials &&
+//         productItem.approvedSerials.length > 0
+//       ) {
+//         const centerStock = await CenterStock.findOne({
+//           center: stockTransfer.fromCenter,
+//           product: productItem.product,
+//         });
+
+//         if (centerStock) {
+//           let restoredCount = 0;
+
+//           for (const serialNumber of productItem.approvedSerials) {
+//             const serial = centerStock.serialNumbers.find(
+//               (sn) => sn.serialNumber === serialNumber
+//             );
+
+//             if (serial) {
+//               if (
+//                 serial.status === "in_transit" ||
+//                 serial.status === "transferred"
+//               ) {
+//                 serial.status = "available";
+//                 serial.currentLocation = stockTransfer.fromCenter;
+//                 restoredCount++;
+
+//                 serial.transferHistory.push({
+//                   fromCenter: stockTransfer.fromCenter,
+//                   toCenter: stockTransfer.toCenter,
+//                   transferDate: new Date(),
+//                   transferType: "transfer_rejected",
+//                   remark: `Transfer rejected: ${
+//                   "No reason provided"
+//                   }`,
+//                 });
+//               }
+//             }
+//           }
+
+//           if (restoredCount > 0) {
+//             centerStock.inTransitQuantity = Math.max(
+//               0,
+//               centerStock.inTransitQuantity - restoredCount
+//             );
+//             centerStock.availableQuantity += restoredCount;
+
+//             const transferredSerials = productItem.approvedSerials.filter(
+//               (serialNumber) => {
+//                 const serial = centerStock.serialNumbers.find(
+//                   (sn) => sn.serialNumber === serialNumber
+//                 );
+//                 return (
+//                   serial &&
+//                   serial.status === "available" &&
+//                   serial.currentLocation?.toString() ===
+//                     stockTransfer.fromCenter.toString()
+//                 );
+//               }
+//             ).length;
+
+//             if (transferredSerials > 0) {
+//               centerStock.totalQuantity += transferredSerials;
+//             }
+
+//             await centerStock.save();
+//             totalRestoredSerials += restoredCount;
+
+//             console.log(
+//               `[DEBUG] Restored ${restoredCount} serials to available status for product ${productItem.product}`
+//             );
+//           }
+//         }
+//       } else if (!requiresSerials && approvedQuantity > 0) {
+//         const centerStock = await CenterStock.findOne({
+//           center: stockTransfer.fromCenter,
+//           product: productItem.product,
+//         });
+
+//         if (centerStock) {
+//           const wasDeducted = centerStock.inTransitQuantity >= approvedQuantity;
+
+//           if (wasDeducted) {
+//             centerStock.availableQuantity += approvedQuantity;
+//             centerStock.inTransitQuantity -= approvedQuantity;
+//             totalRestoredNonSerialized += approvedQuantity;
+//           } else {
+//             centerStock.availableQuantity += approvedQuantity;
+//             totalRestoredNonSerialized += approvedQuantity;
+//           }
+
+//           await centerStock.save();
+//           console.log(
+//             `[DEBUG] Restored ${approvedQuantity} non-serialized units for product ${productItem.product}`
+//           );
+//         }
+//       }
+//     }
+
+//     if (stockTransfer.stockStatus.sourceDeducted) {
+//       await stockTransfer.reverseSourceDeduction();
+//     }
+
+//     if (stockTransfer.stockStatus.destinationAdded) {
+//       await stockTransfer.reverseDestinationAddition();
+//     }
+
+//     let rejectedTransfer;
+//     if (rejectionType === "admin") {
+//       rejectedTransfer = await stockTransfer.rejectByAdmin(
+//         userId
+//       );
+//     } else {
+//       rejectedTransfer = await stockTransfer.rejectByCenter(
+//         userId
+//       );
+//     }
+
+//     const populatedTransfer = await StockTransfer.findById(rejectedTransfer._id)
+//       .populate("fromCenter", "_id centerName centerCode")
+//       .populate("toCenter", "_id centerName centerCode")
+//       .populate(
+//         "products.product",
+//         "_id productTitle productCode trackSerialNumbers"
+//       )
+//       .populate("createdBy", "_id fullName email")
+//       .populate("adminApproval.rejectedBy", "_id fullName email")
+//       .populate("centerApproval.rejectedBy", "_id fullName email")
+//       .populate("completionInfo.incompleteBy", "_id fullName email");
+
+//     let summaryMessage = `Stock transfer ${rejectionType} rejected successfully. `;
+
+//     if (totalRestoredSerials > 0) {
+//       summaryMessage += `${totalRestoredSerials} serialized items restored to available status. `;
+//     }
+
+//     if (totalRestoredNonSerialized > 0) {
+//       summaryMessage += `${totalRestoredNonSerialized} non-serialized units regained. `;
+//     }
+
+//     if (totalRestoredSerials === 0 && totalRestoredNonSerialized === 0) {
+//       summaryMessage += "No stock adjustments were needed.";
+//     }
+
+//     res.status(200).json({
+//       success: true,
+//       message: summaryMessage.trim(),
+//       data: populatedTransfer,
+//       restorationSummary: {
+//         serializedItemsRestored: totalRestoredSerials,
+//         nonSerializedUnitsRegained: totalRestoredNonSerialized,
+//         totalItemsRestored: totalRestoredSerials + totalRestoredNonSerialized,
+//         rejectionType: rejectionType,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error rejecting stock transfer:", error);
+//     res.status(400).json({
+//       success: false,
+//       message: error.message,
+//       error:
+//         process.env.NODE_ENV === "development"
+//           ? error.message
+//           : "Internal server error",
+//     });
+//   }
+// };
+
 export const getAllStockTransfers = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["stock_transfer_own_center", "stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. stock_transfer_own_center or stock_transfer_all_center permission required.",
+      });
+    }
+    
     const {
       page = 1,
       limit = 10,
@@ -1940,12 +2773,22 @@ export const getAllStockTransfers = async (req, res) => {
 
     const filter = {};
 
-    const user = await User.findById(req.user.id).populate("center");
-    if (user && user.center) {
+    // Apply center filter based on user permissions
+    if (permissions.stock_transfer_own_center && !permissions.stock_transfer_all_center && userCenter) {
+      const userCenterId = userCenter._id || userCenter;
       filter.$or = [
-        { fromCenter: user.center._id },
-        { toCenter: user.center._id },
+        { fromCenter: userCenterId },
+        { toCenter: userCenterId },
       ];
+    } else {
+      // Users with "all_center" permission can see all transfers
+      // Also apply individual center filters if provided
+      if (fromCenter) {
+        filter.fromCenter = fromCenter;
+      }
+      if (toCenter) {
+        filter.toCenter = toCenter;
+      }
     }
 
     if (status) {
@@ -1956,14 +2799,6 @@ export const getAllStockTransfers = async (req, res) => {
       } else {
         filter.status = status;
       }
-    }
-
-    if (fromCenter) {
-      filter.fromCenter = fromCenter;
-    }
-
-    if (toCenter) {
-      filter.toCenter = toCenter;
     }
 
     if (startDate || endDate) {
@@ -1983,11 +2818,29 @@ export const getAllStockTransfers = async (req, res) => {
     }
 
     if (search) {
-      filter.$or = [
-        { transferNumber: { $regex: search, $options: "i" } },
-        { remark: { $regex: search, $options: "i" } },
-        { "products.productRemark": { $regex: search, $options: "i" } },
-      ];
+      // If there's already an $or condition for center filtering, we need to handle it carefully
+      if (filter.$or && Array.isArray(filter.$or)) {
+        // Add search conditions to the existing $or array
+        const searchConditions = [
+          { transferNumber: { $regex: search, $options: "i" } },
+          { remark: { $regex: search, $options: "i" } },
+          { "products.productRemark": { $regex: search, $options: "i" } },
+        ];
+        
+        // Create a new $and condition to combine center restrictions with search
+        filter.$and = [
+          { $or: filter.$or }, // Existing center restrictions
+          { $or: searchConditions } // Search conditions
+        ];
+        delete filter.$or; // Remove the original $or since it's now in $and
+      } else {
+        // No existing $or condition, just add search normally
+        filter.$or = [
+          { transferNumber: { $regex: search, $options: "i" } },
+          { remark: { $regex: search, $options: "i" } },
+          { "products.productRemark": { $regex: search, $options: "i" } },
+        ];
+      }
     }
 
     const sortOptions = {};
@@ -2015,7 +2868,6 @@ export const getAllStockTransfers = async (req, res) => {
       .populate("adminApproval.approvedBy", "_id fullName email")
       .populate("adminApproval.rejectedBy", "_id fullName email")
       .populate("centerApproval.approvedBy", "_id fullName email")
-      .populate("adminApproval.rejectedBy", "_id fullName email")
       .populate("centerApproval.rejectedBy", "_id fullName email")
       .populate("shippingInfo.shippedBy", "_id fullName email")
       .populate("receivingInfo.receivedBy", "_id fullName email")
@@ -2070,6 +2922,16 @@ export const getAllStockTransfers = async (req, res) => {
 
 export const getStockTransferById = async (req, res) => {
   try {
+
+      const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["stock_transfer_own_center", "stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. stock_transfer_own_center or stock_transfer_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
 
     const stockTransfer = await StockTransfer.findById(id)
@@ -2097,6 +2959,14 @@ export const getStockTransferById = async (req, res) => {
       });
     }
 
+    if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only view transfers involving your own center.",
+      });
+    }
+
+
     res.status(200).json({
       success: true,
       message: "Stock transfer retrieved successfully",
@@ -2121,6 +2991,17 @@ export const getStockTransferById = async (req, res) => {
 
 export const updateStockTransfer = async (req, res) => {
   try {
+
+     const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
+
     const { id } = req.params;
     const { fromCenter, transferNumber, remark, products, date } = req.body;
 
@@ -2131,6 +3012,15 @@ export const updateStockTransfer = async (req, res) => {
         message: "Stock transfer not found",
       });
     }
+
+    if (!checkTransferCenterAccess(existingTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only update transfers involving your own center.",
+      });
+    }
+
+
 
     if (existingTransfer.status !== "Draft") {
       return res.status(400).json({
@@ -2217,6 +3107,16 @@ export const updateStockTransfer = async (req, res) => {
 
 export const deleteStockTransfer = async (req, res) => {
   try {
+
+     const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["delete_transfer_own_center", "delete_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. delete_transfer_own_center or delete_transfer_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
 
     const stockTransfer = await StockTransfer.findById(id);
@@ -2227,6 +3127,14 @@ export const deleteStockTransfer = async (req, res) => {
         message: "Stock transfer not found",
       });
     }
+
+    if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only delete transfers involving your own center.",
+      });
+    }
+
 
     if (
       stockTransfer.status == "Completed" ||
@@ -2265,12 +3173,29 @@ export const deleteStockTransfer = async (req, res) => {
 
 export const getPendingAdminApprovalTransfers = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["indent_all_center", "indent_own_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. indent_own_center or indent_all_center permission required.",
+      });
+    }
     const {
       page = 1,
       limit = 10,
       sortBy = "createdAt",
       sortOrder = "desc",
     } = req.query;
+
+
+    if (permissions.indent_own_center && !permissions.indent_all_center && userCenter) {
+      const userCenterId = userCenter._id || userCenter;
+      filter.$or = [
+        { fromCenter: userCenterId },
+        { toCenter: userCenterId },
+      ];
+    }
 
     const pendingTransfers = await StockTransfer.findPendingAdminApproval({
       page: parseInt(page),
@@ -2307,11 +3232,26 @@ export const getPendingAdminApprovalTransfers = async (req, res) => {
 
 export const getTransferStats = async (req, res) => {
   try {
+
+    const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["stock_transfer_own_center", "stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. stock_transfer_own_center or stock_transfer_all_center permission required.",
+      });
+    }
+
+
     const user = await User.findById(req.user.id).populate("center");
     let centerId = null;
 
     if (user && user.center) {
       centerId = user.center._id;
+    }
+
+    if (permissions.stock_transfer_own_center && !permissions.stock_transfer_all_center && userCenter) {
+      centerId = userCenter._id || userCenter;
     }
 
     const stats = await StockTransfer.getTransferStats(centerId);
@@ -2333,6 +3273,17 @@ export const getTransferStats = async (req, res) => {
 
 export const updateShippingInfo = async (req, res) => {
   try {
+
+    const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
+
     const { id } = req.params;
     const {
       shippedDate,
@@ -2355,6 +3306,13 @@ export const updateShippingInfo = async (req, res) => {
         success: false,
         message:
           "Shipping info can only be updated for Shipped or Confirmed transfers",
+      });
+    }
+
+    if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only update shipping info for transfers involving your own center.",
       });
     }
 
@@ -2455,8 +3413,18 @@ export const updateShippingInfo = async (req, res) => {
 
 export const rejectShipping = async (req, res) => {
   try {
+
+
+     const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
-    const { rejectionRemark } = req.body;
 
     const stockTransfer = await StockTransfer.findById(id);
     if (!stockTransfer) {
@@ -2470,6 +3438,13 @@ export const rejectShipping = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Only shipped transfers can have shipping rejected",
+      });
+    }
+
+     if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only reject shipping for transfers involving your own center.",
       });
     }
 
@@ -2499,7 +3474,7 @@ export const rejectShipping = async (req, res) => {
       "shippingInfo.documents": [],
       "shippingInfo.shipmentRejected.rejectedAt": new Date(),
       "shippingInfo.shipmentRejected.rejectedBy": userId,
-      "shippingInfo.shipmentRejected.rejectionRemark": rejectionRemark || "",
+      "shippingInfo.shipmentRejected.rejectionRemark":"",
       "shippingInfo.shipmentRejected.previousShippingData":
         previousShippingInfo,
       "stockStatus.sourceDeducted": false,
@@ -2577,6 +3552,26 @@ const revertStockDeduction = async (stockTransfer) => {
 
 export const getMostRecentTransferNumber = async (req, res) => {
   try {
+
+     const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["stock_transfer_own_center", "stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. stock_transfer_own_center or stock_transfer_all_center permission required.",
+      });
+    }
+
+
+    if (permissions.stock_transfer_own_center && !permissions.stock_transfer_all_center && userCenter) {
+      const userCenterId = userCenter._id || userCenter;
+      filter.$or = [
+        { fromCenter: userCenterId },
+        { toCenter: userCenterId },
+      ];
+    }
+
+
     const mostRecentTransfer = await StockTransfer.findOne()
       .sort({ createdAt: -1 })
       .select("transferNumber createdAt")
@@ -2613,6 +3608,16 @@ export const getMostRecentTransferNumber = async (req, res) => {
 
 export const updateApprovedQuantities = async (req, res) => {
   try {
+
+    const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["manage_stock_transfer_own_center", "manage_stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_stock_transfer_own_center or manage_stock_transfer_all_center permission required.",
+      });
+    }
+
     const { id } = req.params;
     const { productApprovals } = req.body;
 
@@ -2627,6 +3632,14 @@ export const updateApprovedQuantities = async (req, res) => {
         message: "Stock transfer not found",
       });
     }
+
+    if (!checkTransferCenterAccess(stockTransfer, userCenter, permissions)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only update approved quantities for transfers involving your own center.",
+      });
+    }
+
 
     const userId = req.user?.id;
     if (!userId) {
@@ -3187,9 +4200,724 @@ async function markSerialsAsInTransit(
 
   return addedCount;
 }
+// export const getWarehouseProductSummary = async (req, res) => {
+//   try {
+
+//      const { hasAccess, permissions, userCenter } = checkStockTransferPermissions(req, ["stock_transfer_own_center", "stock_transfer_all_center"]);
+    
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Access denied. stock_transfer_own_center or stock_transfer_all_center permission required.",
+//       });
+//     }
+
+
+//     const {
+//       warehouseId,
+//       productId,
+//       startDate,
+//       endDate,
+//       includeDetails = false,
+//     } = req.query;
+
+//     const userCenterId = req.user?.center;
+//     if (!userCenterId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User is not associated with any center",
+//       });
+//     }
+
+//     if (warehouseId && permissions.stock_transfer_own_center && !permissions.stock_transfer_all_center && userCenter) {
+//       const userCenterId = userCenter._id || userCenter;
+//       if (warehouseId !== userCenterId.toString()) {
+//         return res.status(403).json({
+//           success: false,
+//           message: "Access denied. You can only view product summaries for your own center.",
+//         });
+//       }
+//     }
+
+
+//      userCenter = await Center.findById(userCenterId).select(
+//       "centerType centerName centerCode"
+//     );
+//     if (!userCenter) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "User center not found",
+//       });
+//     }
+
+//     const isOutlet = userCenter.centerType === "Outlet";
+//     const isCenter = userCenter.centerType === "Center";
+
+//     if (!isOutlet && !isCenter) {
+//       return res.status(400).json({
+//         success: false,
+//         message:
+//           "Invalid user center type. Must be either 'Outlet' or 'Center'",
+//       });
+//     }
+
+//     let targetWarehouseId = warehouseId;
+
+//     if (isCenter) {
+//       targetWarehouseId = userCenterId;
+
+//       const centerWarehouse = await Center.findOne({
+//         _id: targetWarehouseId,
+//         centerType: "Center",
+//       });
+
+//       if (!centerWarehouse) {
+//         return res.status(404).json({
+//           success: false,
+//           message: "Center not found or is not a valid center",
+//         });
+//       }
+//     } else if (isOutlet) {
+//       if (!targetWarehouseId) {
+//         targetWarehouseId = userCenterId;
+//       }
+
+//       const warehouse = await Center.findOne({
+//         _id: targetWarehouseId,
+//         centerType: "Outlet",
+//       });
+
+//       if (!warehouse) {
+//         return res.status(404).json({
+//           success: false,
+//           message: "Warehouse not found or is not an outlet",
+//         });
+//       }
+//     }
+
+//     const targetWarehouse = await Center.findById(targetWarehouseId).select(
+//       "centerName centerCode centerType"
+//     );
+
+//     if (!targetWarehouse) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Target warehouse/center not found",
+//       });
+//     }
+
+//     const dateFilter = {};
+//     if (startDate) dateFilter.$gte = new Date(startDate);
+//     if (endDate) dateFilter.$lte = new Date(endDate);
+
+//     let currentStock = [];
+//     if (isOutlet) {
+//       currentStock = await OutletStock.find({
+//         outlet: targetWarehouseId,
+//       })
+//         .populate("product", "productTitle productCode trackSerialNumber")
+//         .lean();
+//     } else if (isCenter) {
+//       currentStock = await CenterStock.find({
+//         center: targetWarehouseId,
+//       })
+//         .populate("product", "productTitle productCode trackSerialNumber")
+//         .lean();
+//     }
+
+//     const centerStockFromWarehouse = await CenterStock.aggregate([
+//       {
+//         $match: productId
+//           ? {
+//               product: new mongoose.Types.ObjectId(productId),
+//             }
+//           : {},
+//       },
+//       { $unwind: "$serialNumbers" },
+//       {
+//         $match: {
+//           "serialNumbers.originalOutlet": new mongoose.Types.ObjectId(
+//             targetWarehouseId
+//           ),
+
+//           ...(isCenter && {
+//             center: new mongoose.Types.ObjectId(targetWarehouseId),
+//           }),
+//         },
+//       },
+//       {
+//         $lookup: {
+//           from: "products",
+//           localField: "product",
+//           foreignField: "_id",
+//           as: "productDetails",
+//         },
+//       },
+//       {
+//         $lookup: {
+//           from: "centers",
+//           localField: "center",
+//           foreignField: "_id",
+//           as: "centerDetails",
+//         },
+//       },
+//       {
+//         $group: {
+//           _id: "$product",
+//           productName: {
+//             $first: { $arrayElemAt: ["$productDetails.productTitle", 0] },
+//           },
+//           productCode: {
+//             $first: { $arrayElemAt: ["$productDetails.productCode", 0] },
+//           },
+//           totalInCenters: { $sum: 1 },
+//           availableInCenters: {
+//             $sum: {
+//               $cond: [{ $eq: ["$serialNumbers.status", "available"] }, 1, 0],
+//             },
+//           },
+//           damagedInCenters: {
+//             $sum: {
+//               $cond: [{ $eq: ["$serialNumbers.status", "damaged"] }, 1, 0],
+//             },
+//           },
+//           consumedInCenters: {
+//             $sum: {
+//               $cond: [{ $eq: ["$serialNumbers.status", "consumed"] }, 1, 0],
+//             },
+//           },
+//           inTransitInCenters: {
+//             $sum: {
+//               $cond: [{ $eq: ["$serialNumbers.status", "in_transit"] }, 1, 0],
+//             },
+//           },
+//           centerDetails: {
+//             $push: {
+//               centerId: "$center",
+//               centerName: { $arrayElemAt: ["$centerDetails.centerName", 0] },
+//               centerCode: { $arrayElemAt: ["$centerDetails.centerCode", 0] },
+//               status: "$serialNumbers.status",
+//               serialNumber: "$serialNumbers.serialNumber",
+//             },
+//           },
+//         },
+//       },
+//     ]);
+
+//     const purchaseSummary = isOutlet
+//       ? await StockPurchase.aggregate([
+//           {
+//             $match: {
+//               outlet: new mongoose.Types.ObjectId(targetWarehouseId),
+//               ...(Object.keys(dateFilter).length > 0 && { date: dateFilter }),
+//             },
+//           },
+//           { $unwind: "$products" },
+//           {
+//             $match: productId
+//               ? {
+//                   "products.product": new mongoose.Types.ObjectId(productId),
+//                 }
+//               : {},
+//           },
+//           {
+//             $lookup: {
+//               from: "products",
+//               localField: "products.product",
+//               foreignField: "_id",
+//               as: "productDetails",
+//             },
+//           },
+//           {
+//             $group: {
+//               _id: "$products.product",
+//               productName: {
+//                 $first: { $arrayElemAt: ["$productDetails.productTitle", 0] },
+//               },
+//               productCode: {
+//                 $first: { $arrayElemAt: ["$productDetails.productCode", 0] },
+//               },
+//               totalPurchased: { $sum: "$products.purchasedQuantity" },
+//               currentAvailableInWarehouse: {
+//                 $sum: "$products.availableQuantity",
+//               },
+//               purchaseDetails: {
+//                 $push: {
+//                   invoiceNo: "$invoiceNo",
+//                   date: "$date",
+//                   purchasedQty: "$products.purchasedQuantity",
+//                   availableQty: "$products.availableQuantity",
+//                   price: "$products.price",
+//                   status: "$status",
+//                 },
+//               },
+//             },
+//           },
+//         ])
+//       : [];
+
+//     const stockRequestSummary = await StockRequest.aggregate([
+//       {
+//         $match: {
+//           ...(isOutlet
+//             ? { warehouse: new mongoose.Types.ObjectId(targetWarehouseId) }
+//             : { center: new mongoose.Types.ObjectId(targetWarehouseId) }),
+//           status: "Completed",
+//           ...(Object.keys(dateFilter).length > 0 && { date: dateFilter }),
+//         },
+//       },
+//       { $unwind: "$products" },
+//       {
+//         $match: productId
+//           ? {
+//               "products.product": new mongoose.Types.ObjectId(productId),
+//             }
+//           : {},
+//       },
+//       {
+//         $lookup: {
+//           from: "products",
+//           localField: "products.product",
+//           foreignField: "_id",
+//           as: "productDetails",
+//         },
+//       },
+//       {
+//         $lookup: {
+//           from: "centers",
+//           localField: isOutlet ? "center" : "warehouse",
+//           foreignField: "_id",
+//           as: isOutlet ? "centerDetails" : "warehouseDetails",
+//         },
+//       },
+//       {
+//         $group: {
+//           _id: "$products.product",
+//           totalTransferredOut: { $sum: "$products.receivedQuantity" },
+//           transferDetails: {
+//             $push: {
+//               orderNumber: "$orderNumber",
+//               date: "$date",
+//               [isOutlet ? "toCenter" : "fromWarehouse"]: {
+//                 $arrayElemAt: [
+//                   isOutlet
+//                     ? "$centerDetails.centerName"
+//                     : "$warehouseDetails.centerName",
+//                   0,
+//                 ],
+//               },
+//               [isOutlet ? "toCenterCode" : "fromWarehouseCode"]: {
+//                 $arrayElemAt: [
+//                   isOutlet
+//                     ? "$centerDetails.centerCode"
+//                     : "$warehouseDetails.centerCode",
+//                   0,
+//                 ],
+//               },
+//               transferredQty: "$products.receivedQuantity",
+//               serialNumbers: "$products.transferredSerials",
+//             },
+//           },
+//         },
+//       },
+//     ]);
+
+//     const centerUsageSummary = await StockUsage.aggregate([
+//       {
+//         $match: {
+//           status: "completed",
+//           ...(isCenter && {
+//             center: new mongoose.Types.ObjectId(targetWarehouseId),
+//           }),
+//           ...(Object.keys(dateFilter).length > 0 && { date: dateFilter }),
+//         },
+//       },
+//       { $unwind: "$items" },
+//       {
+//         $match: productId
+//           ? {
+//               "items.product": new mongoose.Types.ObjectId(productId),
+//             }
+//           : {},
+//       },
+//       {
+//         $lookup: {
+//           from: "products",
+//           localField: "items.product",
+//           foreignField: "_id",
+//           as: "productDetails",
+//         },
+//       },
+//       {
+//         $lookup: {
+//           from: "centers",
+//           localField: "center",
+//           foreignField: "_id",
+//           as: "centerDetails",
+//         },
+//       },
+//       {
+//         $lookup: {
+//           from: "centers",
+//           localField: "items.serialNumbers.originalOutlet",
+//           foreignField: "_id",
+//           as: "originalOutletDetails",
+//         },
+//       },
+//       {
+//         $match: isOutlet
+//           ? {
+//               "originalOutletDetails._id": new mongoose.Types.ObjectId(
+//                 targetWarehouseId
+//               ),
+//             }
+//           : {
+//               "centerDetails._id": new mongoose.Types.ObjectId(
+//                 targetWarehouseId
+//               ),
+//             },
+//       },
+//       {
+//         $group: {
+//           _id: "$items.product",
+//           productName: {
+//             $first: { $arrayElemAt: ["$productDetails.productTitle", 0] },
+//           },
+//           productCode: {
+//             $first: { $arrayElemAt: ["$productDetails.productCode", 0] },
+//           },
+//           totalUsedInCenters: { $sum: "$items.quantity" },
+//           damageQuantityInCenters: {
+//             $sum: {
+//               $cond: [{ $eq: ["$usageType", "Damage"] }, "$items.quantity", 0],
+//             },
+//           },
+//           customerUsageInCenters: {
+//             $sum: {
+//               $cond: [
+//                 { $eq: ["$usageType", "Customer"] },
+//                 "$items.quantity",
+//                 0,
+//               ],
+//             },
+//           },
+//           otherUsageInCenters: {
+//             $sum: {
+//               $cond: [
+//                 {
+//                   $not: {
+//                     $in: ["$usageType", ["Damage", "Customer"]],
+//                   },
+//                 },
+//                 "$items.quantity",
+//                 0,
+//               ],
+//             },
+//           },
+//           usageDetails: {
+//             $push: {
+//               date: "$date",
+//               usageType: "$usageType",
+//               center: { $arrayElemAt: ["$centerDetails.centerName", 0] },
+//               centerCode: { $arrayElemAt: ["$centerDetails.centerCode", 0] },
+//               quantity: "$items.quantity",
+//               serialNumbers: "$items.serialNumbers",
+//               remark: "$remark",
+//             },
+//           },
+//         },
+//       },
+//     ]);
+
+//     const allProductIds = new Set([
+//       ...currentStock.map((p) => p?.product?._id?.toString()).filter(Boolean),
+//       ...centerStockFromWarehouse
+//         .map((p) => p?._id?.toString())
+//         .filter(Boolean),
+//       ...purchaseSummary.map((p) => p?._id?.toString()).filter(Boolean),
+//       ...stockRequestSummary.map((s) => s?._id?.toString()).filter(Boolean),
+//       ...centerUsageSummary.map((u) => u?._id?.toString()).filter(Boolean),
+//     ]);
+
+//     const productSummary = [];
+
+//     for (const productId of allProductIds) {
+//       if (!productId) continue;
+
+//       const currentStockItem = currentStock.find(
+//         (p) => p?.product?._id?.toString() === productId
+//       );
+
+//       const centerStock = centerStockFromWarehouse.find(
+//         (c) => c?._id?.toString() === productId
+//       );
+
+//       const purchaseData =
+//         purchaseSummary.find((p) => p?._id?.toString() === productId) || {};
+
+//       const requestData =
+//         stockRequestSummary.find((s) => s?._id?.toString() === productId) || {};
+
+//       const usageData =
+//         centerUsageSummary.find((u) => u?._id?.toString() === productId) || {};
+
+//       const currentWarehouseStock = currentStockItem
+//         ? {
+//             total: currentStockItem.totalQuantity || 0,
+//             available: currentStockItem.availableQuantity || 0,
+//             inTransit: currentStockItem.inTransitQuantity || 0,
+//             ...(isCenter && {
+//               consumed: currentStockItem.consumedQuantity || 0,
+//             }),
+//           }
+//         : {
+//             total: 0,
+//             available: 0,
+//             inTransit: 0,
+//             ...(isCenter && { consumed: 0 }),
+//           };
+
+//       const centerStockSummary = centerStock
+//         ? {
+//             total: centerStock.totalInCenters || 0,
+//             available: centerStock.availableInCenters || 0,
+//             damaged: centerStock.damagedInCenters || 0,
+//             consumed: centerStock.consumedInCenters || 0,
+//             inTransit: centerStock.inTransitInCenters || 0,
+//           }
+//         : {
+//             total: 0,
+//             available: 0,
+//             damaged: 0,
+//             consumed: 0,
+//             inTransit: 0,
+//           };
+
+//       const totalPurchased = purchaseData.totalPurchased || 0;
+//       const totalTransferredOut = requestData.totalTransferredOut || 0;
+//       const totalUsageInCenters = usageData.totalUsedInCenters || 0;
+//       const damageInCenters = usageData.damageQuantityInCenters || 0;
+
+//       const totalAccountedFor =
+//         currentWarehouseStock.total + centerStockSummary.total;
+//       const purchaseAccuracy =
+//         totalPurchased > 0 ? (totalAccountedFor / totalPurchased) * 100 : 100;
+
+//       const productName =
+//         purchaseData.productName ||
+//         centerStock?.productName ||
+//         currentStockItem?.product?.productTitle ||
+//         usageData.productName ||
+//         "Unknown Product";
+
+//       const productCode =
+//         purchaseData.productCode ||
+//         centerStock?.productCode ||
+//         currentStockItem?.product?.productCode ||
+//         usageData.productCode ||
+//         "N/A";
+
+//       productSummary.push({
+//         productId: new mongoose.Types.ObjectId(productId),
+//         productName,
+//         productCode,
+
+//         currentStock: {
+//           [isOutlet ? "warehouse" : "center"]: currentWarehouseStock,
+//           distributedCenters: centerStockSummary,
+//         },
+
+//         historical: {
+//           totalPurchased,
+//           totalTransferredToCenters: totalTransferredOut,
+//           totalUsageInCenters,
+//           damageInCenters,
+//         },
+
+//         summary: {
+//           totalStockInSystem:
+//             currentWarehouseStock.total + centerStockSummary.total,
+//           totalAvailable:
+//             currentWarehouseStock.available + centerStockSummary.available,
+//           totalDamaged: centerStockSummary.damaged + damageInCenters,
+//           totalConsumed:
+//             centerStockSummary.consumed + (currentWarehouseStock.consumed || 0),
+//           stockAccuracy: purchaseAccuracy,
+//         },
+
+//         details: includeDetails
+//           ? {
+//               currentStock: currentStockItem
+//                 ? {
+//                     total: currentStockItem.totalQuantity || 0,
+//                     available: currentStockItem.availableQuantity || 0,
+//                     inTransit: currentStockItem.inTransitQuantity || 0,
+//                     ...(isCenter && {
+//                       consumed: currentStockItem.consumedQuantity || 0,
+//                     }),
+//                     serialNumbers: currentStockItem.serialNumbers?.length || 0,
+//                   }
+//                 : null,
+//               centerDistribution: centerStock?.centerDetails || [],
+//               purchases: purchaseData.purchaseDetails || [],
+//               transfers: requestData.transferDetails || [],
+//               usage: usageData.usageDetails || [],
+//             }
+//           : undefined,
+//       });
+//     }
+
+//     if (productId) {
+//       const product = await Product.findById(productId);
+//       if (
+//         product &&
+//         !productSummary.find((p) => p.productId.toString() === productId)
+//       ) {
+//         productSummary.push({
+//           productId: product._id,
+//           productName: product.productTitle,
+//           productCode: product.productCode,
+//           currentStock: {
+//             [isOutlet ? "warehouse" : "center"]: {
+//               total: 0,
+//               available: 0,
+//               inTransit: 0,
+//               ...(isCenter && { consumed: 0 }),
+//             },
+//             distributedCenters: {
+//               total: 0,
+//               available: 0,
+//               damaged: 0,
+//               consumed: 0,
+//               inTransit: 0,
+//             },
+//           },
+//           historical: {
+//             totalPurchased: 0,
+//             totalTransferredToCenters: 0,
+//             totalUsageInCenters: 0,
+//             damageInCenters: 0,
+//           },
+//           summary: {
+//             totalStockInSystem: 0,
+//             totalAvailable: 0,
+//             totalDamaged: 0,
+//             totalConsumed: 0,
+//             stockAccuracy: 0,
+//           },
+//           details: includeDetails
+//             ? {
+//                 currentStock: null,
+//                 centerDistribution: [],
+//                 purchases: [],
+//                 transfers: [],
+//                 usage: [],
+//               }
+//             : undefined,
+//         });
+//       }
+//     }
+
+//     const summaryTotals = {
+//       totalProducts: productSummary.length,
+//       totalStockInSystem: productSummary.reduce(
+//         (sum, p) => sum + (p.summary.totalStockInSystem || 0),
+//         0
+//       ),
+//       totalAvailable: productSummary.reduce(
+//         (sum, p) => sum + (p.summary.totalAvailable || 0),
+//         0
+//       ),
+//       totalDamaged: productSummary.reduce(
+//         (sum, p) => sum + (p.summary.totalDamaged || 0),
+//         0
+//       ),
+//       totalConsumed: productSummary.reduce(
+//         (sum, p) => sum + (p.summary.totalConsumed || 0),
+//         0
+//       ),
+//       totalPurchased: productSummary.reduce(
+//         (sum, p) => sum + (p.historical.totalPurchased || 0),
+//         0
+//       ),
+//       totalTransferred: productSummary.reduce(
+//         (sum, p) => sum + (p.historical.totalTransferredToCenters || 0),
+//         0
+//       ),
+//       averageAccuracy:
+//         productSummary.length > 0
+//           ? productSummary.reduce(
+//               (sum, p) => sum + (p.summary.stockAccuracy || 0),
+//               0
+//             ) / productSummary.length
+//           : 0,
+//     };
+
+//     res.json({
+//       success: true,
+//       message: `Product summary retrieved successfully for ${
+//         isOutlet ? "warehouse" : "center"
+//       }`,
+//       data: {
+//         [isOutlet ? "warehouse" : "center"]: {
+//           _id: targetWarehouse._id,
+//           name: targetWarehouse.centerName,
+//           code: targetWarehouse.centerCode,
+//           type: targetWarehouse.centerType,
+//         },
+//         userCenter: {
+//           _id: userCenter._id,
+//           name: userCenter.centerName,
+//           code: userCenter.centerCode,
+//           type: userCenter.centerType,
+//         },
+//         summary: productSummary,
+//         summaryTotals,
+//         stockStatus: {
+//           inCurrentLocation: summaryTotals.totalAvailable,
+//           inOtherCenters:
+//             summaryTotals.totalStockInSystem - summaryTotals.totalAvailable,
+//           damaged: summaryTotals.totalDamaged,
+//           consumed: summaryTotals.totalConsumed,
+//         },
+//         period: {
+//           startDate: startDate || "All time",
+//           endDate: endDate || "All time",
+//         },
+//         generatedAt: new Date().toISOString(),
+//         dataSources: [
+//           isOutlet
+//             ? "OutletStock (Current Warehouse Stock)"
+//             : "CenterStock (Current Center Stock)",
+//           "CenterStock (Distributed Center Stock)",
+//           isOutlet
+//             ? "StockPurchase (Purchase History)"
+//             : "StockPurchase (Not applicable for centers)",
+//           "StockRequest (Transfer History)",
+//           "StockUsage (Usage History)",
+//         ],
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Get warehouse product summary error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: error.message || "Error retrieving warehouse product summary",
+//     });
+//   }
+// };
 
 export const getWarehouseProductSummary = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter: userCenterFromPermissions } = checkStockTransferPermissions(req, ["stock_transfer_own_center", "stock_transfer_all_center"]);
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. stock_transfer_own_center or stock_transfer_all_center permission required.",
+      });
+    }
+
     const {
       warehouseId,
       productId,
@@ -3198,22 +4926,89 @@ export const getWarehouseProductSummary = async (req, res) => {
       includeDetails = false,
     } = req.query;
 
-    if (!warehouseId) {
+    const userCenterId = req.user?.center;
+    if (!userCenterId) {
       return res.status(400).json({
         success: false,
-        message: "Warehouse ID is required",
+        message: "User is not associated with any center",
       });
     }
 
-    const warehouse = await Center.findOne({
-      _id: warehouseId,
-      centerType: "Outlet",
-    });
+    // Fix: Use userCenterFromPermissions instead of userCenter
+    if (warehouseId && permissions.stock_transfer_own_center && !permissions.stock_transfer_all_center && userCenterFromPermissions) {
+      const userCenterIdFromPermissions = userCenterFromPermissions._id || userCenterFromPermissions;
+      if (warehouseId !== userCenterIdFromPermissions.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You can only view product summaries for your own center.",
+        });
+      }
+    }
 
-    if (!warehouse) {
+    // Fix: Declare userCenter as a new variable using let
+    let userCenter = await Center.findById(userCenterId).select(
+      "centerType centerName centerCode"
+    );
+    if (!userCenter) {
       return res.status(404).json({
         success: false,
-        message: "Warehouse not found or is not an outlet",
+        message: "User center not found",
+      });
+    }
+
+    const isOutlet = userCenter.centerType === "Outlet";
+    const isCenter = userCenter.centerType === "Center";
+
+    if (!isOutlet && !isCenter) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid user center type. Must be either 'Outlet' or 'Center'",
+      });
+    }
+
+    let targetWarehouseId = warehouseId;
+
+    if (isCenter) {
+      targetWarehouseId = userCenterId;
+
+      const centerWarehouse = await Center.findOne({
+        _id: targetWarehouseId,
+        centerType: "Center",
+      });
+
+      if (!centerWarehouse) {
+        return res.status(404).json({
+          success: false,
+          message: "Center not found or is not a valid center",
+        });
+      }
+    } else if (isOutlet) {
+      if (!targetWarehouseId) {
+        targetWarehouseId = userCenterId;
+      }
+
+      const warehouse = await Center.findOne({
+        _id: targetWarehouseId,
+        centerType: "Outlet",
+      });
+
+      if (!warehouse) {
+        return res.status(404).json({
+          success: false,
+          message: "Warehouse not found or is not an outlet",
+        });
+      }
+    }
+
+    const targetWarehouse = await Center.findById(targetWarehouseId).select(
+      "centerName centerCode centerType"
+    );
+
+    if (!targetWarehouse) {
+      return res.status(404).json({
+        success: false,
+        message: "Target warehouse/center not found",
       });
     }
 
@@ -3221,11 +5016,20 @@ export const getWarehouseProductSummary = async (req, res) => {
     if (startDate) dateFilter.$gte = new Date(startDate);
     if (endDate) dateFilter.$lte = new Date(endDate);
 
-    const currentOutletStock = await OutletStock.find({
-      outlet: warehouseId,
-    })
-      .populate("product", "productTitle productCode trackSerialNumber")
-      .lean();
+    let currentStock = [];
+    if (isOutlet) {
+      currentStock = await OutletStock.find({
+        outlet: targetWarehouseId,
+      })
+        .populate("product", "productTitle productCode trackSerialNumber")
+        .lean();
+    } else if (isCenter) {
+      currentStock = await CenterStock.find({
+        center: targetWarehouseId,
+      })
+        .populate("product", "productTitle productCode trackSerialNumber")
+        .lean();
+    }
 
     const centerStockFromWarehouse = await CenterStock.aggregate([
       {
@@ -3239,8 +5043,12 @@ export const getWarehouseProductSummary = async (req, res) => {
       {
         $match: {
           "serialNumbers.originalOutlet": new mongoose.Types.ObjectId(
-            warehouseId
+            targetWarehouseId
           ),
+
+          ...(isCenter && {
+            center: new mongoose.Types.ObjectId(targetWarehouseId),
+          }),
         },
       },
       {
@@ -3268,7 +5076,6 @@ export const getWarehouseProductSummary = async (req, res) => {
           productCode: {
             $first: { $arrayElemAt: ["$productDetails.productCode", 0] },
           },
-
           totalInCenters: { $sum: 1 },
           availableInCenters: {
             $sum: {
@@ -3303,58 +5110,64 @@ export const getWarehouseProductSummary = async (req, res) => {
       },
     ]);
 
-    const purchaseSummary = await StockPurchase.aggregate([
-      {
-        $match: {
-          outlet: new mongoose.Types.ObjectId(warehouseId),
-          ...(Object.keys(dateFilter).length > 0 && { date: dateFilter }),
-        },
-      },
-      { $unwind: "$products" },
-      {
-        $match: productId
-          ? {
-              "products.product": new mongoose.Types.ObjectId(productId),
-            }
-          : {},
-      },
-      {
-        $lookup: {
-          from: "products",
-          localField: "products.product",
-          foreignField: "_id",
-          as: "productDetails",
-        },
-      },
-      {
-        $group: {
-          _id: "$products.product",
-          productName: {
-            $first: { $arrayElemAt: ["$productDetails.productTitle", 0] },
-          },
-          productCode: {
-            $first: { $arrayElemAt: ["$productDetails.productCode", 0] },
-          },
-          totalPurchased: { $sum: "$products.purchasedQuantity" },
-          currentAvailableInWarehouse: { $sum: "$products.availableQuantity" },
-          purchaseDetails: {
-            $push: {
-              invoiceNo: "$invoiceNo",
-              date: "$date",
-              purchasedQty: "$products.purchasedQuantity",
-              availableQty: "$products.availableQuantity",
-              price: "$products.price",
-              status: "$status",
+    const purchaseSummary = isOutlet
+      ? await StockPurchase.aggregate([
+          {
+            $match: {
+              outlet: new mongoose.Types.ObjectId(targetWarehouseId),
+              ...(Object.keys(dateFilter).length > 0 && { date: dateFilter }),
             },
           },
-        },
-      },
-    ]);
+          { $unwind: "$products" },
+          {
+            $match: productId
+              ? {
+                  "products.product": new mongoose.Types.ObjectId(productId),
+                }
+              : {},
+          },
+          {
+            $lookup: {
+              from: "products",
+              localField: "products.product",
+              foreignField: "_id",
+              as: "productDetails",
+            },
+          },
+          {
+            $group: {
+              _id: "$products.product",
+              productName: {
+                $first: { $arrayElemAt: ["$productDetails.productTitle", 0] },
+              },
+              productCode: {
+                $first: { $arrayElemAt: ["$productDetails.productCode", 0] },
+              },
+              totalPurchased: { $sum: "$products.purchasedQuantity" },
+              currentAvailableInWarehouse: {
+                $sum: "$products.availableQuantity",
+              },
+              purchaseDetails: {
+                $push: {
+                  invoiceNo: "$invoiceNo",
+                  date: "$date",
+                  purchasedQty: "$products.purchasedQuantity",
+                  availableQty: "$products.availableQuantity",
+                  price: "$products.price",
+                  status: "$status",
+                },
+              },
+            },
+          },
+        ])
+      : [];
 
     const stockRequestSummary = await StockRequest.aggregate([
       {
         $match: {
-          warehouse: new mongoose.Types.ObjectId(warehouseId),
+          ...(isOutlet
+            ? { warehouse: new mongoose.Types.ObjectId(targetWarehouseId) }
+            : { center: new mongoose.Types.ObjectId(targetWarehouseId) }),
           status: "Completed",
           ...(Object.keys(dateFilter).length > 0 && { date: dateFilter }),
         },
@@ -3378,9 +5191,9 @@ export const getWarehouseProductSummary = async (req, res) => {
       {
         $lookup: {
           from: "centers",
-          localField: "center",
+          localField: isOutlet ? "center" : "warehouse",
           foreignField: "_id",
-          as: "centerDetails",
+          as: isOutlet ? "centerDetails" : "warehouseDetails",
         },
       },
       {
@@ -3391,8 +5204,22 @@ export const getWarehouseProductSummary = async (req, res) => {
             $push: {
               orderNumber: "$orderNumber",
               date: "$date",
-              toCenter: { $arrayElemAt: ["$centerDetails.centerName", 0] },
-              toCenterCode: { $arrayElemAt: ["$centerDetails.centerCode", 0] },
+              [isOutlet ? "toCenter" : "fromWarehouse"]: {
+                $arrayElemAt: [
+                  isOutlet
+                    ? "$centerDetails.centerName"
+                    : "$warehouseDetails.centerName",
+                  0,
+                ],
+              },
+              [isOutlet ? "toCenterCode" : "fromWarehouseCode"]: {
+                $arrayElemAt: [
+                  isOutlet
+                    ? "$centerDetails.centerCode"
+                    : "$warehouseDetails.centerCode",
+                  0,
+                ],
+              },
               transferredQty: "$products.receivedQuantity",
               serialNumbers: "$products.transferredSerials",
             },
@@ -3405,6 +5232,9 @@ export const getWarehouseProductSummary = async (req, res) => {
       {
         $match: {
           status: "completed",
+          ...(isCenter && {
+            center: new mongoose.Types.ObjectId(targetWarehouseId),
+          }),
           ...(Object.keys(dateFilter).length > 0 && { date: dateFilter }),
         },
       },
@@ -3441,9 +5271,17 @@ export const getWarehouseProductSummary = async (req, res) => {
         },
       },
       {
-        $match: {
-          "originalOutletDetails._id": new mongoose.Types.ObjectId(warehouseId),
-        },
+        $match: isOutlet
+          ? {
+              "originalOutletDetails._id": new mongoose.Types.ObjectId(
+                targetWarehouseId
+              ),
+            }
+          : {
+              "centerDetails._id": new mongoose.Types.ObjectId(
+                targetWarehouseId
+              ),
+            },
       },
       {
         $group: {
@@ -3498,52 +5336,60 @@ export const getWarehouseProductSummary = async (req, res) => {
     ]);
 
     const allProductIds = new Set([
-      ...currentOutletStock.map((p) => p.product._id.toString()),
-      ...centerStockFromWarehouse.map((p) => p._id.toString()),
-      ...purchaseSummary.map((p) => p._id.toString()),
-      ...stockRequestSummary.map((s) => s._id.toString()),
-      ...centerUsageSummary.map((u) => u._id.toString()),
+      ...currentStock.map((p) => p?.product?._id?.toString()).filter(Boolean),
+      ...centerStockFromWarehouse
+        .map((p) => p?._id?.toString())
+        .filter(Boolean),
+      ...purchaseSummary.map((p) => p?._id?.toString()).filter(Boolean),
+      ...stockRequestSummary.map((s) => s?._id?.toString()).filter(Boolean),
+      ...centerUsageSummary.map((u) => u?._id?.toString()).filter(Boolean),
     ]);
 
     const productSummary = [];
 
     for (const productId of allProductIds) {
-      const outletStock = currentOutletStock.find(
-        (p) => p.product._id.toString() === productId
+      if (!productId) continue;
+
+      const currentStockItem = currentStock.find(
+        (p) => p?.product?._id?.toString() === productId
       );
 
       const centerStock = centerStockFromWarehouse.find(
-        (c) => c._id.toString() === productId
+        (c) => c?._id?.toString() === productId
       );
 
       const purchaseData =
-        purchaseSummary.find((p) => p._id.toString() === productId) || {};
+        purchaseSummary.find((p) => p?._id?.toString() === productId) || {};
 
       const requestData =
-        stockRequestSummary.find((s) => s._id.toString() === productId) || {};
+        stockRequestSummary.find((s) => s?._id?.toString() === productId) || {};
 
       const usageData =
-        centerUsageSummary.find((u) => u._id.toString() === productId) || {};
+        centerUsageSummary.find((u) => u?._id?.toString() === productId) || {};
 
-      const currentWarehouseStock = outletStock
+      const currentWarehouseStock = currentStockItem
         ? {
-            total: outletStock.totalQuantity,
-            available: outletStock.availableQuantity,
-            inTransit: outletStock.inTransitQuantity,
+            total: currentStockItem.totalQuantity || 0,
+            available: currentStockItem.availableQuantity || 0,
+            inTransit: currentStockItem.inTransitQuantity || 0,
+            ...(isCenter && {
+              consumed: currentStockItem.consumedQuantity || 0,
+            }),
           }
         : {
             total: 0,
             available: 0,
             inTransit: 0,
+            ...(isCenter && { consumed: 0 }),
           };
 
       const centerStockSummary = centerStock
         ? {
-            total: centerStock.totalInCenters,
-            available: centerStock.availableInCenters,
-            damaged: centerStock.damagedInCenters,
-            consumed: centerStock.consumedInCenters,
-            inTransit: centerStock.inTransitInCenters,
+            total: centerStock.totalInCenters || 0,
+            available: centerStock.availableInCenters || 0,
+            damaged: centerStock.damagedInCenters || 0,
+            consumed: centerStock.consumedInCenters || 0,
+            inTransit: centerStock.inTransitInCenters || 0,
           }
         : {
             total: 0,
@@ -3563,22 +5409,28 @@ export const getWarehouseProductSummary = async (req, res) => {
       const purchaseAccuracy =
         totalPurchased > 0 ? (totalAccountedFor / totalPurchased) * 100 : 100;
 
+      const productName =
+        purchaseData.productName ||
+        centerStock?.productName ||
+        currentStockItem?.product?.productTitle ||
+        usageData.productName ||
+        "Unknown Product";
+
+      const productCode =
+        purchaseData.productCode ||
+        centerStock?.productCode ||
+        currentStockItem?.product?.productCode ||
+        usageData.productCode ||
+        "N/A";
+
       productSummary.push({
         productId: new mongoose.Types.ObjectId(productId),
-        productName:
-          purchaseData.productName ||
-          centerStock?.productName ||
-          outletStock?.product?.productTitle ||
-          usageData.productName,
-        productCode:
-          purchaseData.productCode ||
-          centerStock?.productCode ||
-          outletStock?.product?.productCode ||
-          usageData.productCode,
+        productName,
+        productCode,
 
         currentStock: {
-          warehouse: currentWarehouseStock,
-          centers: centerStockSummary,
+          [isOutlet ? "warehouse" : "center"]: currentWarehouseStock,
+          distributedCenters: centerStockSummary,
         },
 
         historical: {
@@ -3594,18 +5446,22 @@ export const getWarehouseProductSummary = async (req, res) => {
           totalAvailable:
             currentWarehouseStock.available + centerStockSummary.available,
           totalDamaged: centerStockSummary.damaged + damageInCenters,
-          totalConsumed: centerStockSummary.consumed,
+          totalConsumed:
+            centerStockSummary.consumed + (currentWarehouseStock.consumed || 0),
           stockAccuracy: purchaseAccuracy,
         },
 
         details: includeDetails
           ? {
-              warehouseStock: outletStock
+              currentStock: currentStockItem
                 ? {
-                    total: outletStock.totalQuantity,
-                    available: outletStock.availableQuantity,
-                    inTransit: outletStock.inTransitQuantity,
-                    serialNumbers: outletStock.serialNumbers?.length || 0,
+                    total: currentStockItem.totalQuantity || 0,
+                    available: currentStockItem.availableQuantity || 0,
+                    inTransit: currentStockItem.inTransitQuantity || 0,
+                    ...(isCenter && {
+                      consumed: currentStockItem.consumedQuantity || 0,
+                    }),
+                    serialNumbers: currentStockItem.serialNumbers?.length || 0,
                   }
                 : null,
               centerDistribution: centerStock?.centerDetails || [],
@@ -3628,8 +5484,13 @@ export const getWarehouseProductSummary = async (req, res) => {
           productName: product.productTitle,
           productCode: product.productCode,
           currentStock: {
-            warehouse: { total: 0, available: 0, inTransit: 0 },
-            centers: {
+            [isOutlet ? "warehouse" : "center"]: {
+              total: 0,
+              available: 0,
+              inTransit: 0,
+              ...(isCenter && { consumed: 0 }),
+            },
+            distributedCenters: {
               total: 0,
               available: 0,
               damaged: 0,
@@ -3652,7 +5513,7 @@ export const getWarehouseProductSummary = async (req, res) => {
           },
           details: includeDetails
             ? {
-                warehouseStock: null,
+                currentStock: null,
                 centerDistribution: [],
                 purchases: [],
                 transfers: [],
@@ -3666,33 +5527,33 @@ export const getWarehouseProductSummary = async (req, res) => {
     const summaryTotals = {
       totalProducts: productSummary.length,
       totalStockInSystem: productSummary.reduce(
-        (sum, p) => sum + p.summary.totalStockInSystem,
+        (sum, p) => sum + (p.summary.totalStockInSystem || 0),
         0
       ),
       totalAvailable: productSummary.reduce(
-        (sum, p) => sum + p.summary.totalAvailable,
+        (sum, p) => sum + (p.summary.totalAvailable || 0),
         0
       ),
       totalDamaged: productSummary.reduce(
-        (sum, p) => sum + p.summary.totalDamaged,
+        (sum, p) => sum + (p.summary.totalDamaged || 0),
         0
       ),
       totalConsumed: productSummary.reduce(
-        (sum, p) => sum + p.summary.totalConsumed,
+        (sum, p) => sum + (p.summary.totalConsumed || 0),
         0
       ),
       totalPurchased: productSummary.reduce(
-        (sum, p) => sum + p.historical.totalPurchased,
+        (sum, p) => sum + (p.historical.totalPurchased || 0),
         0
       ),
       totalTransferred: productSummary.reduce(
-        (sum, p) => sum + p.historical.totalTransferredToCenters,
+        (sum, p) => sum + (p.historical.totalTransferredToCenters || 0),
         0
       ),
       averageAccuracy:
         productSummary.length > 0
           ? productSummary.reduce(
-              (sum, p) => sum + p.summary.stockAccuracy,
+              (sum, p) => sum + (p.summary.stockAccuracy || 0),
               0
             ) / productSummary.length
           : 0,
@@ -3700,19 +5561,27 @@ export const getWarehouseProductSummary = async (req, res) => {
 
     res.json({
       success: true,
-      message: "Accurate warehouse product summary retrieved successfully",
+      message: `Product summary retrieved successfully for ${
+        isOutlet ? "warehouse" : "center"
+      }`,
       data: {
-        warehouse: {
-          _id: warehouse._id,
-          name: warehouse.centerName,
-          code: warehouse.centerCode,
-          type: warehouse.centerType,
+        [isOutlet ? "warehouse" : "center"]: {
+          _id: targetWarehouse._id,
+          name: targetWarehouse.centerName,
+          code: targetWarehouse.centerCode,
+          type: targetWarehouse.centerType,
+        },
+        userCenter: {
+          _id: userCenter._id,
+          name: userCenter.centerName,
+          code: userCenter.centerCode,
+          type: userCenter.centerType,
         },
         summary: productSummary,
         summaryTotals,
         stockStatus: {
-          inWarehouse: summaryTotals.totalAvailable,
-          inCenters:
+          inCurrentLocation: summaryTotals.totalAvailable,
+          inOtherCenters:
             summaryTotals.totalStockInSystem - summaryTotals.totalAvailable,
           damaged: summaryTotals.totalDamaged,
           consumed: summaryTotals.totalConsumed,
@@ -3723,20 +5592,23 @@ export const getWarehouseProductSummary = async (req, res) => {
         },
         generatedAt: new Date().toISOString(),
         dataSources: [
-          "OutletStock (Current Warehouse Stock)",
-          "CenterStock (Current Center Stock)",
-          "StockPurchase (Purchase History)",
+          isOutlet
+            ? "OutletStock (Current Warehouse Stock)"
+            : "CenterStock (Current Center Stock)",
+          "CenterStock (Distributed Center Stock)",
+          isOutlet
+            ? "StockPurchase (Purchase History)"
+            : "StockPurchase (Not applicable for centers)",
           "StockRequest (Transfer History)",
           "StockUsage (Usage History)",
         ],
       },
     });
   } catch (error) {
-    console.error("Get accurate warehouse product summary error:", error);
+    console.error("Get warehouse product summary error:", error);
     res.status(500).json({
       success: false,
-      message:
-        error.message || "Error retrieving accurate warehouse product summary",
+      message: error.message || "Error retrieving warehouse product summary",
     });
   }
 };

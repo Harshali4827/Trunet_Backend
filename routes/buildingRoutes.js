@@ -11,14 +11,64 @@ import {
   updateBuildingValidator,
   buildingIdValidator,
 } from "../validations/buildingValidator.js";
-import { protect } from "../middlewares/authMiddleware.js";
+import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
+const MODULE = "Settings";
 
-router.post("/", protect, createBuildingValidator, createBuilding);
-router.get("/", protect, getBuildings);
-router.get("/:id", protect, buildingIdValidator, getBuildingById);
-router.put("/:id", protect, updateBuildingValidator, updateBuilding);
-router.delete("/:id", protect, buildingIdValidator, deleteBuilding);
+router.post(
+  "/",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "manage_building_all_center",
+    "manage_building_own_center"
+  ),
+  createBuildingValidator,
+  createBuilding
+);
+router.get(
+  "/",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "view_building_own_center",
+    "view_building_all_center"
+  ),
+  getBuildings
+);
+router.get(
+  "/:id",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "view_building_own_center",
+    "view_building_all_center"
+  ),
+  buildingIdValidator,
+  getBuildingById
+);
+router.put(
+  "/:id",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "manage_building_all_center",
+    "manage_building_own_center"
+  ),
+  updateBuildingValidator,
+  updateBuilding
+);
+router.delete(
+  "/:id",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "manage_building_all_center",
+    "manage_building_own_center"
+  ),
+  buildingIdValidator,
+  deleteBuilding
+);
 
 export default router;

@@ -1170,7 +1170,7 @@ stockTransferSchema.methods.rejectByCenter = async function (
   rejectedBy,
   rejectionRemark = ""
 ) {
-  if (this.status !== "Confirmed") {
+  if (this.status !== "Confirmed" && this.status !== "Shipped") {
     throw new Error("Only admin approved transfers can be rejected by center");
   }
 
@@ -1231,7 +1231,7 @@ stockTransferSchema.pre("save", async function (next) {
         Admin_Approved: ["Confirmed", "Rejected"],
         Admin_Rejected: [],
         Confirmed: ["Shipped", "Incompleted", "Rejected"],
-        Shipped: ["Completed", "Incompleted", "Confirmed"],
+        Shipped: ["Completed", "Incompleted", "Confirmed", "Rejected"],
         Incompleted: ["Confirmed", "Shipped", "Completed"],
         Completed: [],
         Rejected: [],

@@ -24,36 +24,106 @@ import {
   validateGetAllStockUsage,
   validateIdParam,
 } from "../validations/stockUsageValidations.js";
-import { protect } from "../middlewares/authMiddleware.js";
+import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
-router.post("/", protect, createStockUsage);
-router.get("/", protect, getAllStockUsage);
-router.get("/:id", protect, getStockUsageById);
-router.put("/:id", protect, updateStockUsage);
-router.delete("/:id", protect, deleteStockUsage);
-router.patch("/:id/cancel", protect, cancelStockUsage);
-router.patch("/:id/approve", protect, approveDamageRequest);
-router.patch("/:id/reject", protect, rejectDamageRequest);
-router.get("/pending", protect, getPendingDamageRequests);
-router.get("/requests", protect, getDamageRequestsByStatus);
-router.get("/customer/:customerId", protect, getStockUsageByCustomer);
-router.get("/building/:buildingId", protect, getStockUsageByBuilding);
-router.get("/control-room/:controlRoomId", protect, getStockUsageByControlRoom);
+const MODULE = "Usage";
+
+router.post(
+  "/",
+  protect,
+  authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
+  createStockUsage
+);
+router.get(
+  "/",
+  protect,
+  authorizeAccess(MODULE, "view_usage_own_center", "view_usage_all_center"),
+  getAllStockUsage
+);
+router.get(
+  "/:id",
+  protect,
+  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  getStockUsageById
+);
+router.put(
+  "/:id",
+  protect,
+  authorizeAccess(MODULE, "allow_edit_usage"),
+  updateStockUsage
+);
+router.delete(
+  "/:id",
+  protect,
+  authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
+  deleteStockUsage
+);
+router.patch(
+  "/:id/cancel",
+  protect,
+  authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
+  cancelStockUsage
+);
+router.patch(
+  "/:id/approve",
+  protect,
+  authorizeAccess(MODULE, "accept_damage_return"),
+  approveDamageRequest
+);
+router.patch(
+  "/:id/reject",
+  protect,
+  authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
+  rejectDamageRequest
+);
+router.get(
+  "/pending",
+  protect,
+  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  getPendingDamageRequests
+);
+router.get(
+  "/requests",
+  protect,
+  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  getDamageRequestsByStatus
+);
+router.get(
+  "/customer/:customerId",
+  protect,
+  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  getStockUsageByCustomer
+);
+router.get(
+  "/building/:buildingId",
+  protect,
+  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  getStockUsageByBuilding
+);
+router.get(
+  "/control-room/:controlRoomId",
+  protect,
+  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  getStockUsageByControlRoom
+);
 router.get(
   "/customer/:customerId/devices",
   protect,
+  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
   getProductDevicesByCustomer
 );
 router.get(
   "/building/:buildingId/devices",
   protect,
+  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
   getProductDevicesByBuilding
 );
 router.get(
   "/control-room/:controlRoomId/devices",
   protect,
+  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
   getProductDevicesByControlRoom
 );
 
