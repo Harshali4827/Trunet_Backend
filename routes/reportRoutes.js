@@ -1,35 +1,83 @@
+
 import express from "express";
 import {
-  getCenterAllStock,
-  getAllAvailableProductsWithStock,
-  getStockUsageByCenter
+  getAllStockPurchasesReports,
+  getAllStockRequestsReports,
+  getMonthlyStockRequestsSummary,
+  getAllStockTransfersReports,
+  getMonthlyStockTransfersSummary,
+  getMonthlyStockUsageSummary,
+  getAllStockUsageReports,
+  getAllStolenStockReports,
+  getProductDetailsBySerialNumber
 } from "../controllers/reportController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
-const MODULE = "Available Stock";
+const MODULE = "Report";
 
 router.get(
-  "/centerstock",
+  "/requests",
   protect,
-  authorizeAccess(MODULE, "available_stock_own_center", "available_stock_all_center"),
-  getCenterAllStock
+  authorizeAccess(MODULE, "view_own_report", "view_all_report"),
+  getAllStockRequestsReports
 );
 
 router.get(
-  "/availablestock",
+  "/purchased",
   protect,
-  authorizeAccess(MODULE, "available_stock_own_center", "available_stock_all_center"),
-  getAllAvailableProductsWithStock
+  authorizeAccess(MODULE, "view_own_report", "view_all_report"),
+  getAllStockPurchasesReports
 );
 
 router.get(
-  "/center/usage",
+  "/requests/summary",
   protect,
-  authorizeAccess(MODULE, "available_stock_own_center", "available_stock_all_center"),
-  getStockUsageByCenter
+  authorizeAccess(MODULE, "view_own_report", "view_all_report"),
+  getMonthlyStockRequestsSummary
 );
 
+router.get(
+  "/transfers",
+  protect,
+  authorizeAccess(MODULE, "view_own_report", "view_all_report"),
+  getAllStockTransfersReports
+);
+
+router.get(
+  "/transfers/summary",
+  protect,
+  authorizeAccess(MODULE, "view_own_report", "view_all_report"),
+  getMonthlyStockTransfersSummary
+);
+
+router.get(
+  "/usages",
+  protect,
+  authorizeAccess(MODULE, "view_own_report", "view_all_report"),
+  getAllStockUsageReports
+);
+
+router.get(
+  "/usages/summary",
+  protect,
+  authorizeAccess(MODULE, "view_own_report", "view_all_report"),
+  getMonthlyStockUsageSummary
+);
+
+router.get(
+  "/stolenstock",
+  protect,
+  authorizeAccess(MODULE, "view_own_report", "view_all_report"),
+  getAllStolenStockReports
+);
+
+router.get(
+  "/serialreport",
+  protect,
+  authorizeAccess(MODULE, "view_own_report", "view_all_report"),
+  getProductDetailsBySerialNumber
+);
 
 
 export default router;

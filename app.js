@@ -25,6 +25,7 @@ import stockTransfer from "./routes/stockTransferRoutes.js";
 import shiftingRequestRoutes from "./routes/shiftingRequestRoutes.js";
 import stockUsage from "./routes/stockUsageRoutes.js";
 import reportSubmission from "./routes/reportSubmissionRoutes.js";
+import availableStock from "./routes/availabelReportRoutes.js";
 import reports from "./routes/reportRoutes.js";
 dotenv.config();
 connectDB();
@@ -64,6 +65,7 @@ app.use("/api/stockpurchase", stockPurchase);
 app.use("/api/stocktransfer", stockTransfer);
 app.use("/api/shiftingRequest", shiftingRequestRoutes);
 app.use("/api/reportsubmission", reportSubmission);
+app.use("/api/availableStock", availableStock);
 app.use("/api/reports", reports);
 app.use(errorHandler);
 
