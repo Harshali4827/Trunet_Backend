@@ -431,23 +431,6 @@ export const validateUpdateStockRequest = [
   handleValidationErrors,
 ];
 
-// export const validateApproveStockRequest = [
-//   ...validateIdParam,
-
-//   body("productApprovals")
-//     .isArray({ min: 1 })
-//     .withMessage("Product approvals are required")
-//     .custom(customValidators.validateProductApprovals)
-//     .withMessage("Product approval validation failed"),
-
-//   body("approvedRemark")
-//     .optional()
-//     .isLength({ max: 500 })
-//     .withMessage("Approved remark must be less than 500 characters"),
-
-//   handleValidationErrors,
-// ];
-
 export const validateApproveStockRequest = [
   ...validateIdParam,
 
@@ -463,15 +446,18 @@ export const validateApproveStockRequest = [
     .isInt({ min: 0 })
     .withMessage("Approved quantity must be a non-negative integer")
     .custom((value, { req, path }) => {
-      // Get the index from the path (e.g., "productApprovals.0.approvedQuantity")
       const match = path.match(/productApprovals\.(\d+)\.approvedQuantity/);
       if (match) {
         const index = parseInt(match[1]);
         const approval = req.body.productApprovals[index];
-        
-        // If approved quantity is 0, require approvedRemark
-        if (value === 0 && (!approval.approvedRemark || approval.approvedRemark.trim() === '')) {
-          throw new Error('Approval remark is required when approved quantity is zero');
+
+        if (
+          value === 0 &&
+          (!approval.approvedRemark || approval.approvedRemark.trim() === "")
+        ) {
+          throw new Error(
+            "Approval remark is required when approved quantity is zero"
+          );
         }
       }
       return true;
@@ -528,7 +514,6 @@ export const validateShipStockRequest = [
 
   handleValidationErrors,
 ];
-
 
 export const validateCompleteStockRequest = [
   ...validateIdParam,
@@ -696,58 +681,6 @@ export const validateMarkAsIncomplete = [
   handleValidationErrors,
 ];
 
-// export const validateCompleteStockRequest = [
-//   ...validateIdParam,
-
-//   body("productReceipts")
-//     .isArray({ min: 1 })
-//     .withMessage("Product receipts are required")
-//     .custom(customValidators.validateProductReceipts)
-//     .withMessage("Product receipt validation failed"),
-
-//   body("receivedRemark")
-//     .optional()
-//     .isLength({ max: 500 })
-//     .withMessage("Received remark must be less than 500 characters"),
-
-//   body("markAsIncomplete")
-//     .optional()
-//     .isBoolean()
-//     .withMessage("markAsIncomplete must be a boolean"),
-
-//   handleValidationErrors,
-// ];
-
-// export const validateCompleteIncompleteRequest = [
-//   ...validateIdParam,
-
-//   body("productApprovals")
-//     .optional()
-//     .isArray({ min: 1 })
-//     .withMessage("Product approvals array must contain at least one item")
-//     .custom(customValidators.validateProductApprovals)
-//     .withMessage("Product approval validation failed"),
-
-//   body("productReceipts")
-//     .optional()
-//     .isArray({ min: 1 })
-//     .withMessage("Product receipts array must contain at least one item")
-//     .custom(customValidators.validateProductReceipts)
-//     .withMessage("Product receipt validation failed"),
-
-//   body("approvedRemark")
-//     .optional()
-//     .isLength({ max: 500 })
-//     .withMessage("Approved remark must be less than 500 characters"),
-
-//   body("receivedRemark")
-//     .optional()
-//     .isLength({ max: 500 })
-//     .withMessage("Received remark must be less than 500 characters"),
-
-//   handleValidationErrors,
-// ];
-
 export const validateUpdateApprovedQuantities = [
   ...validateIdParam,
 
@@ -875,17 +808,6 @@ export const validateRejectShipment = [
 
   handleValidationErrors,
 ];
-
-// export const validateMarkAsIncomplete = [
-//   ...validateIdParam,
-
-//   body("incompleteRemark")
-//     .optional()
-//     .isLength({ max: 500 })
-//     .withMessage("Incomplete remark must be less than 500 characters"),
-
-//   handleValidationErrors,
-// ];
 
 export const validateUpdateShippingInfo = [
   ...validateIdParam,

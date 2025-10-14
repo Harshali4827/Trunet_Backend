@@ -2921,9 +2921,6 @@ export const getProductDevicesByCustomer = async (req, res) => {
   }
 };
 
-/**
- * Get product devices by building - ONLY products with trackSerialNumber = "Yes"
- */
 export const getProductDevicesByBuilding = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(

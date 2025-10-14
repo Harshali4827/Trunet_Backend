@@ -302,14 +302,14 @@ const stockTransferSchema = new mongoose.Schema(
       trim: true,
       default: null,
     },
-    // In your stockTransferSchema, update the centerApproval section:
+
     centerApproval: {
       approvedAt: Date,
       approvedBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
       },
-      // ADD THESE FIELDS FOR CENTER REJECTION:
+
       rejectedAt: Date,
       rejectedBy: {
         type: mongoose.Schema.Types.ObjectId,
@@ -1189,12 +1189,10 @@ stockTransferSchema.methods.rejectByCenter = async function (
   return this.save();
 };
 
-// Update the existing rejectTransfer method to be more generic
 stockTransferSchema.methods.rejectTransfer = async function (
   rejectedBy,
   rejectionRemark = ""
 ) {
-  // This method now handles both admin and center rejections based on current status
   if (this.status === "Submitted") {
     return this.rejectByAdmin(rejectedBy, rejectionRemark);
   } else if (this.status === "Admin_Approved") {

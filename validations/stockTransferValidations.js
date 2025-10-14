@@ -420,36 +420,6 @@ export const validateCompletion = [
   handleValidationErrors,
 ];
 
-// export const validateConfirmation = [
-//   param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
-
-//   body("productApprovals")
-//     .optional()
-//     .isArray()
-//     .withMessage("Product approvals must be an array"),
-
-//   body("productApprovals.*.productId")
-//     .if(body("productApprovals").exists())
-//     .notEmpty()
-//     .withMessage("Product ID is required for each approval")
-//     .custom(isValidObjectId)
-//     .withMessage("Invalid product ID in approval"),
-
-//   body("productApprovals.*.approvedQuantity")
-//     .if(body("productApprovals").exists())
-//     .isInt({ min: 0 })
-//     .withMessage("Approved quantity must be a non-negative integer"),
-
-//   body("productApprovals.*.approvedRemark")
-//     .optional()
-//     .isString()
-//     .withMessage("Approved remark must be a string")
-//     .isLength({ max: 200 })
-//     .withMessage("Approved remark cannot exceed 200 characters"),
-
-//   handleValidationErrors,
-// ];
-
 export const validateConfirmation = [
   param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
 
@@ -489,7 +459,6 @@ export const validateConfirmation = [
     .isLength({ max: 200 })
     .withMessage("Approved remark cannot exceed 200 characters"),
 
-  // Custom validation for serial numbers based on approved quantity
   body("productApprovals").custom(async (productApprovals, { req }) => {
     if (!productApprovals || !Array.isArray(productApprovals)) {
       return true;
@@ -506,7 +475,6 @@ export const validateConfirmation = [
     for (const approval of productApprovals) {
       if (!approval.productId) continue;
 
-      // Find product in transfer
       const productItem = stockTransfer.products.find(
         (p) => p.product.toString() === approval.productId.toString()
       );
@@ -515,43 +483,53 @@ export const validateConfirmation = [
         throw new Error(`Product ${approval.productId} not found in transfer`);
       }
 
-      // Check if product tracks serial numbers
-      // FIX: Use trackSerialNumber (not trackSerialNumbers) and "Yes" (not true)
       const productDoc = await Product.findById(approval.productId);
       const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
 
       if (tracksSerialNumbers) {
-        // For serialized products, validate serial numbers match approved quantity
         if (approval.approvedQuantity > 0) {
-          if (!approval.approvedSerials || !Array.isArray(approval.approvedSerials)) {
-            throw new Error(`Serial numbers are required for product ${productDoc.productTitle} as it tracks serial numbers`);
+          if (
+            !approval.approvedSerials ||
+            !Array.isArray(approval.approvedSerials)
+          ) {
+            throw new Error(
+              `Serial numbers are required for product ${productDoc.productTitle} as it tracks serial numbers`
+            );
           }
 
           if (approval.approvedSerials.length !== approval.approvedQuantity) {
-            throw new Error(`Number of serial numbers (${approval.approvedSerials.length}) must match approved quantity (${approval.approvedQuantity}) for product ${productDoc.productTitle}`);
+            throw new Error(
+              `Number of serial numbers (${approval.approvedSerials.length}) must match approved quantity (${approval.approvedQuantity}) for product ${productDoc.productTitle}`
+            );
           }
 
-          // Check for duplicate serial numbers
           const uniqueSerials = new Set(approval.approvedSerials);
           if (uniqueSerials.size !== approval.approvedSerials.length) {
-            throw new Error(`Duplicate serial numbers found for product ${productDoc.productTitle}`);
+            throw new Error(
+              `Duplicate serial numbers found for product ${productDoc.productTitle}`
+            );
           }
 
-          // Check for empty serial numbers
-          const emptySerials = approval.approvedSerials.filter(sn => !sn || sn.trim() === '');
+          const emptySerials = approval.approvedSerials.filter(
+            (sn) => !sn || sn.trim() === ""
+          );
           if (emptySerials.length > 0) {
-            throw new Error(`Serial numbers cannot be empty for product ${productDoc.productTitle}`);
+            throw new Error(
+              `Serial numbers cannot be empty for product ${productDoc.productTitle}`
+            );
           }
         } else {
-          // If approved quantity is 0, serial numbers should be empty
           if (approval.approvedSerials && approval.approvedSerials.length > 0) {
-            throw new Error(`Serial numbers should not be provided when approved quantity is zero for product ${productDoc.productTitle}`);
+            throw new Error(
+              `Serial numbers should not be provided when approved quantity is zero for product ${productDoc.productTitle}`
+            );
           }
         }
       } else {
-        // For non-serialized products, ensure no serial numbers are provided
         if (approval.approvedSerials && approval.approvedSerials.length > 0) {
-          throw new Error(`Serial numbers should not be provided for product ${productDoc.productTitle} as it does not track serial numbers`);
+          throw new Error(
+            `Serial numbers should not be provided for product ${productDoc.productTitle} as it does not track serial numbers`
+          );
         }
       }
     }
@@ -561,117 +539,6 @@ export const validateConfirmation = [
 
   handleValidationErrors,
 ];
-
-// export const validateConfirmation = [
-//   param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),
-
-//   body("productApprovals")
-//     .optional()
-//     .isArray()
-//     .withMessage("Product approvals must be an array"),
-
-//   body("productApprovals.*.productId")
-//     .if(body("productApprovals").exists())
-//     .notEmpty()
-//     .withMessage("Product ID is required for each approval")
-//     .custom(isValidObjectId)
-//     .withMessage("Invalid product ID in approval"),
-
-//   body("productApprovals.*.approvedQuantity")
-//     .if(body("productApprovals").exists())
-//     .isInt({ min: 0 })
-//     .withMessage("Approved quantity must be a non-negative integer"),
-
-//   body("productApprovals.*.approvedSerials")
-//     .optional()
-//     .isArray()
-//     .withMessage("Approved serials must be an array"),
-
-//   body("productApprovals.*.approvedSerials.*")
-//     .isString()
-//     .trim()
-//     .isLength({ min: 1 })
-//     .withMessage("Serial number cannot be empty")
-//     .optional(),
-
-//   body("productApprovals.*.approvedRemark")
-//     .optional()
-//     .isString()
-//     .withMessage("Approved remark must be a string")
-//     .isLength({ max: 200 })
-//     .withMessage("Approved remark cannot exceed 200 characters"),
-
-//   // Custom validation for serial numbers based on approved quantity
-//   body("productApprovals").custom(async (productApprovals, { req }) => {
-//     if (!productApprovals || !Array.isArray(productApprovals)) {
-//       return true;
-//     }
-
-//     const { id } = req.params;
-//     const stockTransfer = await StockTransfer.findById(id);
-//     if (!stockTransfer) {
-//       throw new Error("Stock transfer not found");
-//     }
-
-//     const Product = mongoose.model("Product");
-
-//     for (const approval of productApprovals) {
-//       if (!approval.productId) continue;
-
-//       // Find product in transfer
-//       const productItem = stockTransfer.products.find(
-//         (p) => p.product.toString() === approval.productId.toString()
-//       );
-
-//       if (!productItem) {
-//         throw new Error(`Product ${approval.productId} not found in transfer`);
-//       }
-
-//       // Check if product tracks serial numbers
-//       const productDoc = await Product.findById(approval.productId);
-//       const tracksSerialNumbers = productDoc?.trackSerialNumbers === true;
-
-//       if (tracksSerialNumbers) {
-//         // For serialized products, validate serial numbers match approved quantity
-//         if (approval.approvedQuantity > 0) {
-//           if (!approval.approvedSerials || !Array.isArray(approval.approvedSerials)) {
-//             throw new Error(`Serial numbers are required for product ${productDoc.productTitle} as it tracks serial numbers`);
-//           }
-
-//           if (approval.approvedSerials.length !== approval.approvedQuantity) {
-//             throw new Error(`Number of serial numbers (${approval.approvedSerials.length}) must match approved quantity (${approval.approvedQuantity}) for product ${productDoc.productTitle}`);
-//           }
-
-//           // Check for duplicate serial numbers
-//           const uniqueSerials = new Set(approval.approvedSerials);
-//           if (uniqueSerials.size !== approval.approvedSerials.length) {
-//             throw new Error(`Duplicate serial numbers found for product ${productDoc.productTitle}`);
-//           }
-
-//           // Check for empty serial numbers
-//           const emptySerials = approval.approvedSerials.filter(sn => !sn || sn.trim() === '');
-//           if (emptySerials.length > 0) {
-//             throw new Error(`Serial numbers cannot be empty for product ${productDoc.productTitle}`);
-//           }
-//         } else {
-//           // If approved quantity is 0, serial numbers should be empty
-//           if (approval.approvedSerials && approval.approvedSerials.length > 0) {
-//             throw new Error(`Serial numbers should not be provided when approved quantity is zero for product ${productDoc.productTitle}`);
-//           }
-//         }
-//       } else {
-//         // For non-serialized products, ensure no serial numbers are provided
-//         if (approval.approvedSerials && approval.approvedSerials.length > 0) {
-//           throw new Error(`Serial numbers should not be provided for product ${productDoc.productTitle} as it does not track serial numbers`);
-//         }
-//       }
-//     }
-
-//     return true;
-//   }),
-
-//   handleValidationErrors,
-// ];
 
 export const validateIncompleteTransfer = [
   param("id").custom(isValidObjectId).withMessage("Invalid stock transfer ID"),

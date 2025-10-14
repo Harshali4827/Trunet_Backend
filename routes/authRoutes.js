@@ -15,11 +15,11 @@ const router = express.Router();
 const MODULE = "Settings";
 
 router.post("/login", login);
-// router.post("/register", authorizeAccess(MODULE, "manage_user"), register);
+
 router.post("/register", register);
 router.get("/me", protect, getMe);
-// router.get("/", protect, authorizeAccess(MODULE, "manage_user"), getAllUsers);
-router.get("/", protect,  getAllUsers);
+
+router.get("/", protect, getAllUsers);
 router.put(
   "/update-password",
   protect,
@@ -27,16 +27,11 @@ router.put(
   updatePassword
 );
 router.post("/logout", protect, logout);
-// router.get(
-//   "/user/:id",
-//   protect,
-//   authorizeAccess(MODULE, "manage_user"),
-//   getUserById
-// );
+
 router.get(
   "/user/:id",
   protect,
-  // authorizeAccess(MODULE, "manage_user"),
+
   getUserById
 );
 router.put(

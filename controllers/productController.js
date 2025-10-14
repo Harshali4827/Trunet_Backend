@@ -3,6 +3,7 @@ import ProductCategory from "../models/ProductCategory.js";
 import { validationResult } from "express-validator";
 import path from "path";
 import fs from "fs";
+import mongoose from "mongoose";
 
 const categoryCache = new Map();
 
@@ -126,11 +127,19 @@ const buildSearchFilters = (queryParams) => {
       { productCode: { $regex: search, $options: "i" } },
       { description: { $regex: search, $options: "i" } },
       { productBarcode: { $regex: search, $options: "i" } },
+      { "productCategory.productCategory": { $regex: search, $options: "i" } },
+      { "productCategory.categoryCode": { $regex: search, $options: "i" } },
     ];
   }
 
-  if (status && ["Enabled", "Disabled"].includes(status)) {
-    filters.status = status;
+  if (status) {
+    if (Array.isArray(status)) {
+      filters.status = { $in: status };
+    } else if (status.includes(",")) {
+      filters.status = { $in: status.split(",").map((s) => s.trim()) };
+    } else if (["Enable", "Disable"].includes(status)) {
+      filters.status = status;
+    }
   }
 
   if (minPrice || maxPrice) {
@@ -152,6 +161,31 @@ const buildSearchFilters = (queryParams) => {
   }
 
   return filters;
+};
+
+const getCategoryId = async (category) => {
+  try {
+    const ProductCategory = mongoose.model("ProductCategory");
+
+    if (!category) return null;
+
+    if (mongoose.Types.ObjectId.isValid(category)) {
+      const categoryById = await ProductCategory.findById(category);
+      if (categoryById) return categoryById._id;
+    }
+
+    const categoryByName = await ProductCategory.findOne({
+      $or: [
+        { productCategory: { $regex: category, $options: "i" } },
+        { categoryCode: { $regex: category, $options: "i" } },
+      ],
+    });
+
+    return categoryByName ? categoryByName._id : null;
+  } catch (error) {
+    console.error("Error getting category ID:", error);
+    return null;
+  }
 };
 
 export const getAllProducts = async (req, res) => {
@@ -182,7 +216,8 @@ export const getAllProducts = async (req, res) => {
     });
 
     if (category) {
-      const categoryId = await getCategoryIdByName(category);
+      const categoryId = await getCategoryId(category);
+
       if (categoryId) {
         filters.productCategory = categoryId;
       } else {
@@ -201,12 +236,24 @@ export const getAllProducts = async (req, res) => {
     }
 
     const skip = (page - 1) * limit;
-    const sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+
+    const validSortFields = [
+      "createdAt",
+      "updatedAt",
+      "productTitle",
+      "productCode",
+      "productPrice",
+      "status",
+    ];
+    const actualSortBy = validSortFields.includes(sortBy)
+      ? sortBy
+      : "createdAt";
+    const sort = { [actualSortBy]: sortOrder === "desc" ? -1 : 1 };
 
     const [totalProducts, products] = await Promise.all([
       Product.countDocuments(filters),
       Product.find(filters)
-        .populate("productCategory", "productCategory")
+        .populate("productCategory", "productCategory categoryCode description")
         .sort(sort)
         .skip(skip)
         .limit(Number(limit))
@@ -222,9 +269,12 @@ export const getAllProducts = async (req, res) => {
         currentPage: Number(page),
         totalPages,
         totalProducts,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
       },
     });
   } catch (error) {
+    console.error("Error fetching products:", error);
     res.status(500).json({
       success: false,
       message: "Error fetching products",

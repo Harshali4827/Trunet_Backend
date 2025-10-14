@@ -5,7 +5,6 @@ import StockRequest from "../models/StockRequest.js";
 import StockTransfer from "../models/StockTransfer.js";
 import StockUsage from "../models/StockUsage.js";
 import CenterStock from "../models/CenterStock.js";
-import Center from "../models/Center.js";
 
 const checkReportPermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
@@ -2456,14 +2455,12 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
       startDate,
       endDate,
       search,
-      sortBy = 'lastUpdated',
-      sortOrder = 'desc',
+      sortBy = "lastUpdated",
+      sortOrder = "desc",
     } = req.query;
 
-    // Build filter for CenterStock
     const filter = {};
 
-    // Apply permission-based filtering
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
@@ -2473,12 +2470,10 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
       filter.center = center;
     }
 
-    // Product filter
     if (product) {
       filter.product = product;
     }
 
-    // Date range filtering
     if (startDate || endDate) {
       filter.lastUpdated = {};
       if (startDate) filter.lastUpdated.$gte = new Date(startDate);
@@ -2489,73 +2484,63 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
       }
     }
 
-    // Search functionality for serial numbers
     if (search) {
-      filter['serialNumbers.serialNumber'] = { $regex: search, $options: 'i' };
+      filter["serialNumbers.serialNumber"] = { $regex: search, $options: "i" };
     }
 
-    // Specific serial number filter
     if (serialNumber) {
-      filter['serialNumbers.serialNumber'] = serialNumber;
+      filter["serialNumbers.serialNumber"] = serialNumber;
     }
 
-    // Status filter for serial numbers
     if (status) {
-      filter['serialNumbers.status'] = status;
+      filter["serialNumbers.status"] = status;
     }
 
-    // Build population options
     const populateOptions = [
       {
-        path: 'center',
-        select: 'centerName centerCode centerType address phone'
+        path: "center",
+        select: "_id centerName centerCode centerType address phone",
       },
       {
-        path: 'product',
-        select: 'productTitle productCode productPrice productImage productCategory trackSerialNumber'
+        path: "product",
+        select:
+          "_id productTitle productCode productPrice productImage productCategory trackSerialNumber",
       },
       {
-        path: 'serialNumbers.purchaseId',
-        select: 'invoiceNo purchaseDate vendor'
+        path: "serialNumbers.purchaseId",
+        select: "_id invoiceNo purchaseDate vendor",
+        populate: {
+          path: "vendor",
+          select: "_id name",
+        },
       },
       {
-        path: 'serialNumbers.originalOutlet',
-        select: 'centerName centerCode centerType'
+        path: "serialNumbers.originalOutlet",
+        select: "_id centerName centerCode centerType",
       },
       {
-        path: 'serialNumbers.currentLocation',
-        select: 'centerName centerCode centerType'
+        path: "serialNumbers.currentLocation",
+        select: "_id centerName centerCode centerType",
       },
       {
-        path: 'serialNumbers.consumedBy',
-        select: 'fullName email'
+        path: "serialNumbers.consumedBy",
+        select: "_id fullName email",
       },
-    //   {
-    //     path: 'serialNumbers.transferHistory.fromCenter',
-    //     select: 'centerName centerCode'
-    //   },
-    //   {
-    //     path: 'serialNumbers.transferHistory.toCenter',
-    //     select: 'centerName centerCode'
-    //   }
     ];
 
-    // Build sort object
     const sort = {};
-    const validSortFields = [
-      'lastUpdated', 'createdAt', 'center', 'product'
-    ];
-    const actualSortBy = validSortFields.includes(sortBy) ? sortBy : 'lastUpdated';
-    sort[actualSortBy] = sortOrder === 'desc' ? -1 : 1;
+    const validSortFields = ["lastUpdated", "createdAt", "center", "product"];
+    const actualSortBy = validSortFields.includes(sortBy)
+      ? sortBy
+      : "lastUpdated";
+    sort[actualSortBy] = sortOrder === "desc" ? -1 : 1;
 
-    // Execute query with pagination
     const options = {
       page: parseInt(page),
       limit: parseInt(limit),
-      sort
+      sort,
     };
 
-    // Find center stocks with serial numbers
     const centerStocks = await CenterStock.find(filter)
       .sort(sort)
       .skip((options.page - 1) * options.limit)
@@ -2563,45 +2548,52 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
       .populate(populateOptions)
       .lean();
 
-    // Process the data to get serial-wise details
     const serialDetails = [];
 
     for (const centerStock of centerStocks) {
       for (const serial of centerStock.serialNumbers) {
-        // Apply additional filters at the serial level
         if (serialNumber && serial.serialNumber !== serialNumber) {
           continue;
         }
         if (status && serial.status !== status) {
           continue;
         }
-        if (search && !serial.serialNumber.toLowerCase().includes(search.toLowerCase())) {
+        if (
+          search &&
+          !serial.serialNumber.toLowerCase().includes(search.toLowerCase())
+        ) {
           continue;
         }
 
-        // Get the latest action from transfer history
-        const latestTransfer = serial.transferHistory && serial.transferHistory.length > 0 
-          ? serial.transferHistory[serial.transferHistory.length - 1]
-          : null;
+        let consumptionDetails = null;
+        if (serial.status === "consumed" || serial.status === "damaged") {
+          consumptionDetails = await getConsumptionDetails(serial.serialNumber);
+        }
 
-        // Determine the action details
-        let actionAt = '';
-        let actionType = '';
-        let actionDate = '';
+        const latestTransfer =
+          serial.transferHistory && serial.transferHistory.length > 0
+            ? serial.transferHistory[serial.transferHistory.length - 1]
+            : null;
+
+        let actionAt = "";
+        let actionType = "";
+        let actionDate = "";
 
         if (latestTransfer) {
-          actionAt = latestTransfer.toCenter ? 
-            `${latestTransfer.fromCenter?.centerName || 'Unknown'} → ${latestTransfer.toCenter?.centerName || 'Unknown'}` : 
-            `${latestTransfer.fromCenter?.centerName || 'Unknown'}`;
-          actionType = latestTransfer.transferType || 'transfer';
+          actionAt = latestTransfer.toCenter
+            ? `${latestTransfer.fromCenter?.centerName || "Unknown"} → ${
+                latestTransfer.toCenter?.centerName || "Unknown"
+              }`
+            : `${latestTransfer.fromCenter?.centerName || "Unknown"}`;
+          actionType = latestTransfer.transferType || "transfer";
           actionDate = latestTransfer.transferDate || centerStock.lastUpdated;
         } else if (serial.consumedDate) {
-          actionAt = 'Consumed';
-          actionType = 'consumption';
+          actionAt = "Consumed";
+          actionType = "consumption";
           actionDate = serial.consumedDate;
-        } else if (serial.status === 'available') {
+        } else if (serial.status === "available") {
           actionAt = centerStock.center.centerName;
-          actionType = 'available';
+          actionType = "available";
           actionDate = centerStock.lastUpdated;
         } else {
           actionAt = centerStock.center.centerName;
@@ -2609,58 +2601,93 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
           actionDate = centerStock.lastUpdated;
         }
 
-        // Create the serial detail object
         const serialDetail = {
+          _id: serial._id,
           Serial: serial.serialNumber,
-          PurchaseCenter: serial.originalOutlet?.centerName || 'Unknown Outlet',
-          Center: centerStock.center.centerName,
-          Product: centerStock.product.productTitle,
+          PurchaseCenter: serial.originalOutlet
+            ? {
+                _id: serial.originalOutlet._id,
+                name: serial.originalOutlet.centerName,
+              }
+            : "Unknown Outlet",
+          Center: centerStock.center
+            ? {
+                _id: centerStock.center._id,
+                name: centerStock.center.centerName,
+              }
+            : null,
+          Product: centerStock.product
+            ? {
+                _id: centerStock.product._id,
+                name: centerStock.product.productTitle,
+                code: centerStock.product.productCode,
+                price: centerStock.product.productPrice,
+              }
+            : null,
           ProductCode: centerStock.product.productCode,
           ProductPrice: centerStock.product.productPrice,
           Status: serial.status,
-          CurrentLocation: serial.currentLocation?.centerName || centerStock.center.centerName,
+          CurrentLocation: serial.currentLocation
+            ? {
+                _id: serial.currentLocation._id,
+                name: serial.currentLocation.centerName,
+              }
+            : centerStock.center
+            ? {
+                _id: centerStock.center._id,
+                name: centerStock.center.centerName,
+              }
+            : null,
           ActionDate: actionDate,
-          PurchaseInfo: serial.purchaseId ? {
-            invoiceNo: serial.purchaseId.invoiceNo,
-            purchaseDate: serial.purchaseId.purchaseDate,
-            vendor: serial.purchaseId.vendor
-          } : null,
-         
-        
+          PurchaseInfo: serial.purchaseId
+            ? {
+                _id: serial.purchaseId._id,
+                invoiceNo: serial.purchaseId.invoiceNo,
+                purchaseDate: serial.purchaseId.purchaseDate,
+                vendor: serial.purchaseId.vendor
+                  ? {
+                      _id: serial.purchaseId.vendor._id,
+                      name: serial.purchaseId.vendor.name,
+                    }
+                  : null,
+              }
+            : null,
+
+          ConsumptionDetails: consumptionDetails,
         };
 
         serialDetails.push(serialDetail);
       }
     }
 
-    // Sort serial details by ActionDate (most recent first)
-    serialDetails.sort((a, b) => new Date(b.ActionDate) - new Date(a.ActionDate));
+    serialDetails.sort(
+      (a, b) => new Date(b.ActionDate) - new Date(a.ActionDate)
+    );
 
-    // Apply pagination to serial details
     const startIndex = (options.page - 1) * options.limit;
     const endIndex = startIndex + options.limit;
     const paginatedSerialDetails = serialDetails.slice(startIndex, endIndex);
 
-    // Get total count for pagination (count of serial numbers, not center stocks)
     const totalCountPipeline = [
       { $match: filter },
-      { $unwind: "$serialNumbers" }
+      { $unwind: "$serialNumbers" },
     ];
 
-    // Add serial-level filters to count pipeline
     if (serialNumber) {
       totalCountPipeline.push({
-        $match: { "serialNumbers.serialNumber": serialNumber }
+        $match: { "serialNumbers.serialNumber": serialNumber },
       });
     }
     if (status) {
       totalCountPipeline.push({
-        $match: { "serialNumbers.status": status }
+        $match: { "serialNumbers.status": status },
       });
     }
     if (search) {
       totalCountPipeline.push({
-        $match: { "serialNumbers.serialNumber": { $regex: search, $options: 'i' } }
+        $match: {
+          "serialNumbers.serialNumber": { $regex: search, $options: "i" },
+        },
       });
     }
 
@@ -2669,25 +2696,23 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
     const totalResult = await CenterStock.aggregate(totalCountPipeline);
     const total = totalResult.length > 0 ? totalResult[0].total : 0;
 
-    // Get statistics
     const statsPipeline = [
       { $match: filter },
       { $unwind: "$serialNumbers" },
       {
         $group: {
           _id: "$serialNumbers.status",
-          count: { $sum: 1 }
-        }
-      }
+          count: { $sum: 1 },
+        },
+      },
     ];
 
     const statsResult = await CenterStock.aggregate(statsPipeline);
     const statusStats = {};
-    statsResult.forEach(item => {
+    statsResult.forEach((item) => {
       statusStats[item._id] = item.count;
     });
 
-    // Response data
     const response = {
       success: true,
       message: "Product details by serial number retrieved successfully",
@@ -2700,14 +2725,165 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
       },
       statistics: {
         totalSerials: total,
-        statusBreakdown: statusStats
-      }
+        statusBreakdown: statusStats,
+      },
     };
 
     res.status(200).json(response);
-
   } catch (error) {
-    console.error('Error fetching product details by serial number:', error);
+    console.error("Error fetching product details by serial number:", error);
     handleControllerError(error, res);
   }
 };
+
+async function getConsumptionDetails(serialNumber) {
+  try {
+    const stockUsage = await StockUsage.findOne({
+      "items.serialNumbers": serialNumber,
+      status: { $in: ["completed", "pending"] },
+    })
+      .populate([
+        {
+          path: "center",
+          select: "_id centerName centerCode centerType",
+        },
+        {
+          path: "customer",
+          select: "_id name customerCode phone",
+        },
+        {
+          path: "fromBuilding",
+          select: "_id buildingName buildingCode",
+        },
+        {
+          path: "toBuilding",
+          select: "_id buildingName buildingCode",
+        },
+        {
+          path: "fromControlRoom",
+          select: "_id controlRoomName controlRoomCode",
+        },
+        {
+          path: "createdBy",
+          select: "_id fullName email",
+        },
+        {
+          path: "approvedBy",
+          select: "_id fullName email",
+        },
+        {
+          path: "rejectedBy",
+          select: "_id fullName email",
+        },
+        {
+          path: "items.product",
+          select: "_id productTitle productCode",
+        },
+      ])
+      .lean();
+
+    if (!stockUsage) {
+      return null;
+    }
+
+    const consumedItem = stockUsage.items.find(
+      (item) => item.serialNumbers && item.serialNumbers.includes(serialNumber)
+    );
+
+    if (!consumedItem) {
+      return null;
+    }
+
+    return {
+      usageType: stockUsage.usageType,
+      usageDate: stockUsage.date,
+      center: stockUsage.center
+        ? {
+            _id: stockUsage.center._id,
+            name: stockUsage.center.centerName,
+            code: stockUsage.center.centerCode,
+            type: stockUsage.center.centerType,
+          }
+        : null,
+      customer: stockUsage.customer
+        ? {
+            _id: stockUsage.customer._id,
+            name: stockUsage.customer.name,
+            code: stockUsage.customer.customerCode,
+            phone: stockUsage.customer.phone,
+          }
+        : null,
+      fromBuilding: stockUsage.fromBuilding
+        ? {
+            _id: stockUsage.fromBuilding._id,
+            name: stockUsage.fromBuilding.buildingName,
+            code: stockUsage.fromBuilding.buildingCode,
+          }
+        : null,
+      toBuilding: stockUsage.toBuilding
+        ? {
+            _id: stockUsage.toBuilding._id,
+            name: stockUsage.toBuilding.buildingName,
+            code: stockUsage.toBuilding.buildingCode,
+          }
+        : null,
+      fromControlRoom: stockUsage.fromControlRoom
+        ? {
+            _id: stockUsage.fromControlRoom._id,
+            name: stockUsage.fromControlRoom.controlRoomName,
+            code: stockUsage.fromControlRoom.controlRoomCode,
+          }
+        : null,
+      connectionType: stockUsage.connectionType,
+      reason: stockUsage.reason,
+      remark: stockUsage.remark,
+      packageAmount: stockUsage.packageAmount,
+      packageDuration: stockUsage.packageDuration,
+      onuCharges: stockUsage.onuCharges,
+      installationCharges: stockUsage.installationCharges,
+      shiftingAmount: stockUsage.shiftingAmount,
+      wireChangeAmount: stockUsage.wireChangeAmount,
+      status: stockUsage.status,
+      createdBy: stockUsage.createdBy
+        ? {
+            _id: stockUsage.createdBy._id,
+            name: stockUsage.createdBy.fullName,
+            email: stockUsage.createdBy.email,
+          }
+        : null,
+      approvedBy: stockUsage.approvedBy
+        ? {
+            _id: stockUsage.approvedBy._id,
+            name: stockUsage.approvedBy.fullName,
+            email: stockUsage.approvedBy.email,
+          }
+        : null,
+      rejectedBy: stockUsage.rejectedBy
+        ? {
+            _id: stockUsage.rejectedBy._id,
+            name: stockUsage.rejectedBy?.fullName,
+            email: stockUsage.rejectedBy?.email,
+          }
+        : null,
+      approvalRemark: stockUsage.approvalRemark,
+      approvalDate: stockUsage.approvalDate,
+      rejectionRemark: stockUsage.rejectionRemark,
+      rejectionDate: stockUsage.rejectionDate,
+      product: consumedItem.product
+        ? {
+            _id: consumedItem.product._id,
+            name: consumedItem.product.productTitle,
+            code: consumedItem.product.productCode,
+          }
+        : null,
+      quantity: consumedItem.quantity,
+      oldStock: consumedItem.oldStock,
+      newStock: consumedItem.newStock,
+      totalStock: consumedItem.totalStock,
+      stockUsageId: stockUsage._id,
+    };
+  } catch (error) {
+    console.error("Error fetching consumption details:", error);
+    return null;
+  }
+}

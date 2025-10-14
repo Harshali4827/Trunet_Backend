@@ -6,7 +6,6 @@ import Center from "../models/Center.js";
 import User from "../models/User.js";
 import mongoose from "mongoose";
 
-
 const checkStockPurchasePermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
   const purchaseModule = userPermissions.find(
@@ -18,23 +17,32 @@ const checkStockPurchasePermissions = (req, requiredPermissions = []) => {
   }
 
   const permissions = {
-    add_purchase_stock: purchaseModule.permissions.includes("add_purchase_stock"),
-    view_own_purchase_stock: purchaseModule.permissions.includes("view_own_purchase_stock"),
-    view_all_purchase_stock: purchaseModule.permissions.includes("view_all_purchase_stock"),
+    add_purchase_stock:
+      purchaseModule.permissions.includes("add_purchase_stock"),
+    view_own_purchase_stock: purchaseModule.permissions.includes(
+      "view_own_purchase_stock"
+    ),
+    view_all_purchase_stock: purchaseModule.permissions.includes(
+      "view_all_purchase_stock"
+    ),
   };
 
-  // Check if user has any of the required permissions
-  const hasRequiredPermission = requiredPermissions.some(perm => permissions[perm]);
-  
-  return { 
-    hasAccess: hasRequiredPermission, 
+  const hasRequiredPermission = requiredPermissions.some(
+    (perm) => permissions[perm]
+  );
+
+  return {
+    hasAccess: hasRequiredPermission,
     permissions,
-    userCenter: req.user.center 
+    userCenter: req.user.center,
   };
 };
 
-// Helper function to check center access for stock purchase operations
-const checkPurchaseCenterAccess = async (userId, targetOutletId, permissions) => {
+const checkPurchaseCenterAccess = async (
+  userId,
+  targetOutletId,
+  permissions
+) => {
   if (!userId) {
     throw new Error("User authentication required");
   }
@@ -52,26 +60,27 @@ const checkPurchaseCenterAccess = async (userId, targetOutletId, permissions) =>
     throw new Error("User is not associated with any center");
   }
 
-  // Users with view_all_purchase_stock can access any outlet
   if (permissions.view_all_purchase_stock) {
     return targetOutletId || user.center._id;
   }
 
-  // Users with view_own_purchase_stock can only access their own center
   if (permissions.view_own_purchase_stock) {
     const userCenterId = user.center._id || user.center;
-    
-    // If target outlet is provided, check if it matches user's center
-    if (targetOutletId && targetOutletId.toString() !== userCenterId.toString()) {
-      throw new Error("Access denied. You can only access your own center's purchase data.");
+
+    if (
+      targetOutletId &&
+      targetOutletId.toString() !== userCenterId.toString()
+    ) {
+      throw new Error(
+        "Access denied. You can only access your own center's purchase data."
+      );
     }
-    
+
     return userCenterId;
   }
 
   throw new Error("Insufficient permissions to access purchase data");
 };
-
 
 const getUserOutletId = async (userId) => {
   if (!userId) {
@@ -123,16 +132,16 @@ const getQuickOutletId = async (userId) => {
 
 export const createStockPurchase = async (req, res) => {
   try {
+    const { hasAccess, permissions } = checkStockPurchasePermissions(req, [
+      "add_purchase_stock",
+    ]);
 
-    const { hasAccess, permissions } = checkStockPurchasePermissions(req, ["add_purchase_stock"]);
-    
     if (!hasAccess) {
       return res.status(403).json({
         success: false,
         message: "Access denied. add_purchase_stock permission required.",
       });
     }
-
 
     const {
       type,
@@ -148,13 +157,16 @@ export const createStockPurchase = async (req, res) => {
       products,
     } = req.body;
 
-     let outletId = outlet;
+    let outletId = outlet;
     if (!outletId) {
       outletId = await getUserOutletId(req.user._id, permissions);
     } else {
-      outletId = await checkPurchaseCenterAccess(req.user._id, outletId, permissions);
+      outletId = await checkPurchaseCenterAccess(
+        req.user._id,
+        outletId,
+        permissions
+      );
     }
-
 
     const processedProducts = products.map((product) => {
       const processedProduct = {
@@ -228,87 +240,293 @@ export const createStockPurchase = async (req, res) => {
   }
 };
 
+const buildStockTransferSortOptions = (
+  sortBy = "createdAt",
+  sortOrder = "desc"
+) => {
+  const validSortFields = [
+    "createdAt",
+    "updatedAt",
+    "date",
+    "transferNumber",
+    "status",
+    "adminApproval.approvedAt",
+    "adminApproval.rejectedAt",
+    "centerApproval.approvedAt",
+    "centerApproval.rejectedAt",
+    "shippingInfo.shippedAt",
+    "receivingInfo.receivedAt",
+  ];
+
+  const actualSortBy = validSortFields.includes(sortBy) ? sortBy : "createdAt";
+  return { [actualSortBy]: sortOrder === "desc" ? -1 : 1 };
+};
+
+const stockTransferPopulateOptions = [
+  { path: "fromCenter", select: "_id centerName centerCode centerType" },
+  { path: "toCenter", select: "_id centerName centerCode centerType" },
+  {
+    path: "products.product",
+    select: "_id productTitle productCode productImage trackSerialNumbers",
+  },
+  { path: "createdBy", select: "_id fullName email" },
+  { path: "updatedBy", select: "_id fullName email" },
+  { path: "adminApproval.approvedBy", select: "_id fullName email" },
+  { path: "adminApproval.rejectedBy", select: "_id fullName email" },
+  { path: "centerApproval.approvedBy", select: "_id fullName email" },
+  { path: "centerApproval.rejectedBy", select: "_id fullName email" },
+  { path: "shippingInfo.shippedBy", select: "_id fullName email" },
+  { path: "receivingInfo.receivedBy", select: "_id fullName email" },
+  { path: "completionInfo.completedBy", select: "_id fullName email" },
+  { path: "completionInfo.incompleteBy", select: "_id fullName email" },
+];
+
+const centerCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000;
+
+const getDateRange = (rangeType, customStartDate, customEndDate) => {
+  const now = new Date();
+  let start = new Date();
+  let end = new Date();
+
+  switch (rangeType) {
+    case "Today":
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case "Yesterday":
+      start.setDate(now.getDate() - 1);
+      start.setHours(0, 0, 0, 0);
+      end.setDate(now.getDate() - 1);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case "This Week":
+      start.setDate(now.getDate() - now.getDay());
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case "Last Week":
+      start.setDate(now.getDate() - now.getDay() - 7);
+      start.setHours(0, 0, 0, 0);
+      end.setDate(now.getDate() - now.getDay() - 1);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case "This Month":
+      start.setDate(1);
+      start.setHours(0, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case "Last Month":
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      start.setHours(0, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth(), 0);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case "This Year":
+      start = new Date(now.getFullYear(), 0, 1);
+      start.setHours(0, 0, 0, 0);
+      end = new Date(now.getFullYear(), 11, 31);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case "Last Year":
+      start = new Date(now.getFullYear() - 1, 0, 1);
+      start.setHours(0, 0, 0, 0);
+      end = new Date(now.getFullYear() - 1, 11, 31);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case "Custom":
+      if (customStartDate) start = new Date(customStartDate);
+      if (customEndDate) end = new Date(customEndDate);
+      break;
+    default:
+      return null;
+  }
+
+  return { start, end };
+};
+
+const buildArrayFilter = (value) => {
+  if (!value) return null;
+  return value.includes(",")
+    ? { $in: value.split(",").map((item) => item.trim()) }
+    : value;
+};
+
+const buildDateFilter = (
+  dateFilter,
+  customStartDate,
+  customEndDate,
+  startDate,
+  endDate
+) => {
+  if (dateFilter) {
+    const dateRange = getDateRange(dateFilter, customStartDate, customEndDate);
+    if (dateRange) {
+      return {
+        $gte: dateRange.start,
+        $lte: dateRange.end,
+      };
+    }
+  }
+
+  if (startDate || endDate) {
+    const dateFilter = {};
+    if (startDate) dateFilter.$gte = new Date(startDate);
+    if (endDate) dateFilter.$lte = new Date(endDate);
+    return dateFilter;
+  }
+
+  return null;
+};
+
+const buildStockPurchaseFilter = (query, outletId, permissions, userCenter) => {
+  const {
+    type,
+    vendor,
+    startDate,
+    endDate,
+    invoiceNo,
+    search,
+    dateFilter,
+    customStartDate,
+    customEndDate,
+  } = query;
+
+  const filter = { outlet: outletId };
+
+  if (
+    permissions.view_own_purchase_stock &&
+    !permissions.view_all_purchase_stock &&
+    userCenter
+  ) {
+    const userCenterId = userCenter._id || userCenter;
+    filter.outlet = userCenterId;
+  }
+
+  if (type) filter.type = type;
+
+  const vendorFilter = buildArrayFilter(vendor);
+  if (vendorFilter) filter.vendor = vendorFilter;
+
+  const dateFilterObj = buildDateFilter(
+    dateFilter,
+    customStartDate,
+    customEndDate,
+    startDate,
+    endDate
+  );
+  if (dateFilterObj) filter.date = dateFilterObj;
+
+  const invoiceNoFilter = buildArrayFilter(invoiceNo);
+  if (invoiceNoFilter) {
+    filter.invoiceNo =
+      typeof invoiceNoFilter === "object"
+        ? invoiceNoFilter
+        : { $regex: invoiceNoFilter, $options: "i" };
+  }
+
+  if (search) {
+    filter.$or = [
+      { invoiceNo: { $regex: search, $options: "i" } },
+      { remark: { $regex: search, $options: "i" } },
+
+      { "vendor.businessName": { $regex: search, $options: "i" } },
+
+      { "products.product.productTitle": { $regex: search, $options: "i" } },
+      { "products.productRemark": { $regex: search, $options: "i" } },
+    ];
+  }
+
+  return filter;
+};
+
+const buildStockPurchaseSortOptions = (
+  sortBy = "createdAt",
+  sortOrder = "desc"
+) => {
+  const validSortFields = [
+    "createdAt",
+    "updatedAt",
+    "date",
+    "invoiceNo",
+    "totalAmount",
+    "grandTotal",
+  ];
+
+  const actualSortBy = validSortFields.includes(sortBy) ? sortBy : "createdAt";
+  return { [actualSortBy]: sortOrder === "desc" ? -1 : 1 };
+};
+
+const stockPurchasePopulateOptions = [
+  { path: "vendor", select: "_id businessName contactPerson phone email" },
+  { path: "outlet", select: "_id centerName centerCode centerType" },
+  {
+    path: "products.product",
+    select:
+      "_id productTitle productCode productImage productCategory trackSerialNumber",
+  },
+];
+
 export const getAllStockPurchases = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } =
+      checkStockPurchasePermissions(req, [
+        "view_own_purchase_stock",
+        "view_all_purchase_stock",
+      ]);
 
-    const { hasAccess, permissions, userCenter } = checkStockPurchasePermissions(req, ["view_own_purchase_stock", "view_all_purchase_stock"]);
-    
     if (!hasAccess) {
       return res.status(403).json({
         success: false,
-        message: "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
+        message:
+          "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
       });
     }
-
 
     const {
       page = 1,
       limit = 10,
-      type,
-      vendor,
-      startDate,
-      endDate,
-      invoiceNo,
-      search,
       sortBy = "createdAt",
       sortOrder = "desc",
+      ...filterParams
     } = req.query;
 
     const outletId = await validateUserOutletAccess(req.user._id);
 
-    const filter = { outlet: outletId };
+    const filter = buildStockPurchaseFilter(
+      filterParams,
+      outletId,
+      permissions,
+      userCenter
+    );
 
-    if (permissions.view_own_purchase_stock && !permissions.view_all_purchase_stock && userCenter) {
-      const userCenterId = userCenter._id || userCenter;
-      filter.outlet = userCenterId;
-    } else {
-      // Users with view_all_purchase_stock can see all purchases
-      // Additional outlet filtering can be applied if needed
+    const sortOptions = buildStockPurchaseSortOptions(sortBy, sortOrder);
+
+    const [purchases, total] = await Promise.all([
+      StockPurchase.find(filter)
+        .populate(stockPurchasePopulateOptions)
+        .sort(sortOptions)
+        .limit(parseInt(limit))
+        .skip((parseInt(page) - 1) * parseInt(limit))
+        .lean(),
+
+      StockPurchase.countDocuments(filter),
+    ]);
+
+    if (purchases.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No stock purchases found",
+        data: [],
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: 0,
+          totalItems: 0,
+          itemsPerPage: parseInt(limit),
+        },
+      });
     }
-
-
-    if (type) filter.type = type;
-    if (vendor) filter.vendor = vendor;
-
-    if (startDate || endDate) {
-      filter.date = {};
-      if (startDate) filter.date.$gte = new Date(startDate);
-      if (endDate) filter.date.$lte = new Date(endDate);
-    }
-
-    if (invoiceNo) {
-      filter.invoiceNo = { $regex: invoiceNo, $options: "i" };
-    }
-
-    if (search) {
-      filter.$or = [
-        { invoiceNo: { $regex: search, $options: "i" } },
-        { remark: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    const sortOptions = {};
-    const validSortFields = [
-      "createdAt",
-      "updatedAt",
-      "date",
-      "invoiceNo",
-      "totalAmount",
-    ];
-    const actualSortBy = validSortFields.includes(sortBy)
-      ? sortBy
-      : "createdAt";
-    sortOptions[actualSortBy] = sortOrder === "desc" ? -1 : 1;
-
-    const purchases = await StockPurchase.find(filter)
-      .populate("vendor", "businessName")
-      .populate("outlet", "_id centerName centerCode centerType")
-      .populate("products.product", "productTitle")
-      .sort(sortOptions)
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const total = await StockPurchase.countDocuments(filter);
 
     res.status(200).json({
       success: true,
@@ -329,26 +547,32 @@ export const getAllStockPurchases = async (req, res) => {
 
 export const getStockPurchaseById = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } =
+      checkStockPurchasePermissions(req, [
+        "view_own_purchase_stock",
+        "view_all_purchase_stock",
+      ]);
 
-    const { hasAccess, permissions, userCenter } = checkStockPurchasePermissions(req, ["view_own_purchase_stock", "view_all_purchase_stock"]);
-    
     if (!hasAccess) {
       return res.status(403).json({
         success: false,
-        message: "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
+        message:
+          "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
       });
     }
-
 
     const { id } = req.params;
 
     const outletId = await validateUserOutletAccess(req.user._id);
 
-     if (permissions.view_own_purchase_stock && !permissions.view_all_purchase_stock && userCenter) {
+    if (
+      permissions.view_own_purchase_stock &&
+      !permissions.view_all_purchase_stock &&
+      userCenter
+    ) {
       const userCenterId = userCenter._id || userCenter;
       filter.outlet = userCenterId;
     }
-
 
     const purchase = await StockPurchase.findOne({
       _id: id,
@@ -381,8 +605,6 @@ export const getStockPurchaseById = async (req, res) => {
 
 export const updateStockPurchase = async (req, res) => {
   try {
-
-
     const { id } = req.params;
 
     const outletId = await validateUserOutletAccess(req.user._id);
@@ -515,9 +737,6 @@ export const updateStockPurchase = async (req, res) => {
 
 export const deleteStockPurchase = async (req, res) => {
   try {
-
-  
-
     const { id } = req.params;
 
     const outletId = await validateUserOutletAccess(req.user._id);
@@ -574,23 +793,30 @@ export const deleteStockPurchase = async (req, res) => {
 
 export const getPurchasesByVendor = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } =
+      checkStockPurchasePermissions(req, [
+        "view_own_purchase_stock",
+        "view_all_purchase_stock",
+      ]);
 
-     const { hasAccess, permissions, userCenter } = checkStockPurchasePermissions(req, ["view_own_purchase_stock", "view_all_purchase_stock"]);
-    
     if (!hasAccess) {
       return res.status(403).json({
         success: false,
-        message: "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
+        message:
+          "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
       });
     }
-
 
     const { vendorId } = req.params;
     const { page = 1, limit = 10 } = req.query;
 
     const outletId = await validateUserOutletAccess(req.user._id);
 
-    if (permissions.view_own_purchase_stock && !permissions.view_all_purchase_stock && userCenter) {
+    if (
+      permissions.view_own_purchase_stock &&
+      !permissions.view_all_purchase_stock &&
+      userCenter
+    ) {
       const userCenterId = userCenter._id || userCenter;
       filter.outlet = userCenterId;
     }
@@ -628,249 +854,19 @@ export const getPurchasesByVendor = async (req, res) => {
   }
 };
 
-// export const getAllProductsWithStock = async (req, res) => {
-//   try {
-
-//      const { hasAccess, permissions, userCenter } = checkStockPurchasePermissions(req, ["view_own_purchase_stock", "view_all_purchase_stock"]);
-    
-//     if (!hasAccess) {
-//       return res.status(403).json({
-//         success: false,
-//         message: "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
-//       });
-//     }
-
-//     const { page = 1, limit = 50, search, category } = req.query;
-
-//     const user = await User.findById(req.user._id).populate(
-//       "center",
-//       "centerName centerCode centerType"
-//     );
-
-//     if (!user || !user.center) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "User center information not found",
-//       });
-//     }
-
-//     const centerId = user.center._id;
-//     const centerType = user.center.centerType;
-
-//      const canViewAllCenters = permissions.view_all_purchase_stock;
-
-//     const productFilter = {};
-
-//     if (search) {
-//       productFilter.$or = [
-//         { productTitle: { $regex: search, $options: "i" } },
-//         { productCode: { $regex: search, $options: "i" } },
-//         { description: { $regex: search, $options: "i" } },
-//       ];
-//     }
-
-//     if (category) {
-//       productFilter.category = category;
-//     }
-
-//     const products = await Product.find(productFilter)
-//       .select(
-//         "productTitle productCode description category productPrice trackSerialNumber productImage"
-//       )
-//       .sort({ productTitle: 1 })
-//       .limit(limit * 1)
-//       .skip((page - 1) * limit);
-
-//     const totalProducts = await Product.countDocuments(productFilter);
-
-//     let stockData = [];
-//     let centerDetails = null;
-
-//     if (centerType === "Outlet") {
-//       centerDetails = await Center.findById(centerId).select(
-//         "_id partner area centerType centerName centerCode"
-//       );
-
-//       stockData = await StockPurchase.aggregate([
-//         {
-//           $match: { outlet: centerId },
-//         },
-//         {
-//           $unwind: "$products",
-//         },
-//         {
-//           $group: {
-//             _id: "$products.product",
-//             totalPurchased: { $sum: "$products.purchasedQuantity" },
-//             totalAvailable: { $sum: "$products.availableQuantity" },
-//             purchaseCount: { $sum: 1 },
-//           },
-//         },
-//       ]);
-
-//       const outletStockData = await OutletStock.aggregate([
-//         {
-//           $match: { outlet: centerId },
-//         },
-//         {
-//           $group: {
-//             _id: "$product",
-//             currentTotalQuantity: { $sum: "$totalQuantity" },
-//             currentAvailableQuantity: { $sum: "$availableQuantity" },
-//           },
-//         },
-//       ]);
-
-//       const outletStockMap = new Map();
-//       outletStockData.forEach((item) => {
-//         outletStockMap.set(item._id.toString(), {
-//           currentTotalQuantity: item.currentTotalQuantity,
-//           currentAvailableQuantity: item.currentAvailableQuantity,
-//         });
-//       });
-
-//       stockData = stockData.map((item) => {
-//         const currentStock = outletStockMap.get(item._id.toString());
-//         return {
-//           ...item,
-//           currentTotalQuantity: currentStock?.currentTotalQuantity || 0,
-//           currentAvailableQuantity: currentStock?.currentAvailableQuantity || 0,
-//         };
-//       });
-//     } else if (centerType === "Center") {
-//       centerDetails = await Center.findById(centerId).select(
-//         "_id partner area centerType centerName centerCode"
-//       );
-
-//       //  if (!canViewAllCenters) {
-//       //   centerFilter.center = centerId;
-//       // }
-
-//       stockData = await CenterStock.aggregate([
-//         {
-//           $match: { center: centerId },
-//         },
-//         {
-//           $group: {
-//             _id: "$product",
-//             totalQuantity: { $sum: "$totalQuantity" },
-//             availableQuantity: { $sum: "$availableQuantity" },
-//             stockEntries: { $sum: 1 },
-//           },
-//         },
-//       ]);
-//     } else {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Invalid center type",
-//       });
-//     }
-
-//     const stockMap = new Map();
-//     stockData.forEach((item) => {
-//       if (centerType === "Outlet") {
-//         stockMap.set(item._id.toString(), {
-//           totalPurchased: item.totalPurchased,
-//           totalAvailable: item.totalAvailable || item.currentAvailableQuantity,
-//           purchaseCount: item.purchaseCount,
-//           currentTotalQuantity: item.currentTotalQuantity,
-//           currentAvailableQuantity: item.currentAvailableQuantity,
-//         });
-//       } else {
-//         stockMap.set(item._id.toString(), {
-//           totalQuantity: item.totalQuantity,
-//           availableQuantity: item.availableQuantity,
-//           stockEntries: item.stockEntries,
-//         });
-//       }
-//     });
-
-//     const productsWithStock = products.map((product) => {
-//       const productId = product._id.toString();
-//       let stockInfo;
-
-//       if (centerType === "Outlet") {
-//         const stockData = stockMap.get(productId) || {
-//           totalPurchased: 0,
-//           totalAvailable: 0,
-//           purchaseCount: 0,
-//           currentTotalQuantity: 0,
-//           currentAvailableQuantity: 0,
-//         };
-
-//         stockInfo = {
-//           totalPurchased: stockData.totalPurchased,
-//           totalAvailable:
-//             stockData.currentAvailableQuantity || stockData.totalAvailable,
-//           purchaseCount: stockData.purchaseCount,
-//           currentStock:
-//             stockData.currentAvailableQuantity || stockData.totalAvailable,
-//         };
-//       } else {
-//         const stockData = stockMap.get(productId) || {
-//           totalQuantity: 0,
-//           availableQuantity: 0,
-//           stockEntries: 0,
-//         };
-
-//         stockInfo = {
-//           totalQuantity: stockData.totalQuantity,
-//           availableQuantity: stockData.availableQuantity,
-//           stockEntries: stockData.stockEntries,
-//           currentStock: stockData.availableQuantity,
-//         };
-//       }
-
-//       return {
-//         ...product.toObject(),
-//         stock: stockInfo,
-//       };
-//     });
-
-//     const totalStockSummary = {
-//       totalProducts: productsWithStock.length,
-//       totalItemsInStock: 0,
-//       totalAvailableItems: 0,
-//     };
-
-//     productsWithStock.forEach((product) => {
-//       totalStockSummary.totalItemsInStock +=
-//         centerType === "Outlet"
-//           ? product.stock.totalPurchased
-//           : product.stock.totalQuantity;
-//       totalStockSummary.totalAvailableItems += product.stock.currentStock;
-//     });
-
-//     res.status(200).json({
-//       success: true,
-//       message: `Products with stock information retrieved successfully for ${centerType.toLowerCase()}`,
-//       data: productsWithStock,
-//       center: centerDetails,
-//       stockSummary: {
-//         centerType,
-//         ...totalStockSummary,
-//       },
-//       pagination: {
-//         currentPage: parseInt(page),
-//         totalPages: Math.ceil(totalProducts / limit),
-//         totalItems: totalProducts,
-//         itemsPerPage: parseInt(limit),
-//       },
-//     });
-//   } catch (error) {
-//     console.error("Error retrieving products with stock:", error);
-//     handleControllerError(error, res);
-//   }
-// };
-
 export const getAllProductsWithStock = async (req, res) => {
   try {
-    const { hasAccess, permissions, userCenter } = checkStockPurchasePermissions(req, ["view_own_purchase_stock", "view_all_purchase_stock"]);
-    
+    const { hasAccess, permissions, userCenter } =
+      checkStockPurchasePermissions(req, [
+        "view_own_purchase_stock",
+        "view_all_purchase_stock",
+      ]);
+
     if (!hasAccess) {
       return res.status(403).json({
         success: false,
-        message: "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
+        message:
+          "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
       });
     }
 
@@ -925,30 +921,29 @@ export const getAllProductsWithStock = async (req, res) => {
         "_id partner area centerType centerName centerCode"
       );
 
-      // Get product IDs for the current page
-      const productIds = products.map(product => product._id);
+      const productIds = products.map((product) => product._id);
 
-      // Fetch OutletStock data for these specific products
       const outletStockData = await OutletStock.find({
         outlet: centerId,
-        product: { $in: productIds }
-      }).select("product totalQuantity availableQuantity inTransitQuantity serialNumbers");
+        product: { $in: productIds },
+      }).select(
+        "product totalQuantity availableQuantity inTransitQuantity serialNumbers"
+      );
 
-      // Also get purchase data for historical context
       const purchaseData = await StockPurchase.aggregate([
         {
-          $match: { 
+          $match: {
             outlet: centerId,
-            "products.product": { $in: productIds }
-          }
+            "products.product": { $in: productIds },
+          },
         },
         {
-          $unwind: "$products"
+          $unwind: "$products",
         },
         {
           $match: {
-            "products.product": { $in: productIds }
-          }
+            "products.product": { $in: productIds },
+          },
         },
         {
           $group: {
@@ -960,7 +955,6 @@ export const getAllProductsWithStock = async (req, res) => {
         },
       ]);
 
-      // Create maps for easy lookup
       const outletStockMap = new Map();
       outletStockData.forEach((item) => {
         outletStockMap.set(item.product.toString(), {
@@ -968,7 +962,7 @@ export const getAllProductsWithStock = async (req, res) => {
           currentAvailableQuantity: item.availableQuantity,
           currentInTransitQuantity: item.inTransitQuantity,
           serialNumbersCount: item.serialNumbers.length,
-          hasSerialNumbers: item.serialNumbers.length > 0
+          hasSerialNumbers: item.serialNumbers.length > 0,
         });
       });
 
@@ -981,11 +975,10 @@ export const getAllProductsWithStock = async (req, res) => {
         });
       });
 
-      // Combine both data sources
-      stockData = productIds.map(productId => {
+      stockData = productIds.map((productId) => {
         const outletStock = outletStockMap.get(productId.toString());
         const purchaseInfo = purchaseMap.get(productId.toString());
-        
+
         return {
           _id: productId,
           totalPurchased: purchaseInfo?.totalPurchased || 0,
@@ -995,25 +988,22 @@ export const getAllProductsWithStock = async (req, res) => {
           currentAvailableQuantity: outletStock?.currentAvailableQuantity || 0,
           currentInTransitQuantity: outletStock?.currentInTransitQuantity || 0,
           serialNumbersCount: outletStock?.serialNumbersCount || 0,
-          hasSerialNumbers: outletStock?.hasSerialNumbers || false
+          hasSerialNumbers: outletStock?.hasSerialNumbers || false,
         };
       });
-
     } else if (centerType === "Center") {
       centerDetails = await Center.findById(centerId).select(
         "_id partner area centerType centerName centerCode"
       );
 
-      // Get product IDs for the current page
-      const productIds = products.map(product => product._id);
+      const productIds = products.map((product) => product._id);
 
-      // Fetch CenterStock data for these specific products
       stockData = await CenterStock.aggregate([
         {
-          $match: { 
+          $match: {
             center: centerId,
-            product: { $in: productIds }
-          }
+            product: { $in: productIds },
+          },
         },
         {
           $group: {
@@ -1032,7 +1022,6 @@ export const getAllProductsWithStock = async (req, res) => {
       });
     }
 
-    // Create stock map for easy lookup
     const stockMap = new Map();
     stockData.forEach((item) => {
       if (centerType === "Outlet") {
@@ -1044,7 +1033,7 @@ export const getAllProductsWithStock = async (req, res) => {
           currentAvailableQuantity: item.currentAvailableQuantity,
           currentInTransitQuantity: item.currentInTransitQuantity,
           serialNumbersCount: item.serialNumbersCount,
-          hasSerialNumbers: item.hasSerialNumbers
+          hasSerialNumbers: item.hasSerialNumbers,
         });
       } else {
         stockMap.set(item._id.toString(), {
@@ -1056,10 +1045,9 @@ export const getAllProductsWithStock = async (req, res) => {
       }
     });
 
-    // Combine products with their stock information
     const productsWithStock = products.map((product) => {
       const productId = product._id.toString();
-      
+
       if (centerType === "Outlet") {
         const stockData = stockMap.get(productId) || {
           totalPurchased: 0,
@@ -1069,26 +1057,22 @@ export const getAllProductsWithStock = async (req, res) => {
           currentAvailableQuantity: 0,
           currentInTransitQuantity: 0,
           serialNumbersCount: 0,
-          hasSerialNumbers: false
+          hasSerialNumbers: false,
         };
 
         const stockInfo = {
-          // Historical purchase data
           totalPurchased: stockData.totalPurchased,
           totalAvailable: stockData.totalAvailable,
           purchaseCount: stockData.purchaseCount,
-          
-          // Current stock levels from OutletStock
+
           currentTotalQuantity: stockData.currentTotalQuantity,
           currentAvailableQuantity: stockData.currentAvailableQuantity,
           currentInTransitQuantity: stockData.currentInTransitQuantity,
-          
-          // Serial number information
+
           serialNumbersCount: stockData.serialNumbersCount,
           hasSerialNumbers: stockData.hasSerialNumbers,
-          
-          // For backward compatibility and UI display
-          currentStock: stockData.currentAvailableQuantity
+
+          currentStock: stockData.currentAvailableQuantity,
         };
 
         return {
@@ -1096,7 +1080,6 @@ export const getAllProductsWithStock = async (req, res) => {
           stock: stockInfo,
         };
       } else {
-        // Center stock logic remains similar
         const stockData = stockMap.get(productId) || {
           totalQuantity: 0,
           availableQuantity: 0,
@@ -1119,7 +1102,6 @@ export const getAllProductsWithStock = async (req, res) => {
       }
     });
 
-    // Calculate summary statistics
     const totalStockSummary = {
       totalProducts: productsWithStock.length,
       totalItemsInStock: 0,
@@ -1129,13 +1111,18 @@ export const getAllProductsWithStock = async (req, res) => {
 
     productsWithStock.forEach((product) => {
       if (centerType === "Outlet") {
-        totalStockSummary.totalItemsInStock += product.stock.currentTotalQuantity;
-        totalStockSummary.totalAvailableItems += product.stock.currentAvailableQuantity;
-        totalStockSummary.totalInTransitItems += product.stock.currentInTransitQuantity;
+        totalStockSummary.totalItemsInStock +=
+          product.stock.currentTotalQuantity;
+        totalStockSummary.totalAvailableItems +=
+          product.stock.currentAvailableQuantity;
+        totalStockSummary.totalInTransitItems +=
+          product.stock.currentInTransitQuantity;
       } else {
         totalStockSummary.totalItemsInStock += product.stock.totalQuantity;
-        totalStockSummary.totalAvailableItems += product.stock.availableQuantity;
-        totalStockSummary.totalInTransitItems += product.stock.inTransitQuantity;
+        totalStockSummary.totalAvailableItems +=
+          product.stock.availableQuantity;
+        totalStockSummary.totalInTransitItems +=
+          product.stock.inTransitQuantity;
       }
     });
 
@@ -1163,23 +1150,29 @@ export const getAllProductsWithStock = async (req, res) => {
 
 export const getAvailableStock = async (req, res) => {
   try {
+    const { hasAccess, permissions, userCenter } =
+      checkStockPurchasePermissions(req, [
+        "view_own_purchase_stock",
+        "view_all_purchase_stock",
+      ]);
 
-
-     const { hasAccess, permissions, userCenter } = checkStockPurchasePermissions(req, ["view_own_purchase_stock", "view_all_purchase_stock"]);
-    
     if (!hasAccess) {
       return res.status(403).json({
         success: false,
-        message: "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
+        message:
+          "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
       });
     }
 
     const { productId } = req.params;
-  let outletId;
-    if (permissions.view_own_purchase_stock && !permissions.view_all_purchase_stock && userCenter) {
+    let outletId;
+    if (
+      permissions.view_own_purchase_stock &&
+      !permissions.view_all_purchase_stock &&
+      userCenter
+    ) {
       outletId = userCenter._id || userCenter;
     } else {
-      // For users with view_all_purchase_stock, we need to determine the outlet context
       const user = await User.findById(req.user._id).populate("center");
       if (user && user.center && user.center.centerType === "Outlet") {
         outletId = user.center._id;
@@ -1190,9 +1183,6 @@ export const getAvailableStock = async (req, res) => {
         });
       }
     }
-
-
-    // const outletId = await getUserOutletId(req.user._id);
 
     const outletStock = await OutletStock.findOne({
       outlet: outletId,
@@ -1280,20 +1270,28 @@ export const getAvailableStock = async (req, res) => {
 
 export const getOutletStockSummary = async (req, res) => {
   try {
-    const { hasAccess, permissions, userCenter } = checkStockPurchasePermissions(req, ["view_own_purchase_stock", "view_all_purchase_stock"]);
-    
+    const { hasAccess, permissions, userCenter } =
+      checkStockPurchasePermissions(req, [
+        "view_own_purchase_stock",
+        "view_all_purchase_stock",
+      ]);
+
     if (!hasAccess) {
       return res.status(403).json({
         success: false,
-        message: "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
+        message:
+          "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
       });
     }
 
     let outletId;
-    if (permissions.view_own_purchase_stock && !permissions.view_all_purchase_stock && userCenter) {
+    if (
+      permissions.view_own_purchase_stock &&
+      !permissions.view_all_purchase_stock &&
+      userCenter
+    ) {
       outletId = userCenter._id || userCenter;
     } else {
-      // For users with view_all_purchase_stock, use their associated outlet
       const user = await User.findById(req.user._id).populate("center");
       if (user && user.center && user.center.centerType === "Outlet") {
         outletId = user.center._id;
@@ -1304,7 +1302,6 @@ export const getOutletStockSummary = async (req, res) => {
         });
       }
     }
-    // const outletId = await getUserOutletId(req.user._id);
 
     const outlet = await Center.findById(outletId).select(
       "centerName centerCode centerType address phone email"
@@ -1357,24 +1354,33 @@ export const getOutletStockSummary = async (req, res) => {
 
 export const getCenterStockSummary = async (req, res) => {
   try {
-     const { hasAccess, permissions, userCenter } = checkStockPurchasePermissions(req, ["view_own_purchase_stock", "view_all_purchase_stock"]);
-    
+    const { hasAccess, permissions, userCenter } =
+      checkStockPurchasePermissions(req, [
+        "view_own_purchase_stock",
+        "view_all_purchase_stock",
+      ]);
+
     if (!hasAccess) {
       return res.status(403).json({
         success: false,
-        message: "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
+        message:
+          "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
       });
     }
 
     const { centerId } = req.params;
 
-    // Check if user has access to this center
-    if (permissions.view_own_purchase_stock && !permissions.view_all_purchase_stock && userCenter) {
+    if (
+      permissions.view_own_purchase_stock &&
+      !permissions.view_all_purchase_stock &&
+      userCenter
+    ) {
       const userCenterId = userCenter._id || userCenter;
       if (centerId !== userCenterId.toString()) {
         return res.status(403).json({
           success: false,
-          message: "Access denied. You can only view your own center's stock summary.",
+          message:
+            "Access denied. You can only view your own center's stock summary.",
         });
       }
     }
@@ -1415,24 +1421,33 @@ export const getCenterStockSummary = async (req, res) => {
 
 export const getOutletSerialNumbers = async (req, res) => {
   try {
-    const { hasAccess, permissions, userCenter } = checkStockPurchasePermissions(req, ["view_own_purchase_stock", "view_all_purchase_stock"]);
-    
+    const { hasAccess, permissions, userCenter } =
+      checkStockPurchasePermissions(req, [
+        "view_own_purchase_stock",
+        "view_all_purchase_stock",
+      ]);
+
     if (!hasAccess) {
       return res.status(403).json({
         success: false,
-        message: "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
+        message:
+          "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
       });
     }
 
     const { productId, outletId } = req.params;
 
-    // Check if user has access to this outlet
-    if (permissions.view_own_purchase_stock && !permissions.view_all_purchase_stock && userCenter) {
+    if (
+      permissions.view_own_purchase_stock &&
+      !permissions.view_all_purchase_stock &&
+      userCenter
+    ) {
       const userCenterId = userCenter._id || userCenter;
       if (outletId !== userCenterId.toString()) {
         return res.status(403).json({
           success: false,
-          message: "Access denied. You can only view serial numbers from your own outlet.",
+          message:
+            "Access denied. You can only view serial numbers from your own outlet.",
         });
       }
     }

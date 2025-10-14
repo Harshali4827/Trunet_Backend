@@ -35,7 +35,6 @@ export const createCustomer = async (req, res) => {
       state,
     } = req.body;
 
-    // Check if user has permission to create customer for this center
     if (canManageOwn && !canManageAll && req.user.center) {
       const userCenterId = req.user.center._id || req.user.center;
       if (centerId !== userCenterId.toString()) {
@@ -116,7 +115,6 @@ export const getCustomers = async (req, res) => {
 
     let filter = {};
 
-    // Apply center filter based on user permissions
     if (canViewOwn && !canViewAll && req.user.center) {
       const userCenterId = req.user.center._id || req.user.center;
       filter.center = userCenterId;
@@ -257,7 +255,6 @@ export const updateCustomer = async (req, res) => {
       customerModule &&
       customerModule.permissions.includes("manage_customer_own_center");
 
-    // Check permission for existing customer
     if (canManageOwn && !canManageAll && req.user.center) {
       const userCenterId = req.user.center._id || req.user.center;
       if (customer.center.toString() !== userCenterId.toString()) {
@@ -269,7 +266,6 @@ export const updateCustomer = async (req, res) => {
       }
     }
 
-    // If updating center, check permission for new center
     if (req.body.centerId) {
       if (canManageOwn && !canManageAll && req.user.center) {
         const userCenterId = req.user.center._id || req.user.center;

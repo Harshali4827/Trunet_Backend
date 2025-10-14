@@ -46,13 +46,13 @@ const stockClosingSchema = new mongoose.Schema(
         return this.stockClosingForOtherCenter === true;
       },
     },
-    // New field: center for which the stock closing is being recorded
+
     closingCenter: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Center",
       required: [true, "Closing center is required"],
     },
-    // Link to related stock closing entries
+
     linkedStockClosing: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "StockClosing",
@@ -138,17 +138,23 @@ stockClosingSchema.statics.findByDateRange = function (startDate, endDate) {
   }).populate("center closingCenter products.product linkedStockClosing");
 };
 
-stockClosingSchema.statics.findByClosingCenter = function (centerId, startDate, endDate) {
+stockClosingSchema.statics.findByClosingCenter = function (
+  centerId,
+  startDate,
+  endDate
+) {
   const query = { closingCenter: centerId };
-  
+
   if (startDate && endDate) {
     query.date = {
       $gte: startDate,
       $lte: endDate,
     };
   }
-  
-  return this.find(query).populate("center closingCenter products.product linkedStockClosing");
+
+  return this.find(query).populate(
+    "center closingCenter products.product linkedStockClosing"
+  );
 };
 
 stockClosingSchema.methods.isForOtherCenter = function () {
