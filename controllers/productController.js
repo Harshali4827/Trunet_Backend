@@ -86,26 +86,6 @@ const handleProductError = (error, bodyData = {}) => {
   };
 };
 
-const getCategoryIdByName = async (categoryName) => {
-  if (!categoryName) return null;
-
-  const cacheKey = categoryName.toLowerCase().trim();
-
-  if (categoryCache.has(cacheKey)) {
-    return categoryCache.get(cacheKey);
-  }
-
-  const category = await ProductCategory.findOne({
-    productCategory: { $regex: categoryName, $options: "i" },
-  }).select("_id");
-
-  const categoryId = category ? category._id : null;
-
-  categoryCache.set(cacheKey, categoryId);
-  setTimeout(() => categoryCache.delete(cacheKey), 5 * 60 * 1000);
-
-  return categoryId;
-};
 
 const buildSearchFilters = (queryParams) => {
   const {

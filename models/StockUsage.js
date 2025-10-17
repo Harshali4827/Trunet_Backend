@@ -18,6 +18,7 @@ const stockUsageSchema = new mongoose.Schema(
         "Damage",
         "Stolen from Center",
         "Stolen from Field",
+        "Damage Return",
         "Other",
       ],
     },
@@ -150,6 +151,15 @@ const stockUsageSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+
+
+    originalUsageType: String,
+    changedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    changeDate: Date,
+    changeRemark: String
   },
   { timestamps: true }
 );

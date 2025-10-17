@@ -152,6 +152,7 @@ router.get(
   getOutletSerialNumbers
 );
 
+
 router.put(
   "/serial-numbers/product/:productId/serial/:serialNumber",
   protect,

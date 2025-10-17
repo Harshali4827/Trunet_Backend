@@ -1,7 +1,6 @@
 import StockUsage from "../models/StockUsage.js";
 import CenterStock from "../models/CenterStock.js";
 import Product from "../models/Product.js";
-import EntityStockUsage from "../models/EntityStockUsage.js";
 import Customer from "../models/Customer.js";
 import Building from "../models/Building.js";
 import ControlRoom from "../models/ControlRoomModel.js";
@@ -201,7 +200,7 @@ export const createStockUsage = async (req, res) => {
       validatedItems.push(validatedItem);
     }
 
-    const initialStatus = usageType === "Damage" ? "pending" : "completed";
+    const initialStatus = usageType === "Damage Return" ? "pending" : "completed";
 
     const stockUsageData = {
       date: date || new Date(),
@@ -568,6 +567,7 @@ export const getAllStockUsage = async (req, res) => {
       filter.center = center;
     }
 
+    filter.usageType = { $ne: "Damage Return" };
     if (usageType) filter.usageType = usageType;
     if (status) filter.status = status;
     if (customer) filter.customer = customer;
@@ -637,6 +637,7 @@ export const getAllStockUsage = async (req, res) => {
     });
   }
 };
+
 
 export const getStockUsageById = async (req, res) => {
   try {
@@ -727,6 +728,7 @@ export const getStockUsageById = async (req, res) => {
     });
   }
 };
+
 export const updateStockUsage = async (req, res) => {
   try {
     const { hasAccess } = checkStockUsagePermissions(req, ["allow_edit_usage"]);
@@ -1491,12 +1493,8 @@ const restoreStock = async (stockUsage, session) => {
   }
 };
 
-/**
- * Approve damage request
- * - Changes stock usage status to "completed"
- * - Updates serial numbers status to "damaged" in center stock
- * - Updates center stock quantities
- */
+
+
 export const approveDamageRequest = async (req, res) => {
   try {
     const { hasAccess } = checkStockUsagePermissions(req, [
@@ -1526,7 +1524,7 @@ export const approveDamageRequest = async (req, res) => {
       "view_usage_own_center",
       "view_usage_all_center",
     ]);
-    const filter = { _id: id, usageType: "Damage" };
+    const filter = { _id: id, usageType: "Damage Return" };
 
     if (
       permissions.view_usage_own_center &&
@@ -1544,7 +1542,7 @@ export const approveDamageRequest = async (req, res) => {
       });
     }
 
-    if (stockUsage.usageType !== "Damage") {
+    if (stockUsage.usageType !== "Damage Return") {
       return res.status(400).json({
         success: false,
         message: "Only damage requests can be approved",
@@ -1622,7 +1620,7 @@ export const rejectDamageRequest = async (req, res) => {
       });
     }
 
-    const filter = { _id: id, usageType: "Damage" };
+    const filter = { _id: id, usageType: "Damage Return" };
 
     if (
       permissions.manage_usage_own_center &&
@@ -1640,7 +1638,7 @@ export const rejectDamageRequest = async (req, res) => {
       });
     }
 
-    if (stockUsage.usageType !== "Damage") {
+    if (stockUsage.usageType !== "Damage Return") {
       return res.status(400).json({
         success: false,
         message: "Only damage requests can be rejected",
@@ -1713,7 +1711,7 @@ export const getPendingDamageRequests = async (req, res) => {
     const { center, page = 1, limit = 10, startDate, endDate } = req.query;
 
     const filter = {
-      usageType: "Damage",
+      usageType: "Damage Return",
       status: "pending",
     };
 
@@ -2762,9 +2760,167 @@ export const getStockUsageByCenter = async (req, res) => {
   }
 };
 
+//   try {
+//     const { hasAccess,userCenter } = checkStockUsagePermissions(
+//       req,
+//       ["view_usage_own_center", "view_usage_all_center"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+//       });
+//     }
+
+//     const { customerId } = req.params;
+//     const {
+//       page = 1,
+//       limit = 10,
+//       startDate,
+//       endDate,
+//       product,
+//       connectionType,
+//       sortBy = "date",
+//       sortOrder = "desc",
+//     } = req.query;
+
+//     const userCenterId = userCenter?._id || userCenter;
+//     if (!userCenterId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User must be associated with a center",
+//       });
+//     }
+
+//     const customer = await Customer.findOne({
+//       _id: customerId,
+//       center: userCenterId,
+//     }).populate("center", "centerName centerCode");
+
+//     if (!customer) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Customer not found or you don't have access to this customer",
+//       });
+//     }
+
+//     const query = {
+//       usageType: "Customer",
+//       customer: customerId,
+//       center: userCenterId,
+//       status: "completed",
+//       "items.serialNumbers.0": { $exists: true },
+//     };
+
+//     if (startDate || endDate) {
+//       query.date = {};
+//       if (startDate) query.date.$gte = new Date(startDate);
+//       if (endDate) query.date.$lte = new Date(endDate);
+//     }
+
+//     if (product) query["items.product"] = product;
+//     if (connectionType) query.connectionType = connectionType;
+
+//     const total = await StockUsage.countDocuments(query);
+//     const skip = (parseInt(page) - 1) * parseInt(limit);
+
+//     const sortConfig = {};
+//     sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+//     const stockUsages = await StockUsage.find(query)
+//       .populate("center", "centerName centerCode")
+//       .populate({
+//         path: "items.product",
+//         select: "productTitle productCode category trackSerialNumber",
+//         match: { trackSerialNumber: "Yes" },
+//       })
+//       .populate("createdBy", "name email")
+//       .sort(sortConfig)
+//       .skip(skip)
+//       .limit(parseInt(limit));
+
+//     const filteredUsages = stockUsages
+//       .map((usage) => ({
+//         ...usage.toObject(),
+//         items: usage.items.filter(
+//           (item) =>
+//             item.product !== null &&
+//             item.serialNumbers &&
+//             item.serialNumbers.length > 0
+//         ),
+//       }))
+//       .filter((usage) => usage.items.length > 0);
+
+//     const formattedData = [];
+
+//     filteredUsages.forEach((usage) => {
+//       usage.items.forEach((item) => {
+//         if (
+//           item.serialNumbers &&
+//           item.serialNumbers.length > 0 &&
+//           item.product
+//         ) {
+//           item.serialNumbers.forEach((serialNumber) => {
+//             formattedData.push({
+//               _id: `${usage._id}_${serialNumber}`,
+//               Product: item.product.productTitle || "Unknown Product",
+//               "Serial No.": serialNumber,
+//               Type: usage.usageType,
+//               Date: usage.date.toLocaleDateString(),
+//               "Connection Type": usage.connectionType || "N/A",
+//               "Package Amount": usage.packageAmount || 0,
+//               "Package Duration": usage.packageDuration || "N/A",
+//               "ONU Charges": usage.onuCharges || 0,
+//               "Installation Charges": usage.installationCharges || 0,
+//               Remark: usage.remark || "",
+//               Option: getConnectionOption(usage.connectionType, usage.reason),
+//               Status: usage.status,
+//               "Product Code": item.product.productCode || "N/A",
+//               "Assigned Date": usage.date.toLocaleDateString(),
+//               "Product Category": item.product.category || "N/A",
+//             });
+//           });
+//         }
+//       });
+//     });
+
+//     res.status(200).json({
+//       success: true,
+//       data: formattedData,
+//       customer: {
+//         id: customer._id,
+//         name: customer.name,
+//         username: customer.username,
+//         mobile: customer.mobile,
+//         email: customer.email,
+//       },
+//       pagination: {
+//         total: formattedData.length,
+//         page: parseInt(page),
+//         limit: parseInt(limit),
+//         totalPages: Math.ceil(formattedData.length / limit),
+//       },
+//       summary: {
+//         totalDevices: formattedData.length,
+//         uniqueProducts: [...new Set(formattedData.map((item) => item.Product))]
+//           .length,
+//         connectionTypes: getConnectionTypeSummary(formattedData),
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error fetching product devices by customer:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error",
+//     });
+//   }
+// };
+
 export const getProductDevicesByCustomer = async (req, res) => {
   try {
-    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+    const { hasAccess, userCenter } = checkStockUsagePermissions(
       req,
       ["view_usage_own_center", "view_usage_all_center"]
     );
@@ -2836,7 +2992,7 @@ export const getProductDevicesByCustomer = async (req, res) => {
       .populate("center", "centerName centerCode")
       .populate({
         path: "items.product",
-        select: "productTitle productCode category trackSerialNumber",
+        select: "productTitle productCode category trackSerialNumber _id",
         match: { trackSerialNumber: "Yes" },
       })
       .populate("createdBy", "name email")
@@ -2868,6 +3024,15 @@ export const getProductDevicesByCustomer = async (req, res) => {
           item.serialNumbers.forEach((serialNumber) => {
             formattedData.push({
               _id: `${usage._id}_${serialNumber}`,
+              usageId: usage._id,
+              center: {
+                id: usage.center?._id,
+                name: usage.center?.centerName,
+                code: usage.center?.centerCode,
+              },
+    
+              itemId: item._id,
+              productId: item.product._id,
               Product: item.product.productTitle || "Unknown Product",
               "Serial No.": serialNumber,
               Type: usage.usageType,
@@ -2883,6 +3048,11 @@ export const getProductDevicesByCustomer = async (req, res) => {
               "Product Code": item.product.productCode || "N/A",
               "Assigned Date": usage.date.toLocaleDateString(),
               "Product Category": item.product.category || "N/A",
+              createdBy: usage.createdBy ? {
+                id: usage.createdBy._id,
+                name: usage.createdBy.name,
+                email: usage.createdBy.email
+              } : null,
             });
           });
         }
@@ -2910,6 +3080,7 @@ export const getProductDevicesByCustomer = async (req, res) => {
         uniqueProducts: [...new Set(formattedData.map((item) => item.Product))]
           .length,
         connectionTypes: getConnectionTypeSummary(formattedData),
+        centers: [...new Set(formattedData.map(item => item.center?.name).filter(Boolean))],
       },
     });
   } catch (error) {
@@ -2920,6 +3091,7 @@ export const getProductDevicesByCustomer = async (req, res) => {
     });
   }
 };
+
 
 export const getProductDevicesByBuilding = async (req, res) => {
   try {
@@ -3012,7 +3184,7 @@ export const getProductDevicesByBuilding = async (req, res) => {
       .populate("toBuilding", "buildingName displayName")
       .populate({
         path: "items.product",
-        select: "productTitle productCode category trackSerialNumber",
+        select: "productTitle productCode category trackSerialNumber _id",
         match: { trackSerialNumber: "Yes" },
       })
       .populate("createdBy", "name email")
@@ -3053,6 +3225,7 @@ export const getProductDevicesByBuilding = async (req, res) => {
           item.serialNumbers.forEach((serialNumber) => {
             formattedData.push({
               _id: `${usage._id}_${serialNumber}`,
+              productId: item.product._id, 
               Product: item.product.productTitle || "Unknown Product",
               "Serial No.": serialNumber,
               Type: transferType,
@@ -3346,23 +3519,6 @@ const getEntityInfo = (usage, serialNumber) => {
   }
 };
 
-const getEntityTypeSummary = (data) => {
-  const summary = {};
-  data.forEach((item) => {
-    const entityType = item["Entity Type"] || "Unknown";
-    summary[entityType] = (summary[entityType] || 0) + 1;
-  });
-  return summary;
-};
-
-const getProductSummary = (data) => {
-  const summary = {};
-  data.forEach((item) => {
-    const product = item.Product;
-    summary[product] = (summary[product] || 0) + 1;
-  });
-  return summary;
-};
 
 const getConnectionTypeSummary = (data) => {
   const summary = {};
@@ -3371,4 +3527,248 @@ const getConnectionTypeSummary = (data) => {
     summary[connectionType] = (summary[connectionType] || 0) + 1;
   });
   return summary;
+};
+
+
+
+
+
+/********************** DAMAGE RETURN ****************************/
+
+
+export const changeToDamageReturn = async (req, res) => {
+  try {
+    const { hasAccess } = checkStockUsagePermissions(req, [
+      "manage_usage_own_center", 
+      "manage_usage_all_center"
+    ]);
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_usage_own_center or manage_usage_all_center permission required.",
+      });
+    }
+
+    const { id } = req.params;
+    const { remark } = req.body;
+    const changedBy = req.user.id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid stock usage ID",
+      });
+    }
+
+    const existingUsage = await StockUsage.findById(id)
+      .populate("center", "name centerType")
+      .populate({
+        path: "items.product",
+        select: "productTitle productCode trackSerialNumber"
+      });
+
+    if (!existingUsage) {
+      return res.status(404).json({
+        success: false,
+        message: "Stock usage record not found",
+      });
+    }
+
+    if (existingUsage.usageType === "Damage Return") {
+      return res.status(400).json({
+        success: false,
+        message: "This entry is already a Damage Return",
+      });
+    }
+
+    const originalUsageType = existingUsage.usageType;
+    
+    existingUsage.usageType = "Damage Return";
+    existingUsage.originalUsageType = originalUsageType;
+    existingUsage.remark = remark || `Changed from ${originalUsageType} to Damage Return`;
+    existingUsage.changedBy = changedBy;
+    existingUsage.changeDate = new Date();
+    existingUsage.status = "pending"
+    await existingUsage.save();
+
+    const populatedUsage = await StockUsage.findById(existingUsage._id)
+      .populate("center", "name centerType")
+      .populate("customer", "username name mobile")
+      .populate("fromBuilding", "buildingName displayName")
+      .populate("toBuilding", "buildingName displayName")
+      .populate("fromControlRoom", "buildingName displayName")
+      .populate({
+        path: "items.product",
+        select: "productTitle productCode trackSerialNumber"
+      })
+      .populate("createdBy", "name email")
+      .populate("changedBy", "name email");
+
+    res.json({
+      success: true,
+      message: `Usage type changed from ${originalUsageType} to Damage Return successfully`,
+      data: populatedUsage
+    });
+
+  } catch (error) {
+    console.error("Change to damage return error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to change to damage return",
+    });
+  }
+};
+
+
+/**
+ * Get all Damage Return records with statistics
+ */
+export const getDamageReturnRecordsWithStats = async (req, res) => {
+  try {
+    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
+
+    const {
+      center,
+      startDate,
+      endDate,
+      status,
+      page = 1,
+      limit = 10,
+      sortBy = "date",
+      sortOrder = "desc",
+    } = req.query;
+
+    const filter = {
+      usageType: "Damage Return"
+    };
+
+    // Apply center filter based on permissions
+    if (
+      permissions.view_usage_own_center &&
+      !permissions.view_usage_all_center &&
+      userCenter
+    ) {
+      filter.center = userCenter._id || userCenter;
+    } else if (center) {
+      filter.center = center;
+    }
+
+    // Date filtering
+    if (startDate || endDate) {
+      filter.date = {};
+      if (startDate) filter.date.$gte = new Date(startDate);
+      if (endDate) filter.date.$lte = new Date(endDate);
+    }
+
+    if (status) filter.status = status;
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const sort = {};
+    sort[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+    // Get records
+    const damageReturnRecords = await StockUsage.find(filter)
+      .populate("center", "name centerType centerName")
+      .populate("customer", "username name mobile")
+      .populate("fromBuilding", "buildingName displayName")
+      .populate("toBuilding", "buildingName displayName")
+      .populate("fromControlRoom", "buildingName displayName")
+      .populate({
+        path: "items.product",
+        select: "productTitle productCode category trackSerialNumber"
+      })
+      .populate("createdBy", "name email")
+      .populate("changedBy", "name email")
+      .sort(sort)
+      .skip(skip)
+      .limit(limitNum);
+
+    const total = await StockUsage.countDocuments(filter);
+
+    // Get statistics
+    const stats = await StockUsage.aggregate([
+      { $match: filter },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: null,
+          totalItems: { $sum: "$items.quantity" },
+          totalValue: { $sum: { $multiply: ["$items.quantity", "$items.productPrice"] } },
+          uniqueProducts: { $addToSet: "$items.product" }
+        }
+      },
+      {
+        $project: {
+          totalItems: 1,
+          totalValue: 1,
+          uniqueProductCount: { $size: "$uniqueProducts" }
+        }
+      }
+    ]);
+
+    // Get status distribution
+    const statusStats = await StockUsage.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Get original usage type distribution
+    const originalTypeStats = await StockUsage.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$originalUsageType",
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const totalPages = Math.ceil(total / limitNum);
+
+    res.json({
+      success: true,
+      data: damageReturnRecords,
+      statistics: {
+        totalRecords: total,
+        totalItems: stats[0]?.totalItems || 0,
+        totalValue: stats[0]?.totalValue || 0,
+        uniqueProducts: stats[0]?.uniqueProductCount || 0,
+        statusDistribution: statusStats,
+        originalTypeDistribution: originalTypeStats
+      },
+      pagination: {
+        currentPage: pageNum,
+        totalPages,
+        totalRecords: total,
+        hasNext: pageNum < totalPages,
+        hasPrev: pageNum > 1,
+      },
+    });
+  } catch (error) {
+    console.error("Get damage return records with stats error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch damage return records",
+    });
+  }
 };

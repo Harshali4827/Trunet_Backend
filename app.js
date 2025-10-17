@@ -27,6 +27,7 @@ import stockUsage from "./routes/stockUsageRoutes.js";
 import reportSubmission from "./routes/reportSubmissionRoutes.js";
 import availableStock from "./routes/availabelReportRoutes.js";
 import reports from "./routes/reportRoutes.js";
+import "./models/EntityStockUsage.js";
 dotenv.config();
 connectDB();
 

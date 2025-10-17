@@ -16,20 +16,34 @@ import {
   getProductDevicesByCustomer,
   getProductDevicesByBuilding,
   getProductDevicesByControlRoom,
+  changeToDamageReturn,
+  getDamageReturnRecordsWithStats,
 } from "../controllers/stockUsageController.js";
 
-import {
-  validateCreateStockUsage,
-  validateUpdateStockUsage,
-  validateGetAllStockUsage,
-  validateIdParam,
-} from "../validations/stockUsageValidations.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
 const MODULE = "Usage";
 
+router.get(
+  "/pending",
+  protect,
+  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  getPendingDamageRequests
+);
+router.get(
+  "/requests",
+  protect,
+  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  getDamageRequestsByStatus
+);
+router.get(
+  "/damage-return",
+  protect,
+  // authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  getDamageReturnRecordsWithStats
+);
 router.post(
   "/",
   protect,
@@ -66,30 +80,21 @@ router.patch(
   authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
   cancelStockUsage
 );
+
 router.patch(
   "/:id/approve",
   protect,
   authorizeAccess(MODULE, "accept_damage_return"),
   approveDamageRequest
 );
+
 router.patch(
   "/:id/reject",
   protect,
   authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
   rejectDamageRequest
 );
-router.get(
-  "/pending",
-  protect,
-  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
-  getPendingDamageRequests
-);
-router.get(
-  "/requests",
-  protect,
-  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
-  getDamageRequestsByStatus
-);
+
 router.get(
   "/customer/:customerId",
   protect,
@@ -125,6 +130,13 @@ router.get(
   protect,
   authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
   getProductDevicesByControlRoom
+);
+
+router.patch(
+  "/damage/:id/damage-return",
+  protect,
+  // authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  changeToDamageReturn
 );
 
 export default router;

@@ -6,6 +6,7 @@ import Center from "../models/Center.js";
 import User from "../models/User.js";
 import mongoose from "mongoose";
 
+
 const checkStockPurchasePermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
   const purchaseModule = userPermissions.find(
@@ -124,12 +125,6 @@ const validateUserOutletAccess = async (userId) => {
   return user.center._id;
 };
 
-const getQuickOutletId = async (userId) => {
-  const user = await User.findById(userId).populate("center", "centerType");
-
-  return user?.center?.centerType === "Outlet" ? user.center._id : null;
-};
-
 export const createStockPurchase = async (req, res) => {
   try {
     const { hasAccess, permissions } = checkStockPurchasePermissions(req, [
@@ -239,50 +234,6 @@ export const createStockPurchase = async (req, res) => {
     handleControllerError(error, res);
   }
 };
-
-const buildStockTransferSortOptions = (
-  sortBy = "createdAt",
-  sortOrder = "desc"
-) => {
-  const validSortFields = [
-    "createdAt",
-    "updatedAt",
-    "date",
-    "transferNumber",
-    "status",
-    "adminApproval.approvedAt",
-    "adminApproval.rejectedAt",
-    "centerApproval.approvedAt",
-    "centerApproval.rejectedAt",
-    "shippingInfo.shippedAt",
-    "receivingInfo.receivedAt",
-  ];
-
-  const actualSortBy = validSortFields.includes(sortBy) ? sortBy : "createdAt";
-  return { [actualSortBy]: sortOrder === "desc" ? -1 : 1 };
-};
-
-const stockTransferPopulateOptions = [
-  { path: "fromCenter", select: "_id centerName centerCode centerType" },
-  { path: "toCenter", select: "_id centerName centerCode centerType" },
-  {
-    path: "products.product",
-    select: "_id productTitle productCode productImage trackSerialNumbers",
-  },
-  { path: "createdBy", select: "_id fullName email" },
-  { path: "updatedBy", select: "_id fullName email" },
-  { path: "adminApproval.approvedBy", select: "_id fullName email" },
-  { path: "adminApproval.rejectedBy", select: "_id fullName email" },
-  { path: "centerApproval.approvedBy", select: "_id fullName email" },
-  { path: "centerApproval.rejectedBy", select: "_id fullName email" },
-  { path: "shippingInfo.shippedBy", select: "_id fullName email" },
-  { path: "receivingInfo.receivedBy", select: "_id fullName email" },
-  { path: "completionInfo.completedBy", select: "_id fullName email" },
-  { path: "completionInfo.incompleteBy", select: "_id fullName email" },
-];
-
-const centerCache = new Map();
-const CACHE_TTL = 5 * 60 * 1000;
 
 const getDateRange = (rangeType, customStartDate, customEndDate) => {
   const now = new Date();
@@ -468,6 +419,7 @@ const stockPurchasePopulateOptions = [
   },
 ];
 
+
 export const getAllStockPurchases = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } =
@@ -544,6 +496,7 @@ export const getAllStockPurchases = async (req, res) => {
     handleControllerError(error, res);
   }
 };
+
 
 export const getStockPurchaseById = async (req, res) => {
   try {
@@ -1418,6 +1371,7 @@ export const getCenterStockSummary = async (req, res) => {
     handleControllerError(error, res);
   }
 };
+
 
 export const getOutletSerialNumbers = async (req, res) => {
   try {

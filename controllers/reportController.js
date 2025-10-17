@@ -156,42 +156,72 @@ export const getAllStockPurchasesReports = async (req, res) => {
       invoiceNo,
       search,
       center,
+      centerId,
+      product,
+      productId,
       sortBy = "createdAt",
       sortOrder = "desc",
     } = req.query;
 
     const filter = {};
 
+    // Center/Outlet filtering
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
         filter.outlet = userCenterId;
       }
-    } else if (permissions.view_all_report && center) {
-      filter.outlet = center;
+    } else if (permissions.view_all_report && (center || centerId)) {
+      // Support both center and centerId parameters
+      const centerFilterValue = center || centerId;
+      filter.outlet = centerFilterValue;
     }
 
+    // Product filtering
+    const productFilterValue = product || productId;
+    if (productFilterValue) {
+      filter["products.product"] = productFilterValue;
+    }
+
+    // Type and Vendor filtering
     if (type) filter.type = type;
     if (vendor) filter.vendor = vendor;
 
+    // Date range filtering
     if (startDate || endDate) {
       filter.date = {};
-      if (startDate) filter.date.$gte = new Date(startDate);
-      if (endDate) filter.date.$lte = new Date(endDate);
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        filter.date.$gte = start;
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        filter.date.$lte = end;
+      }
     }
 
+    // Invoice number filtering
     if (invoiceNo) {
       filter.invoiceNo = { $regex: invoiceNo, $options: "i" };
     }
 
+    // General search filtering
     if (search) {
       filter.$or = [
         { invoiceNo: { $regex: search, $options: "i" } },
         { remark: { $regex: search, $options: "i" } },
         { "vendor.businessName": { $regex: search, $options: "i" } },
+        { "products.product.productTitle": { $regex: search, $options: "i" } },
+        { "outlet.centerName": { $regex: search, $options: "i" } },
+        { "outlet.centerCode": { $regex: search, $options: "i" } },
       ];
     }
 
+    console.log('Stock Purchase Filter:', JSON.stringify(filter, null, 2));
+
+    // Sort options
     const sortOptions = {};
     const validSortFields = [
       "createdAt",
@@ -205,25 +235,118 @@ export const getAllStockPurchasesReports = async (req, res) => {
       : "createdAt";
     sortOptions[actualSortBy] = sortOrder === "desc" ? -1 : 1;
 
-    const purchases = await StockPurchase.find(filter)
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Use regular find with populate for better compatibility
+    let query = StockPurchase.find(filter)
       .populate("vendor", "businessName")
       .populate("outlet", "_id centerName centerCode centerType")
-      .populate("products.product", "productTitle")
+      .populate("products.product", "productTitle productCode")
       .sort(sortOptions)
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .skip(skip)
+      .limit(limitNum);
 
-    const total = await StockPurchase.countDocuments(filter);
+    // If product filter is applied, we need to filter the products array
+    if (productFilterValue) {
+      // This will be handled in post-processing
+    }
+
+    const [purchases, total] = await Promise.all([
+      query.lean(),
+      StockPurchase.countDocuments(filter)
+    ]);
+
+    // Post-process to filter products array if product filter is applied
+    let processedPurchases = purchases;
+    if (productFilterValue) {
+      processedPurchases = purchases.map(purchase => {
+        const filteredProducts = purchase.products.filter(productItem => {
+          const productId = productItem.product?._id?.toString() || productItem.product?.toString();
+          return productId === productFilterValue;
+        });
+        
+        return {
+          ...purchase,
+          products: filteredProducts
+        };
+      }).filter(purchase => purchase.products.length > 0); // Remove purchases with no matching products
+    }
+
+    // Get summary statistics - FIXED VERSION
+    const summaryPipeline = [
+      { $match: filter },
+      { $unwind: "$products" }
+    ];
+
+    // Add product filter to summary if applied
+    if (productFilterValue) {
+      const productObjectId = mongoose.Types.ObjectId.isValid(productFilterValue) 
+        ? new mongoose.Types.ObjectId(productFilterValue)
+        : productFilterValue;
+      
+      summaryPipeline.push({
+        $match: {
+          "products.product": productObjectId
+        }
+      });
+    }
+
+    summaryPipeline.push(
+      {
+        $group: {
+          _id: null,
+          totalPurchases: { $addToSet: "$_id" }, // Get unique purchase IDs
+          totalAmount: { $sum: "$totalAmount" },
+          totalTransportAmount: { $sum: "$transportAmount" },
+          totalQuantity: { $sum: "$products.purchasedQuantity" }
+        }
+      },
+      {
+        $project: {
+          totalPurchases: { $size: "$totalPurchases" }, // Count unique purchases
+          totalAmount: 1,
+          totalTransportAmount: 1,
+          totalQuantity: 1,
+          grandTotal: { $add: ["$totalAmount", "$totalTransportAmount"] }
+        }
+      }
+    );
+
+    const summaryStats = await StockPurchase.aggregate(summaryPipeline);
+    
+    const summary = summaryStats.length > 0 ? summaryStats[0] : {
+      totalPurchases: 0,
+      totalAmount: 0,
+      totalTransportAmount: 0,
+      totalQuantity: 0,
+      grandTotal: 0
+    };
+
+    // Adjust total count if product filter was applied in post-processing
+    const finalTotal = productFilterValue ? processedPurchases.length : total;
 
     res.status(200).json({
       success: true,
       message: "Stock purchases reports retrieved successfully",
-      data: purchases,
+      data: processedPurchases,
+      summary: summary,
+      filters: {
+        center: center || centerId || "all",
+        product: product || productId || "all",
+        type: type || "all",
+        vendor: vendor || "all",
+        startDate: startDate || "all",
+        endDate: endDate || "all",
+        invoiceNo: invoiceNo || "all",
+        search: search || ""
+      },
       pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalItems: total,
-        itemsPerPage: parseInt(limit),
+        currentPage: pageNum,
+        totalPages: Math.ceil(finalTotal / limitNum),
+        totalItems: finalTotal,
+        itemsPerPage: limitNum,
       },
     });
   } catch (error) {
@@ -253,6 +376,9 @@ export const getAllStockRequestsReports = async (req, res) => {
       status,
       warehouse,
       center,
+      centerId,
+      product,
+      productId,
       startDate,
       endDate,
       createdBy,
@@ -271,15 +397,26 @@ export const getAllStockRequestsReports = async (req, res) => {
 
     const filter = {};
 
+    console.log('Received query params:', {
+      center, centerId, product, productId, startDate, endDate
+    });
+
+    // Center filtering with permission check
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
         filter.center = userCenterId;
       }
-    } else if (permissions.view_all_report && center) {
-      filter.center = center;
+    } else if (permissions.view_all_report && (center || centerId)) {
+      // Support both center and centerId parameters
+      const centerFilterValue = center || centerId;
+      filter.center = centerFilterValue;
     }
 
+    // Product filtering - use regular find approach
+    const productFilterValue = product || productId;
+
+    // Status filtering
     if (status) {
       filter.status = status;
     }
@@ -295,20 +432,22 @@ export const getAllStockRequestsReports = async (req, res) => {
       filter.warehouse = warehouse;
     }
 
-    if (center && permissions.view_all_report) {
-      filter.center = center;
-    }
-
+    // Date range filtering with proper time boundaries
     if (startDate || endDate) {
       filter[dateField] = {};
-      if (startDate) filter[dateField].$gte = new Date(startDate);
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        filter[dateField].$gte = start;
+      }
       if (endDate) {
-        const endDateObj = new Date(endDate);
-        endDateObj.setHours(23, 59, 59, 999);
-        filter[dateField].$lte = endDateObj;
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        filter[dateField].$lte = end;
       }
     }
 
+    // User filtering
     if (createdBy) {
       filter.createdBy = createdBy;
     }
@@ -329,6 +468,7 @@ export const getAllStockRequestsReports = async (req, res) => {
       filter.stockTransferStatus = stockTransferStatus;
     }
 
+    // Search filtering
     if (search) {
       filter.$or = [
         { orderNumber: { $regex: search, $options: "i" } },
@@ -339,20 +479,28 @@ export const getAllStockRequestsReports = async (req, res) => {
       ];
     }
 
+    console.log('Final filter:', JSON.stringify(filter, null, 2));
+
+    // Use regular find with populate for better compatibility
+    let query = StockRequest.find(filter);
+
+    // Populate options
     const populateOptions = [
       {
         path: "createdBy",
         select: "fullName email",
       },
-
       {
         path: "warehouse",
         select: "centerName centerCode centerType",
       },
-
       {
         path: "center",
         select: "centerName centerCode centerType",
+      },
+      {
+        path: "products.product",
+        select: "productTitle productPrice productCode productImage trackSerialNumber",
       },
     ];
 
@@ -381,12 +529,7 @@ export const getAllStockRequestsReports = async (req, res) => {
       }
     }
 
-    populateOptions.push({
-      path: "products.product",
-      select:
-        "productTitle productPrice productCode productImage trackSerialNumber",
-    });
-
+    // Sort options
     const sort = {};
     const validSortFields = [
       "createdAt",
@@ -400,23 +543,44 @@ export const getAllStockRequestsReports = async (req, res) => {
       : "createdAt";
     sort[actualSortBy] = sortOrder === "desc" ? -1 : 1;
 
-    const options = {
-      page: parseInt(page),
-      limit: parseInt(limit),
-      sort,
-    };
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
-    const stockRequests = await StockRequest.find(filter)
-      .sort(sort)
-      .skip((options.page - 1) * options.limit)
-      .limit(options.limit)
-      .populate(populateOptions)
-      .lean();
+    const [stockRequests, total] = await Promise.all([
+      query
+        .populate(populateOptions)
+        .sort(sort)
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      StockRequest.countDocuments(filter)
+    ]);
 
+    console.log(`Found ${stockRequests.length} records out of ${total} total`);
+
+    // Post-process to filter products array if product filter is applied
+    let processedRequests = stockRequests;
+    if (productFilterValue) {
+      processedRequests = stockRequests.map(request => {
+        const filteredProducts = request.products.filter(productItem => {
+          if (!productItem.product) return false;
+          const productId = productItem.product._id?.toString() || productItem.product?.toString();
+          return productId === productFilterValue;
+        });
+        
+        return {
+          ...request,
+          products: filteredProducts
+        };
+      }).filter(request => request.products.length > 0); // Remove requests with no matching products
+    }
+
+    // Fetch stock data for each product
     const OutletStock = mongoose.model("OutletStock");
     const CenterStock = mongoose.model("CenterStock");
 
-    for (const request of stockRequests) {
+    for (const request of processedRequests) {
       for (const productItem of request.products) {
         if (productItem.product && request.warehouse && request.center) {
           try {
@@ -548,7 +712,44 @@ export const getAllStockRequestsReports = async (req, res) => {
       }
     }
 
-    const total = await StockRequest.countDocuments(filter);
+    // Get summary statistics
+    const summaryStats = await StockRequest.aggregate([
+      { $match: filter },
+      { $unwind: "$products" },
+      ...(productFilterValue ? [{
+        $match: {
+          "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
+            ? new mongoose.Types.ObjectId(productFilterValue)
+            : productFilterValue
+        }
+      }] : []),
+      {
+        $group: {
+          _id: null,
+          totalRequests: { $addToSet: "$_id" },
+          totalProducts: { $sum: 1 },
+          totalQuantity: { $sum: "$products.quantity" },
+          totalReceived: { $sum: "$products.receivedQuantity" }
+        }
+      },
+      {
+        $project: {
+          totalRequests: { $size: "$totalRequests" },
+          totalProducts: 1,
+          totalQuantity: 1,
+          totalReceived: 1,
+          pendingQuantity: { $subtract: ["$totalQuantity", "$totalReceived"] }
+        }
+      }
+    ]);
+
+    const summary = summaryStats.length > 0 ? summaryStats[0] : {
+      totalRequests: 0,
+      totalProducts: 0,
+      totalQuantity: 0,
+      totalReceived: 0,
+      pendingQuantity: 0
+    };
 
     const statusCounts = await StockRequest.aggregate([
       { $match: filter },
@@ -565,19 +766,28 @@ export const getAllStockRequestsReports = async (req, res) => {
       statusFilters[item._id] = item.count;
     });
 
+    // Adjust total count if product filter was applied in post-processing
+    const finalTotal = productFilterValue ? processedRequests.length : total;
+
     const response = {
       success: true,
       message: "Stock requests retrieved successfully",
-      data: stockRequests,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / options.limit),
-        totalItems: total,
-        itemsPerPage: parseInt(limit),
-      },
+      data: processedRequests,
+      summary: summary,
       filters: {
+        center: center || centerId || "all",
+        product: product || productId || "all",
         status: statusFilters,
-        total: total,
+        startDate: startDate || "all",
+        endDate: endDate || "all",
+        warehouse: warehouse || "all",
+        total: finalTotal,
+      },
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(finalTotal / limitNum),
+        totalItems: finalTotal,
+        itemsPerPage: limitNum,
       },
     };
 
@@ -1125,6 +1335,10 @@ export const getAllStockTransfersReports = async (req, res) => {
       status,
       fromCenter,
       toCenter,
+      center,
+      centerId,
+      product,
+      productId,
       startDate,
       endDate,
       createdBy,
@@ -1142,16 +1356,38 @@ export const getAllStockTransfersReports = async (req, res) => {
 
     const filter = {};
 
+    console.log('Received query params:', {
+      center, centerId, product, productId, startDate, endDate, fromCenter, toCenter
+    });
+
+    // Center filtering with permission check
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
         filter.$or = [{ fromCenter: userCenterId }, { toCenter: userCenterId }];
       }
     } else if (permissions.view_all_report) {
-      if (fromCenter) filter.fromCenter = fromCenter;
-      if (toCenter) filter.toCenter = toCenter;
+      // Support center filter for both fromCenter and toCenter
+      const centerFilterValue = center || centerId;
+      if (centerFilterValue) {
+        filter.$or = [
+          { fromCenter: centerFilterValue },
+          { toCenter: centerFilterValue }
+        ];
+      } else {
+        // Individual center filters
+        if (fromCenter) filter.fromCenter = fromCenter;
+        if (toCenter) filter.toCenter = toCenter;
+      }
     }
 
+    // Product filtering
+    const productFilterValue = product || productId;
+    if (productFilterValue) {
+      filter["products.product"] = productFilterValue;
+    }
+
+    // Status filtering
     if (status) {
       filter.status = status;
     }
@@ -1163,16 +1399,22 @@ export const getAllStockTransfersReports = async (req, res) => {
       filter.status = { $in: statusArray };
     }
 
+    // Date range filtering with proper time boundaries
     if (startDate || endDate) {
       filter[dateField] = {};
-      if (startDate) filter[dateField].$gte = new Date(startDate);
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        filter[dateField].$gte = start;
+      }
       if (endDate) {
-        const endDateObj = new Date(endDate);
-        endDateObj.setHours(23, 59, 59, 999);
-        filter[dateField].$lte = endDateObj;
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        filter[dateField].$lte = end;
       }
     }
 
+    // User filtering
     if (createdBy) {
       filter.createdBy = createdBy;
     }
@@ -1189,6 +1431,7 @@ export const getAllStockTransfersReports = async (req, res) => {
       filter["receivingInfo.receivedBy"] = receivedBy;
     }
 
+    // Enhanced search filtering
     if (search) {
       filter.$or = [
         { transferNumber: { $regex: search, $options: "i" } },
@@ -1201,23 +1444,36 @@ export const getAllStockTransfersReports = async (req, res) => {
             $options: "i",
           },
         },
+        { "products.product.productTitle": { $regex: search, $options: "i" } },
+        { "fromCenter.centerName": { $regex: search, $options: "i" } },
+        { "fromCenter.centerCode": { $regex: search, $options: "i" } },
+        { "toCenter.centerName": { $regex: search, $options: "i" } },
+        { "toCenter.centerCode": { $regex: search, $options: "i" } },
       ];
     }
 
+    console.log('Final filter:', JSON.stringify(filter, null, 2));
+
+    // Use regular find with populate for better compatibility
+    let query = StockTransfer.find(filter);
+
+    // Populate options
     const populateOptions = [
       {
         path: "createdBy",
         select: "fullName email",
       },
-
       {
         path: "fromCenter",
         select: "centerName centerCode centerType",
       },
-
       {
         path: "toCenter",
         select: "centerName centerCode centerType",
+      },
+      {
+        path: "products.product",
+        select: "productTitle productPrice productCode productImage trackSerialNumber",
       },
     ];
 
@@ -1249,12 +1505,7 @@ export const getAllStockTransfersReports = async (req, res) => {
       }
     }
 
-    populateOptions.push({
-      path: "products.product",
-      select:
-        "productTitle productPrice productCode productImage trackSerialNumber",
-    });
-
+    // Sort options
     const sort = {};
     const validSortFields = [
       "createdAt",
@@ -1268,22 +1519,43 @@ export const getAllStockTransfersReports = async (req, res) => {
       : "createdAt";
     sort[actualSortBy] = sortOrder === "desc" ? -1 : 1;
 
-    const options = {
-      page: parseInt(page),
-      limit: parseInt(limit),
-      sort,
-    };
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
-    const stockTransfers = await StockTransfer.find(filter)
-      .sort(sort)
-      .skip((options.page - 1) * options.limit)
-      .limit(options.limit)
-      .populate(populateOptions)
-      .lean();
+    const [stockTransfers, total] = await Promise.all([
+      query
+        .populate(populateOptions)
+        .sort(sort)
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      StockTransfer.countDocuments(filter)
+    ]);
 
+    console.log(`Found ${stockTransfers.length} records out of ${total} total`);
+
+    // Post-process to filter products array if product filter is applied
+    let processedTransfers = stockTransfers;
+    if (productFilterValue) {
+      processedTransfers = stockTransfers.map(transfer => {
+        const filteredProducts = transfer.products.filter(productItem => {
+          if (!productItem.product) return false;
+          const productId = productItem.product._id?.toString() || productItem.product?.toString();
+          return productId === productFilterValue;
+        });
+        
+        return {
+          ...transfer,
+          products: filteredProducts
+        };
+      }).filter(transfer => transfer.products.length > 0); // Remove transfers with no matching products
+    }
+
+    // Fetch stock data for each product
     const CenterStock = mongoose.model("CenterStock");
 
-    for (const transfer of stockTransfers) {
+    for (const transfer of processedTransfers) {
       for (const productItem of transfer.products) {
         if (productItem.product && transfer.fromCenter && transfer.toCenter) {
           try {
@@ -1368,7 +1640,49 @@ export const getAllStockTransfersReports = async (req, res) => {
       }
     }
 
-    const total = await StockTransfer.countDocuments(filter);
+    // Get summary statistics
+    const summaryStats = await StockTransfer.aggregate([
+      { $match: filter },
+      { $unwind: "$products" },
+      ...(productFilterValue ? [{
+        $match: {
+          "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
+            ? new mongoose.Types.ObjectId(productFilterValue)
+            : productFilterValue
+        }
+      }] : []),
+      {
+        $group: {
+          _id: null,
+          totalTransfers: { $addToSet: "$_id" },
+          totalProducts: { $sum: 1 },
+          totalQuantity: { $sum: "$products.quantity" },
+          totalShipped: { $sum: "$products.shippedQuantity" },
+          totalReceived: { $sum: "$products.receivedQuantity" }
+        }
+      },
+      {
+        $project: {
+          totalTransfers: { $size: "$totalTransfers" },
+          totalProducts: 1,
+          totalQuantity: 1,
+          totalShipped: 1,
+          totalReceived: 1,
+          pendingShipment: { $subtract: ["$totalQuantity", "$totalShipped"] },
+          pendingReceipt: { $subtract: ["$totalShipped", "$totalReceived"] }
+        }
+      }
+    ]);
+
+    const summary = summaryStats.length > 0 ? summaryStats[0] : {
+      totalTransfers: 0,
+      totalProducts: 0,
+      totalQuantity: 0,
+      totalShipped: 0,
+      totalReceived: 0,
+      pendingShipment: 0,
+      pendingReceipt: 0
+    };
 
     const statusCounts = await StockTransfer.aggregate([
       { $match: filter },
@@ -1401,21 +1715,31 @@ export const getAllStockTransfersReports = async (req, res) => {
       },
     ]);
 
+    // Adjust total count if product filter was applied in post-processing
+    const finalTotal = productFilterValue ? processedTransfers.length : total;
+
     const response = {
       success: true,
       message: "Stock transfers retrieved successfully",
-      data: stockTransfers,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / options.limit),
-        totalItems: total,
-        itemsPerPage: parseInt(limit),
-      },
+      data: processedTransfers,
+      summary: summary,
       filters: {
+        center: center || centerId || "all",
+        product: product || productId || "all",
+        fromCenter: fromCenter || "all",
+        toCenter: toCenter || "all",
         status: statusFilters,
-        total: total,
+        startDate: startDate || "all",
+        endDate: endDate || "all",
+        total: finalTotal,
         uniqueFromCenters: centerStats[0]?.fromCenters[0]?.total || 0,
         uniqueToCenters: centerStats[0]?.toCenters[0]?.total || 0,
+      },
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(finalTotal / limitNum),
+        totalItems: finalTotal,
+        itemsPerPage: limitNum,
       },
     };
 
@@ -2243,6 +2567,9 @@ export const getAllStolenStockReports = async (req, res) => {
       page = 1,
       limit = 10,
       center,
+      centerId,
+      product,
+      productId,
       stolenFrom,
       status,
       startDate,
@@ -2262,25 +2589,44 @@ export const getAllStolenStockReports = async (req, res) => {
       },
     };
 
+    console.log('Received query params:', {
+      center, centerId, product, productId, startDate, endDate, stolenFrom, status
+    });
+
+    // Center filtering with permission check
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
         filter.center = userCenterId;
       }
-    } else if (permissions.view_all_report && center) {
-      filter.center = center;
+    } else if (permissions.view_all_report && (center || centerId)) {
+      // Support both center and centerId parameters
+      const centerFilterValue = center || centerId;
+      filter.center = centerFilterValue;
     }
 
+    // Product filtering
+    const productFilterValue = product || productId;
+    if (productFilterValue) {
+      filter["items.product"] = productFilterValue;
+    }
+
+    // Stolen from and status filtering
     if (stolenFrom) filter.usageType = stolenFrom;
     if (status) filter.status = status;
 
+    // Date range filtering with proper time boundaries
     if (startDate || endDate) {
       filter[dateField] = {};
-      if (startDate) filter[dateField].$gte = new Date(startDate);
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        filter[dateField].$gte = start;
+      }
       if (endDate) {
-        const endDateObj = new Date(endDate);
-        endDateObj.setHours(23, 59, 59, 999);
-        filter[dateField].$lte = endDateObj;
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        filter[dateField].$lte = end;
       }
     }
 
@@ -2288,22 +2634,36 @@ export const getAllStolenStockReports = async (req, res) => {
       filter.createdBy = createdBy;
     }
 
+    // Enhanced search filtering
     if (search) {
       filter.$or = [
         { remark: { $regex: search, $options: "i" } },
         { "items.serialNumbers": { $regex: search, $options: "i" } },
+        { "items.product.productTitle": { $regex: search, $options: "i" } },
+        { "items.product.productCode": { $regex: search, $options: "i" } },
+        { "center.centerName": { $regex: search, $options: "i" } },
+        { "center.centerCode": { $regex: search, $options: "i" } },
       ];
     }
 
+    console.log('Final filter:', JSON.stringify(filter, null, 2));
+
+    // Use regular find with populate for better compatibility
+    let query = StockUsage.find(filter);
+
+    // Populate options
     const populateOptions = [
       {
         path: "createdBy",
         select: "fullName email",
       },
-
       {
         path: "center",
         select: "centerName centerCode centerType",
+      },
+      {
+        path: "items.product",
+        select: "productTitle productPrice productCode productImage trackSerialNumber",
       },
     ];
 
@@ -2321,12 +2681,7 @@ export const getAllStolenStockReports = async (req, res) => {
       }
     }
 
-    populateOptions.push({
-      path: "items.product",
-      select:
-        "productTitle productPrice productCode productImage trackSerialNumber",
-    });
-
+    // Sort options
     const sort = {};
     const validSortFields = [
       "createdAt",
@@ -2338,22 +2693,44 @@ export const getAllStolenStockReports = async (req, res) => {
     const actualSortBy = validSortFields.includes(sortBy) ? sortBy : "date";
     sort[actualSortBy] = sortOrder === "desc" ? -1 : 1;
 
-    const options = {
-      page: parseInt(page),
-      limit: parseInt(limit),
-      sort,
-    };
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
-    const stolenStockReports = await StockUsage.find(filter)
-      .sort(sort)
-      .skip((options.page - 1) * options.limit)
-      .limit(options.limit)
-      .populate(populateOptions)
-      .lean();
+    const [stolenStockReports, total] = await Promise.all([
+      query
+        .populate(populateOptions)
+        .sort(sort)
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      StockUsage.countDocuments(filter)
+    ]);
 
+    console.log(`Found ${stolenStockReports.length} records out of ${total} total`);
+
+    // Post-process to filter items array if product filter is applied
+    let processedReports = stolenStockReports;
+    if (productFilterValue) {
+      processedReports = stolenStockReports.map(report => {
+        const filteredItems = report.items.filter(item => {
+          if (!item.product) return false;
+          const productId = item.product._id?.toString() || item.product?.toString();
+          return productId === productFilterValue;
+        });
+        
+        return {
+          ...report,
+          items: filteredItems
+        };
+      }).filter(report => report.items.length > 0); // Remove reports with no matching items
+    }
+
+    // Fetch stock data for each product and calculate totals
     const CenterStock = mongoose.model("CenterStock");
 
-    for (const report of stolenStockReports) {
+    for (const report of processedReports) {
+      // Remove unnecessary fields
       delete report.packageAmount;
       delete report.onuCharges;
       delete report.installationCharges;
@@ -2361,6 +2738,7 @@ export const getAllStolenStockReports = async (req, res) => {
       delete report.wireChangeAmount;
 
       for (const item of report.items) {
+        // Remove unnecessary fields
         delete item.oldStock;
         delete item.newStock;
 
@@ -2400,26 +2778,142 @@ export const getAllStolenStockReports = async (req, res) => {
         }
       }
 
+      // Calculate total stolen quantity for this report
       report.totalStolenQuantity = report.items.reduce(
         (sum, item) => sum + item.quantity,
         0
       );
     }
 
-    const total = await StockUsage.countDocuments(filter);
+    // Get summary statistics
+    const summaryStats = await StockUsage.aggregate([
+      { $match: filter },
+      { $unwind: "$items" },
+      ...(productFilterValue ? [{
+        $match: {
+          "items.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
+            ? new mongoose.Types.ObjectId(productFilterValue)
+            : productFilterValue
+        }
+      }] : []),
+      {
+        $group: {
+          _id: null,
+          totalReports: { $addToSet: "$_id" },
+          totalItems: { $sum: 1 },
+          totalStolenQuantity: { $sum: "$items.quantity" },
+          byStolenFrom: {
+            $push: {
+              type: "$usageType",
+              quantity: "$items.quantity"
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          totalReports: { $size: "$totalReports" },
+          totalItems: 1,
+          totalStolenQuantity: 1,
+          stolenFromCenter: {
+            $sum: {
+              $map: {
+                input: {
+                  $filter: {
+                    input: "$byStolenFrom",
+                    as: "item",
+                    cond: { $eq: ["$$item.type", "Stolen from Center"] }
+                  }
+                },
+                as: "centerItem",
+                in: "$$centerItem.quantity"
+              }
+            }
+          },
+          stolenFromField: {
+            $sum: {
+              $map: {
+                input: {
+                  $filter: {
+                    input: "$byStolenFrom",
+                    as: "item",
+                    cond: { $eq: ["$$item.type", "Stolen from Field"] }
+                  }
+                },
+                as: "fieldItem",
+                in: "$$fieldItem.quantity"
+              }
+            }
+          }
+        }
+      }
+    ]);
+
+    const summary = summaryStats.length > 0 ? summaryStats[0] : {
+      totalReports: 0,
+      totalItems: 0,
+      totalStolenQuantity: 0,
+      stolenFromCenter: 0,
+      stolenFromField: 0
+    };
+
+    // Get status counts
+    const statusCounts = await StockUsage.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const statusFilters = {};
+    statusCounts.forEach((item) => {
+      statusFilters[item._id] = item.count;
+    });
+
+    // Get stolen from counts
+    const stolenFromCounts = await StockUsage.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$usageType",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const stolenFromFilters = {};
+    stolenFromCounts.forEach((item) => {
+      stolenFromFilters[item._id] = item.count;
+    });
+
+    // Adjust total count if product filter was applied in post-processing
+    const finalTotal = productFilterValue ? processedReports.length : total;
 
     const response = {
       success: true,
       message: "Stolen stock reports retrieved successfully",
-      data: stolenStockReports,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / options.limit),
-        totalItems: total,
-        itemsPerPage: parseInt(limit),
+      data: processedReports,
+      summary: summary,
+      filters: {
+        center: center || centerId || "all",
+        product: product || productId || "all",
+        stolenFrom: stolenFrom || "all",
+        status: status || "all",
+        startDate: startDate || "all",
+        endDate: endDate || "all",
+        createdBy: createdBy || "all",
+        total: finalTotal,
+        statusCounts: statusFilters,
+        stolenFromCounts: stolenFromFilters,
       },
-      statistics: {
-        total: total,
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(finalTotal / limitNum),
+        totalItems: finalTotal,
+        itemsPerPage: limitNum,
       },
     };
 
