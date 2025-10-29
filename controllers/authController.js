@@ -2,6 +2,78 @@ import User from "../models/User.js";
 import jwt from "jsonwebtoken";
 import Center from "../models/Center.js";
 import Role from "../models/Roles.js";
+import LoginHistory from "../models/LoginHistory.js";
+
+const getClientIP = (req) => {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    const ips = forwarded.split(',');
+    const clientIP = ips[0].trim();
+    if (clientIP === '::1') {
+      return '127.0.0.1';
+    }
+    return clientIP;
+  }
+  const realIP = req.headers['x-real-ip'];
+  if (realIP) {
+    if (realIP === '::1') return '127.0.0.1';
+    return realIP;
+  }
+  const remoteAddr = req.connection.remoteAddress || 
+                    req.socket.remoteAddress ||
+                    (req.connection.socket ? req.connection.socket.remoteAddress : null);
+
+  if (remoteAddr) {
+    if (remoteAddr === '::1') {
+      return '127.0.0.1';
+    }
+    if (remoteAddr.startsWith('::ffff:')) {
+      return remoteAddr.substring(7);
+    }
+    return remoteAddr;
+  }
+
+  return 'Unknown';
+};
+
+const getBrowserInfo = (userAgent) => {
+  if (!userAgent) return 'Unknown';
+
+  let browser = 'Unknown';
+  let version = '';
+  if (userAgent.includes('Chrome') && !userAgent.includes('Edg') && !userAgent.includes('OPR')) {
+    browser = 'Chrome';
+    const match = userAgent.match(/Chrome\/([0-9.]+)/);
+    version = match ? match[1] : '';
+  }
+  else if (userAgent.includes('Edg')) {
+    browser = 'Edge';
+    const match = userAgent.match(/Edg\/([0-9.]+)/);
+    version = match ? match[1] : '';
+  }
+  else if (userAgent.includes('Firefox')) {
+    browser = 'Firefox';
+    const match = userAgent.match(/Firefox\/([0-9.]+)/);
+    version = match ? match[1] : '';
+  }
+  else if (userAgent.includes('Safari') && !userAgent.includes('Chrome')) {
+    browser = 'Safari';
+    const match = userAgent.match(/Version\/([0-9.]+)/);
+    version = match ? match[1] : '';
+  }
+  else if (userAgent.includes('OPR')) {
+    browser = 'Opera';
+    const match = userAgent.match(/OPR\/([0-9.]+)/);
+    version = match ? match[1] : '';
+  }
+  if (version) {
+    const versionParts = version.split('.');
+    const majorVersion = versionParts.slice(0, 2).join('.');
+    return `${browser} ${majorVersion}`;
+  }
+
+  return browser;
+};
 
 const signToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -48,6 +120,24 @@ export const login = async (req, res) => {
     }
 
     const user = await User.findByCredentials(identifier, password);
+    const browser = getBrowserInfo(req.headers['user-agent']);
+    const ip = getClientIP(req);
+
+      await LoginHistory.findOneAndUpdate(
+      { user: user._id },
+      {
+        user: user._id,
+        name: user.fullName,
+        email: user.email,
+        browser: browser,
+        ip: ip,
+        date: new Date()
+      },
+      { upsert: true, new: true }
+    )
+    user.lastLogin = new Date();
+    await user.save();
+
     await user.populate("center", "centerName centerCode centerType");
     await user.populate({
       path: "role",
@@ -541,4 +631,42 @@ export const logout = (req, res) => {
     success: true,
     message: "Logged out successfully",
   });
+};
+
+
+
+export const getLoginHistory = async (req, res) => {
+  try {
+    const filter = {};
+  
+    if (req.user) {
+      filter.user = req.user.id;
+    }
+    const loginHistory = await LoginHistory.find(filter)
+      .populate("user", "fullName email mobile status")
+      .sort({ date: -1 })
+      .lean();
+
+    const formattedHistory = loginHistory.map(record => ({
+      name: record.name,
+      email: record.email,
+      browser: record.browser,
+      ip: record.ip,
+      date: record.date
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        loginHistory: formattedHistory
+      },
+    });
+  } catch (error) {
+    console.error("Get login history error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching login history",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
 };

@@ -65,6 +65,7 @@ const centerStockSchema = new mongoose.Schema(
             "transferred",
             "consumed",
             "damaged",
+            "damage_pending"
           ],
           default: "available",
         },
@@ -94,6 +95,9 @@ const centerStockSchema = new mongoose.Schema(
                 "damage_rejected",
                 "transfer_rejected",
                 "transfer_updated",
+                "replacement_return",
+                "replacement_issue",
+                "damage_return_request"
               ],
             },
           },

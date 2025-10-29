@@ -6,6 +6,7 @@ import Building from "../models/Building.js";
 import ControlRoom from "../models/ControlRoomModel.js";
 import mongoose from "mongoose";
 import User from "../models/User.js";
+import ReplacementRecord from "../models/ReplacementRecord.js";
 
 const checkStockUsagePermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
@@ -114,7 +115,7 @@ const getUserCenterId = async (userId) => {
 
 export const createStockUsage = async (req, res) => {
   try {
-    const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+    const { hasAccess, permissions } = checkStockUsagePermissions(
       req,
       ["manage_usage_own_center", "manage_usage_all_center"]
     );
@@ -2760,164 +2761,6 @@ export const getStockUsageByCenter = async (req, res) => {
   }
 };
 
-//   try {
-//     const { hasAccess,userCenter } = checkStockUsagePermissions(
-//       req,
-//       ["view_usage_own_center", "view_usage_all_center"]
-//     );
-
-//     if (!hasAccess) {
-//       return res.status(403).json({
-//         success: false,
-//         message:
-//           "Access denied. view_usage_own_center or view_usage_all_center permission required.",
-//       });
-//     }
-
-//     const { customerId } = req.params;
-//     const {
-//       page = 1,
-//       limit = 10,
-//       startDate,
-//       endDate,
-//       product,
-//       connectionType,
-//       sortBy = "date",
-//       sortOrder = "desc",
-//     } = req.query;
-
-//     const userCenterId = userCenter?._id || userCenter;
-//     if (!userCenterId) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "User must be associated with a center",
-//       });
-//     }
-
-//     const customer = await Customer.findOne({
-//       _id: customerId,
-//       center: userCenterId,
-//     }).populate("center", "centerName centerCode");
-
-//     if (!customer) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Customer not found or you don't have access to this customer",
-//       });
-//     }
-
-//     const query = {
-//       usageType: "Customer",
-//       customer: customerId,
-//       center: userCenterId,
-//       status: "completed",
-//       "items.serialNumbers.0": { $exists: true },
-//     };
-
-//     if (startDate || endDate) {
-//       query.date = {};
-//       if (startDate) query.date.$gte = new Date(startDate);
-//       if (endDate) query.date.$lte = new Date(endDate);
-//     }
-
-//     if (product) query["items.product"] = product;
-//     if (connectionType) query.connectionType = connectionType;
-
-//     const total = await StockUsage.countDocuments(query);
-//     const skip = (parseInt(page) - 1) * parseInt(limit);
-
-//     const sortConfig = {};
-//     sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
-
-//     const stockUsages = await StockUsage.find(query)
-//       .populate("center", "centerName centerCode")
-//       .populate({
-//         path: "items.product",
-//         select: "productTitle productCode category trackSerialNumber",
-//         match: { trackSerialNumber: "Yes" },
-//       })
-//       .populate("createdBy", "name email")
-//       .sort(sortConfig)
-//       .skip(skip)
-//       .limit(parseInt(limit));
-
-//     const filteredUsages = stockUsages
-//       .map((usage) => ({
-//         ...usage.toObject(),
-//         items: usage.items.filter(
-//           (item) =>
-//             item.product !== null &&
-//             item.serialNumbers &&
-//             item.serialNumbers.length > 0
-//         ),
-//       }))
-//       .filter((usage) => usage.items.length > 0);
-
-//     const formattedData = [];
-
-//     filteredUsages.forEach((usage) => {
-//       usage.items.forEach((item) => {
-//         if (
-//           item.serialNumbers &&
-//           item.serialNumbers.length > 0 &&
-//           item.product
-//         ) {
-//           item.serialNumbers.forEach((serialNumber) => {
-//             formattedData.push({
-//               _id: `${usage._id}_${serialNumber}`,
-//               Product: item.product.productTitle || "Unknown Product",
-//               "Serial No.": serialNumber,
-//               Type: usage.usageType,
-//               Date: usage.date.toLocaleDateString(),
-//               "Connection Type": usage.connectionType || "N/A",
-//               "Package Amount": usage.packageAmount || 0,
-//               "Package Duration": usage.packageDuration || "N/A",
-//               "ONU Charges": usage.onuCharges || 0,
-//               "Installation Charges": usage.installationCharges || 0,
-//               Remark: usage.remark || "",
-//               Option: getConnectionOption(usage.connectionType, usage.reason),
-//               Status: usage.status,
-//               "Product Code": item.product.productCode || "N/A",
-//               "Assigned Date": usage.date.toLocaleDateString(),
-//               "Product Category": item.product.category || "N/A",
-//             });
-//           });
-//         }
-//       });
-//     });
-
-//     res.status(200).json({
-//       success: true,
-//       data: formattedData,
-//       customer: {
-//         id: customer._id,
-//         name: customer.name,
-//         username: customer.username,
-//         mobile: customer.mobile,
-//         email: customer.email,
-//       },
-//       pagination: {
-//         total: formattedData.length,
-//         page: parseInt(page),
-//         limit: parseInt(limit),
-//         totalPages: Math.ceil(formattedData.length / limit),
-//       },
-//       summary: {
-//         totalDevices: formattedData.length,
-//         uniqueProducts: [...new Set(formattedData.map((item) => item.Product))]
-//           .length,
-//         connectionTypes: getConnectionTypeSummary(formattedData),
-//       },
-//     });
-//   } catch (error) {
-//     console.error("Error fetching product devices by customer:", error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Server error",
-//     });
-//   }
-// };
-
 export const getProductDevicesByCustomer = async (req, res) => {
   try {
     const { hasAccess, userCenter } = checkStockUsagePermissions(
@@ -3225,6 +3068,12 @@ export const getProductDevicesByBuilding = async (req, res) => {
           item.serialNumbers.forEach((serialNumber) => {
             formattedData.push({
               _id: `${usage._id}_${serialNumber}`,
+              usageId: usage._id, 
+              center: {
+                id: usage.center?._id,
+                name: usage.center?.centerName,
+                code: usage.center?.centerCode,
+              },
               productId: item.product._id, 
               Product: item.product.productTitle || "Unknown Product",
               "Serial No.": serialNumber,
@@ -3365,7 +3214,7 @@ export const getProductDevicesByControlRoom = async (req, res) => {
       .populate("fromControlRoom", "buildingName displayName")
       .populate({
         path: "items.product",
-        select: "productTitle productCode category trackSerialNumber",
+        select: "productTitle productCode category trackSerialNumber _id",
         match: { trackSerialNumber: "Yes" },
       })
       .populate("createdBy", "name email")
@@ -3397,6 +3246,7 @@ export const getProductDevicesByControlRoom = async (req, res) => {
           item.serialNumbers.forEach((serialNumber) => {
             formattedData.push({
               _id: `${usage._id}_${serialNumber}`,
+              usageId: usage._id, 
               Product: item.product.productTitle || "Unknown Product",
               "Serial No.": serialNumber,
               Type: usage.usageType,
@@ -3769,6 +3619,566 @@ export const getDamageReturnRecordsWithStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch damage return records",
+    });
+  }
+};
+
+
+// export const replaceProductSerial = async (req, res) => {
+//   try {
+//     const { hasAccess } = checkStockUsagePermissions(
+//       req,
+//       ["manage_usage_own_center", "manage_usage_all_center"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Access denied. manage_usage_own_center or manage_usage_all_center permission required.",
+//       });
+//     }
+
+//     const {
+//       originalUsageId,
+//       productId,
+//       oldSerialNumber,
+//       newSerialNumber
+//     } = req.body;
+
+//     const replacedBy = req.user.id;
+
+//     console.log("=== SERIAL NUMBER REPLACEMENT REQUEST ===");
+//     console.log("Request Body:", {
+//       originalUsageId,
+//       productId,
+//       oldSerialNumber,
+//       newSerialNumber
+//     });
+//     if (!originalUsageId || !productId || !oldSerialNumber || !newSerialNumber) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "All fields are required: originalUsageId, productId, oldSerialNumber, newSerialNumber"
+//       });
+//     }
+
+//     if (!mongoose.Types.ObjectId.isValid(originalUsageId)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid originalUsageId format"
+//       });
+//     }
+
+//     if (!mongoose.Types.ObjectId.isValid(productId)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid productId format"
+//       });
+//     }
+
+//     try {
+//       const userCenterId = await getUserCenterId(req.user._id);
+      
+//       const StockUsage = mongoose.model("StockUsage");
+//       const originalUsage = await StockUsage.findById(originalUsageId);
+      
+//       if (!originalUsage) {
+//         return res.status(404).json({
+//           success: false,
+//           message: `Original stock usage record not found with ID: ${originalUsageId}`
+//         });
+//       }
+//       if (originalUsage.center.toString() !== userCenterId.toString()) {
+//         return res.status(403).json({
+//           success: false,
+//           message: "You can only replace products from your own center"
+//         });
+//       }
+//       const CenterStock = mongoose.model("CenterStock");
+//       const centerStock = await CenterStock.findOne({
+//         center: userCenterId,
+//         product: productId
+//       });
+
+//       if (!centerStock) {
+//         return res.status(404).json({
+//           success: false,
+//           message: `Center stock not found for product: ${productId}`
+//         });
+//       }
+
+//       console.log("Center stock found for product");
+//       const oldSerial = centerStock.serialNumbers.find(
+//         sn => sn.serialNumber === oldSerialNumber && sn.status === "consumed"
+//       );
+      
+//       if (!oldSerial) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `Old serial number '${oldSerialNumber}' not found or not in consumed status. It might be already available or assigned to someone else.`
+//         });
+//       }
+
+//       console.log(`✓ Old serial '${oldSerialNumber}' found with consumed status`);
+//       const newSerial = centerStock.serialNumbers.find(
+//         sn => sn.serialNumber === newSerialNumber && sn.status === "available"
+//       );
+      
+//       if (!newSerial) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `New serial number '${newSerialNumber}' not found or not available. It might be already consumed or assigned.`
+//         });
+//       }
+
+//       console.log(`✓ New serial '${newSerialNumber}' found with available status`);
+//       console.log("Updating CenterStock serial number statuses...");
+//       oldSerial.status = "available";
+//       oldSerial.currentLocation = userCenterId;
+//       oldSerial.consumedDate = null;
+//       oldSerial.consumedBy = null;
+//       oldSerial.transferHistory.push({
+//         fromCenter: null,
+//         toCenter: userCenterId,
+//         transferDate: new Date(),
+//         transferType: "replacement_return",
+//         referenceId: originalUsageId,
+//         remark: `Returned to stock - Replaced by ${newSerialNumber}`,
+//         replacedBy: replacedBy
+//       });
+//       newSerial.status = "consumed";
+//       newSerial.currentLocation = null;
+//       newSerial.consumedDate = new Date();
+//       newSerial.consumedBy = replacedBy;
+//       newSerial.transferHistory.push({
+//         fromCenter: userCenterId,
+//         transferDate: new Date(),
+//         transferType: "replacement_issue",
+//         referenceId: originalUsageId,
+//         remark: `Issued as replacement for ${oldSerialNumber}`,
+//         replacedBy: replacedBy
+//       });
+
+//       console.log(`✓ CenterStock status updated: '${oldSerialNumber}' (consumed → available)`);
+//       console.log(`✓ CenterStock status updated: '${newSerialNumber}' (available → consumed)`);
+//       await centerStock.save();
+//       console.log("✓ Center stock updated successfully");
+//       console.log("Updating EntityStock serial numbers...");
+//       const EntityStock = mongoose.model("EntityStock");
+//       const entityType = getEntityType(originalUsage.usageType);
+//       const entityId = getEntityId(originalUsage);
+      
+//       if (entityType && entityId) {
+//         const entityStock = await EntityStock.findOne({
+//           entityType: entityType,
+//           entityId: entityId,
+//           product: productId
+//         });
+
+//         if (entityStock) {
+//           const entitySerial = entityStock.serialNumbers.find(
+//             sn => sn.serialNumber === oldSerialNumber
+//           );
+
+//           if (entitySerial) {
+//             entitySerial.serialNumber = newSerialNumber;
+//             entitySerial.assignedDate = new Date();
+//             console.log(`✓ EntityStock updated: '${oldSerialNumber}' → '${newSerialNumber}'`);
+//           } else {
+//             console.log(`⚠ Old serial '${oldSerialNumber}' not found in EntityStock, adding new serial`);
+//             entityStock.serialNumbers.push({
+//               serialNumber: newSerialNumber,
+//               status: "used",
+//               assignedDate: new Date(),
+//               usageReference: originalUsageId,
+//               usageType: originalUsage.usageType
+//             });
+//             entityStock.totalQuantity += 1;
+//             entityStock.availableQuantity += 1;
+//           }
+
+//           await entityStock.save();
+//           console.log("✓ Entity stock updated successfully");
+//         } else {
+//           console.log(`⚠ EntityStock not found for ${entityType}: ${entityId}`);
+//         }
+//       } else {
+//         console.log("⚠ No entity type/ID found for this usage type");
+//       }
+//       let serialUpdated = false;
+//       for (let item of originalUsage.items) {
+//         if (item.product.toString() === productId.toString() && 
+//             item.serialNumbers && 
+//             item.serialNumbers.includes(oldSerialNumber)) {
+//           const serialIndex = item.serialNumbers.indexOf(oldSerialNumber);
+//           if (serialIndex !== -1) {
+//             item.serialNumbers[serialIndex] = newSerialNumber;
+//             serialUpdated = true;
+//             console.log(`✓ Stock usage record updated: ${oldSerialNumber} → ${newSerialNumber}`);
+//             break;
+//           }
+//         }
+//       }
+
+//       if (!serialUpdated) {
+//         return res.status(404).json({
+//           success: false,
+//           message: `Could not find old serial number '${oldSerialNumber}' in the original stock usage record`
+//         });
+//       }
+
+//       await originalUsage.save();
+//       console.log("✓ Stock usage record saved successfully");
+
+//       console.log("=== SERIAL REPLACEMENT COMPLETED SUCCESSFULLY ===");
+//       res.json({
+//         success: true,
+//         message: `Serial number replaced successfully: ${oldSerialNumber} → ${newSerialNumber}`,
+//         data: {
+//           replacementDetails: {
+//             oldSerialNumber: oldSerialNumber,
+//             newSerialNumber: newSerialNumber,
+//             productId: productId,
+//             originalUsageId: originalUsageId,
+//             entityType: entityType,
+//             entityId: entityId,
+//             replacedBy: req.user.name,
+//             replacedAt: new Date()
+//           },
+//           statusChanges: {
+//             oldSerial: {
+//               from: "consumed",
+//               to: "available"
+//             },
+//             newSerial: {
+//               from: "available", 
+//               to: "consumed"
+//             }
+//           }
+//         }
+//       });
+
+//     } catch (error) {
+//       console.error("Replacement process error:", error);
+//       throw error;
+//     }
+
+//   } catch (error) {
+//     console.error("Serial replacement error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: error.message || "Failed to replace serial number",
+//       error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+//     });
+//   }
+// };
+
+
+export const replaceProductSerial = async (req, res) => {
+  try {
+    const { hasAccess } = checkStockUsagePermissions(
+      req,
+      ["manage_usage_own_center", "manage_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_usage_own_center or manage_usage_all_center permission required.",
+      });
+    }
+
+    const {
+      originalUsageId,
+      productId,
+      oldSerialNumber,
+      newSerialNumber,
+      statusReason = "Replacement"
+    } = req.body;
+
+    const replacedBy = req.user.id;
+
+    console.log("=== SERIAL NUMBER REPLACEMENT REQUEST ===");
+    console.log("Request Body:", {
+      originalUsageId,
+      productId,
+      oldSerialNumber,
+      newSerialNumber,
+      statusReason
+    });
+
+    if (!originalUsageId || !productId || !oldSerialNumber || !newSerialNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required: originalUsageId, productId, oldSerialNumber, newSerialNumber"
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(originalUsageId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid originalUsageId format"
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid productId format"
+      });
+    }
+
+    try {
+      const userCenterId = await getUserCenterId(req.user._id);
+      
+      const StockUsage = mongoose.model("StockUsage");
+      const originalUsage = await StockUsage.findById(originalUsageId)
+        .populate("customer", "name mobile")
+        .populate("fromBuilding", "buildingName displayName")
+        .populate("toBuilding", "buildingName displayName")
+        .populate("fromControlRoom", "buildingName displayName");
+      
+      if (!originalUsage) {
+        return res.status(404).json({
+          success: false,
+          message: `Original stock usage record not found with ID: ${originalUsageId}`
+        });
+      }
+
+      if (originalUsage.center.toString() !== userCenterId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only replace products from your own center"
+        });
+      }
+
+      const CenterStock = mongoose.model("CenterStock");
+      const centerStock = await CenterStock.findOne({
+        center: userCenterId,
+        product: productId
+      });
+
+      if (!centerStock) {
+        return res.status(404).json({
+          success: false,
+          message: `Center stock not found for product: ${productId}`
+        });
+      }
+
+      console.log("Center stock found for product");
+      const oldSerial = centerStock.serialNumbers.find(
+        sn => sn.serialNumber === oldSerialNumber && sn.status === "consumed"
+      );
+      
+      if (!oldSerial) {
+        return res.status(400).json({
+          success: false,
+          message: `Old serial number '${oldSerialNumber}' not found or not in consumed status. It might be already available or assigned to someone else.`
+        });
+      }
+
+      console.log(`✓ Old serial '${oldSerialNumber}' found with consumed status`);
+      const newSerial = centerStock.serialNumbers.find(
+        sn => sn.serialNumber === newSerialNumber && sn.status === "available"
+      );
+      
+      if (!newSerial) {
+        return res.status(400).json({
+          success: false,
+          message: `New serial number '${newSerialNumber}' not found or not available. It might be already consumed or assigned.`
+        });
+      }
+
+      console.log(`✓ New serial '${newSerialNumber}' found with available status`);
+      const Product = mongoose.model("Product");
+      const product = await Product.findById(productId);
+      
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: `Product not found with ID: ${productId}`
+        });
+      }
+      const entityType = getEntityType(originalUsage.usageType);
+      const entityId = getEntityId(originalUsage);
+      let replacementData = {
+        date: new Date(),
+        usageType: originalUsage.usageType,
+        customer: originalUsage.customer,
+        fromBuilding: originalUsage.fromBuilding,
+        toBuilding: originalUsage.toBuilding,
+        fromControlRoom: originalUsage.fromControlRoom,
+        connectionType: originalUsage.connectionType,
+        reason: originalUsage.reason,
+        packageAmount: originalUsage.packageAmount || 0,
+        packageDuration: originalUsage.packageDuration,
+        onuCharges: originalUsage.onuCharges || 0,
+        installationCharges: originalUsage.installationCharges || 0,
+        shiftingAmount: originalUsage.shiftingAmount || 0,
+        wireChangeAmount: originalUsage.wireChangeAmount || 0,
+        product: productId,
+        productType: "replace",
+        replaceFor: oldSerialNumber,
+        replaceProductName: product.productTitle,
+        qty: 1,
+        damageQty: 0,
+        statusReason: statusReason,
+        oldSerialNumber: oldSerialNumber,
+        newSerialNumber: newSerialNumber,
+        originalUsageId: originalUsageId,
+        productId: productId,
+        center: userCenterId,
+        replacedBy: replacedBy,
+        entityType: entityType,
+        entityId: entityId,
+        replacementDetails: {
+          oldSerialStatus: { from: "consumed", to: "available" },
+          newSerialStatus: { from: "available", to: "consumed" }
+        }
+      };
+
+      console.log("Updating CenterStock serial number statuses...");
+      oldSerial.status = "available";
+      oldSerial.currentLocation = userCenterId;
+      oldSerial.consumedDate = null;
+      oldSerial.consumedBy = null;
+      oldSerial.transferHistory.push({
+        fromCenter: null,
+        toCenter: userCenterId,
+        transferDate: new Date(),
+        transferType: "replacement_return",
+        referenceId: originalUsageId,
+        remark: `Returned to stock - Replaced by ${newSerialNumber}`,
+        replacedBy: replacedBy
+      });
+      newSerial.status = "consumed";
+      newSerial.currentLocation = null;
+      newSerial.consumedDate = new Date();
+      newSerial.consumedBy = replacedBy;
+      newSerial.transferHistory.push({
+        fromCenter: userCenterId,
+        transferDate: new Date(),
+        transferType: "replacement_issue",
+        referenceId: originalUsageId,
+        remark: `Issued as replacement for ${oldSerialNumber}`,
+        replacedBy: replacedBy
+      });
+
+      console.log(`✓ CenterStock status updated: '${oldSerialNumber}' (consumed → available)`);
+      console.log(`✓ CenterStock status updated: '${newSerialNumber}' (available → consumed)`);
+      
+      await centerStock.save();
+      console.log("✓ Center stock updated successfully");
+      console.log("Updating EntityStock serial numbers...");
+      const EntityStock = mongoose.model("EntityStock");
+      
+      if (entityType && entityId) {
+        const entityStock = await EntityStock.findOne({
+          entityType: entityType,
+          entityId: entityId,
+          product: productId
+        });
+
+        if (entityStock) {
+          const entitySerial = entityStock.serialNumbers.find(
+            sn => sn.serialNumber === oldSerialNumber
+          );
+
+          if (entitySerial) {
+            entitySerial.serialNumber = newSerialNumber;
+            entitySerial.assignedDate = new Date();
+            console.log(`✓ EntityStock updated: '${oldSerialNumber}' → '${newSerialNumber}'`);
+          } else {
+            console.log(`⚠ Old serial '${oldSerialNumber}' not found in EntityStock, adding new serial`);
+            entityStock.serialNumbers.push({
+              serialNumber: newSerialNumber,
+              status: "used",
+              assignedDate: new Date(),
+              usageReference: originalUsageId,
+              usageType: originalUsage.usageType
+            });
+            entityStock.totalQuantity += 1;
+            entityStock.availableQuantity += 1;
+          }
+
+          await entityStock.save();
+          console.log("✓ Entity stock updated successfully");
+        } else {
+          console.log(`⚠ EntityStock not found for ${entityType}: ${entityId}`);
+        }
+      } else {
+        console.log("⚠ No entity type/ID found for this usage type");
+      }
+      let serialUpdated = false;
+      for (let item of originalUsage.items) {
+        if (item.product.toString() === productId.toString() && 
+            item.serialNumbers && 
+            item.serialNumbers.includes(oldSerialNumber)) {
+          const serialIndex = item.serialNumbers.indexOf(oldSerialNumber);
+          if (serialIndex !== -1) {
+            item.serialNumbers[serialIndex] = newSerialNumber;
+            serialUpdated = true;
+            console.log(`✓ Stock usage record updated: ${oldSerialNumber} → ${newSerialNumber}`);
+            break;
+          }
+        }
+      }
+
+      if (!serialUpdated) {
+        return res.status(404).json({
+          success: false,
+          message: `Could not find old serial number '${oldSerialNumber}' in the original stock usage record`
+        });
+      }
+
+      await originalUsage.save();
+      console.log("✓ Stock usage record saved successfully");
+      const replacementRecord = new ReplacementRecord(replacementData);
+      await replacementRecord.save();
+      console.log("✓ Replacement record saved to separate collection");
+
+      console.log("=== SERIAL REPLACEMENT COMPLETED SUCCESSFULLY ===");
+      
+      res.json({
+        success: true,
+        message: `Serial number replaced successfully: ${oldSerialNumber} → ${newSerialNumber}`,
+        data: {
+          replacementDetails: {
+            oldSerialNumber: oldSerialNumber,
+            newSerialNumber: newSerialNumber,
+            productId: productId,
+            originalUsageId: originalUsageId,
+            entityType: entityType,
+            entityId: entityId,
+            replacedBy: req.user.name,
+            replacedAt: new Date(),
+            replacementRecordId: replacementRecord._id,
+            connectionType: originalUsage.connectionType,
+            reason: originalUsage.reason
+          },
+          statusChanges: {
+            oldSerial: {
+              from: "consumed",
+              to: "available"
+            },
+            newSerial: {
+              from: "available", 
+              to: "consumed"
+            }
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error("Replacement process error:", error);
+      throw error;
+    }
+
+  } catch (error) {
+    console.error("Serial replacement error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to replace serial number",
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };

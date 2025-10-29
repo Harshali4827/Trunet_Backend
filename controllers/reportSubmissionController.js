@@ -557,6 +557,96 @@ const stockClosingPopulateOptions = [
   { path: "linkedStockClosing", select: "_id closingCenter status" },
 ];
 
+// export const getAllStockClosings = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkStockClosingPermissions(
+//       req,
+//       ["view_closing_stock_own_center", "view_closing_stock_all_center"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. view_closing_stock_own_center or view_closing_stock_all_center permission required.",
+//       });
+//     }
+
+//     const {
+//       page = 1,
+//       limit = 10,
+//       sortBy = "date",
+//       sortOrder = "desc",
+//       centerType,
+//       ...filterParams
+//     } = req.query;
+
+//     const filter = buildStockClosingFilter(
+//       filterParams,
+//       permissions,
+//       userCenter
+//     );
+
+//     const sortOptions = buildStockClosingSortOptions(sortBy, sortOrder);
+
+//     const [stockClosings, totalCount] = await Promise.all([
+//       StockClosing.find(filter)
+//         .populate(stockClosingPopulateOptions)
+//         .sort(sortOptions)
+//         .skip((parseInt(page) - 1) * parseInt(limit))
+//         .limit(parseInt(limit))
+//         .lean(),
+
+//       StockClosing.countDocuments(filter),
+//     ]);
+
+//     const filteredStockClosings = centerType
+//       ? stockClosings.filter(
+//           (sc) => sc.closingCenter && sc.closingCenter.centerType === centerType
+//         )
+//       : stockClosings;
+
+//     const actualTotal = centerType ? filteredStockClosings.length : totalCount;
+
+//     if (filteredStockClosings.length === 0) {
+//       return res.status(200).json({
+//         success: true,
+//         message: "No stock closings found",
+//         data: [],
+//         pagination: {
+//           currentPage: parseInt(page),
+//           totalPages: 0,
+//           totalItems: 0,
+//           itemsPerPage: parseInt(limit),
+//           hasNext: false,
+//           hasPrev: false,
+//         },
+//       });
+//     }
+
+//     const totalPages = Math.ceil(actualTotal / parseInt(limit));
+
+//     res.json({
+//       success: true,
+//       message: "Stock closings retrieved successfully",
+//       data: filteredStockClosings,
+//       pagination: {
+//         currentPage: parseInt(page),
+//         totalPages,
+//         totalItems: actualTotal,
+//         itemsPerPage: parseInt(limit),
+//         hasNext: parseInt(page) < totalPages,
+//         hasPrev: parseInt(page) > 1,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Get all stock closings error:", error);
+//     handleControllerError(error, res);
+//   }
+// };
+
+
+
 export const getAllStockClosings = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockClosingPermissions(
@@ -578,6 +668,8 @@ export const getAllStockClosings = async (req, res) => {
       sortBy = "date",
       sortOrder = "desc",
       centerType,
+      startDate,
+      endDate,  
       ...filterParams
     } = req.query;
 
@@ -586,6 +678,15 @@ export const getAllStockClosings = async (req, res) => {
       permissions,
       userCenter
     );
+    if (startDate || endDate) {
+      filter.date = {};
+      if (startDate) {
+        filter.date.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        filter.date.$lte = new Date(endDate);
+      }
+    }
 
     const sortOptions = buildStockClosingSortOptions(sortBy, sortOrder);
 
@@ -644,7 +745,6 @@ export const getAllStockClosings = async (req, res) => {
     handleControllerError(error, res);
   }
 };
-
 export const getStockClosingById = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockClosingPermissions(

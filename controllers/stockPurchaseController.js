@@ -420,6 +420,85 @@ const stockPurchasePopulateOptions = [
 ];
 
 
+// export const getAllStockPurchases = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } =
+//       checkStockPurchasePermissions(req, [
+//         "view_own_purchase_stock",
+//         "view_all_purchase_stock",
+//       ]);
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
+//       });
+//     }
+
+//     const {
+//       page = 1,
+//       limit = 10,
+//       sortBy = "createdAt",
+//       sortOrder = "desc",
+//       ...filterParams
+//     } = req.query;
+
+//     const outletId = await validateUserOutletAccess(req.user._id);
+
+//     const filter = buildStockPurchaseFilter(
+//       filterParams,
+//       outletId,
+//       permissions,
+//       userCenter
+//     );
+
+//     const sortOptions = buildStockPurchaseSortOptions(sortBy, sortOrder);
+
+//     const [purchases, total] = await Promise.all([
+//       StockPurchase.find(filter)
+//         .populate(stockPurchasePopulateOptions)
+//         .sort(sortOptions)
+//         .limit(parseInt(limit))
+//         .skip((parseInt(page) - 1) * parseInt(limit))
+//         .lean(),
+
+//       StockPurchase.countDocuments(filter),
+//     ]);
+
+//     if (purchases.length === 0) {
+//       return res.status(200).json({
+//         success: true,
+//         message: "No stock purchases found",
+//         data: [],
+//         pagination: {
+//           currentPage: parseInt(page),
+//           totalPages: 0,
+//           totalItems: 0,
+//           itemsPerPage: parseInt(limit),
+//         },
+//       });
+//     }
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Stock purchases retrieved successfully",
+//       data: purchases,
+//       pagination: {
+//         currentPage: parseInt(page),
+//         totalPages: Math.ceil(total / limit),
+//         totalItems: total,
+//         itemsPerPage: parseInt(limit),
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error retrieving stock purchases:", error);
+//     handleControllerError(error, res);
+//   }
+// };
+
+
+
 export const getAllStockPurchases = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } =
@@ -441,30 +520,72 @@ export const getAllStockPurchases = async (req, res) => {
       limit = 10,
       sortBy = "createdAt",
       sortOrder = "desc",
-      ...filterParams
+      search,
+      outlet,
+      startDate,
+      endDate,
+      ...otherParams
     } = req.query;
 
-    const outletId = await validateUserOutletAccess(req.user._id);
+    const filter = {};
 
-    const filter = buildStockPurchaseFilter(
-      filterParams,
-      outletId,
-      permissions,
-      userCenter
-    );
+    if (permissions.view_all_purchase_stock && outlet) {
+
+      filter.outlet = outlet;
+    } else if (permissions.view_own_purchase_stock && !permissions.view_all_purchase_stock) {
+      const userOutletId = await validateUserOutletAccess(req.user._id);
+      filter.outlet = userOutletId;
+    } else if (outlet) {
+      filter.outlet = outlet;
+    }
+    if (startDate || endDate) {
+      filter.date = {};
+      if (startDate) {
+        filter.date.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        filter.date.$lte = end;
+      }
+    }
+    if (search) {
+      filter.$or = [
+        { invoiceNo: { $regex: search, $options: "i" } },
+        { remark: { $regex: search, $options: "i" } },
+
+        { "vendor.businessName": { $regex: search, $options: "i" } },
+        { "vendor.name": { $regex: search, $options: "i" } },
+        { "vendor.email": { $regex: search, $options: "i" } },
+        { "vendor.mobile": { $regex: search, $options: "i" } },
+      
+        { "outlet.centerName": { $regex: search, $options: "i" } },
+        { "outlet.centerCode": { $regex: search, $options: "i" } },
+      
+        { "products.product.productTitle": { $regex: search, $options: "i" } },
+        { "products.product.productCode": { $regex: search, $options: "i" } },
+
+        { "products.serialNumbers.serialNumber": { $regex: search, $options: "i" } },
+      ];
+    }
+    if (otherParams.type) {
+      filter.type = otherParams.type;
+    }
+    
+    if (otherParams.vendor) {
+      filter.vendor = otherParams.vendor;
+    }
 
     const sortOptions = buildStockPurchaseSortOptions(sortBy, sortOrder);
 
-    const [purchases, total] = await Promise.all([
-      StockPurchase.find(filter)
-        .populate(stockPurchasePopulateOptions)
-        .sort(sortOptions)
-        .limit(parseInt(limit))
-        .skip((parseInt(page) - 1) * parseInt(limit))
-        .lean(),
+    const total = await StockPurchase.countDocuments(filter);
 
-      StockPurchase.countDocuments(filter),
-    ]);
+    const purchases = await StockPurchase.find(filter)
+      .populate(stockPurchasePopulateOptions)
+      .sort(sortOptions)
+      .limit(parseInt(limit))
+      .skip((parseInt(page) - 1) * parseInt(limit))
+      .lean();
 
     if (purchases.length === 0) {
       return res.status(200).json({
@@ -496,7 +617,6 @@ export const getAllStockPurchases = async (req, res) => {
     handleControllerError(error, res);
   }
 };
-
 
 export const getStockPurchaseById = async (req, res) => {
   try {

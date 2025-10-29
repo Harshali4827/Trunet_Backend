@@ -16,6 +16,8 @@ import {
   getCenterSerialNumbers,
   updateApprovedQuantities,
   getMostRecentOrderNumber,
+  getStockRequestCount,
+  getStockRequestNotifications,
 } from "../controllers/stockRequestController.js";
 import {
   validateCreateStockRequest,
@@ -59,6 +61,10 @@ router.get(
   validateStockRequestQuery,
   getAllStockRequests
 );
+router.get("/indent-count",
+  protect,
+  getStockRequestCount
+)
 
 router.get(
   "/recent-order-number",
@@ -70,6 +76,12 @@ router.get(
   ),
   getMostRecentOrderNumber
 );
+
+router.get(
+  "/notification",
+  protect,
+  getStockRequestNotifications
+)
 
 router.get(
   "/:id",

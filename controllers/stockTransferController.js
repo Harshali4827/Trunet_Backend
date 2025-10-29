@@ -2322,34 +2322,130 @@ const buildStockTransferFilter = (query) => {
     dateFilter,
     customStartDate,
     customEndDate,
+    outlet, // Add outlet filter
+    center, // Add center filter
+    statusChanged, // Add status changed filter
+    statusStartDate, // Add status start date
+    statusEndDate, // Add status end date
   } = query;
 
   const filter = {};
 
+  // Status filter
   const statusFilter = buildArrayFilter(status);
   if (statusFilter) filter.status = statusFilter;
 
+  // Status Changed filter
+  if (statusChanged && statusChanged !== 'Any Status') {
+    filter.status = statusChanged;
+  }
+
+  // From Center filter (source center)
   const fromCenterFilter = buildArrayFilter(fromCenter);
-  if (fromCenterFilter) filter.fromCenter = fromCenterFilter;
+  if (fromCenterFilter) {
+    if (Array.isArray(fromCenterFilter.$in)) {
+      filter.fromCenter = { 
+        $in: fromCenterFilter.$in.map(id => 
+          mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id
+        )
+      };
+    } else if (mongoose.Types.ObjectId.isValid(fromCenterFilter)) {
+      filter.fromCenter = new mongoose.Types.ObjectId(fromCenterFilter);
+    } else {
+      filter.fromCenter = fromCenterFilter;
+    }
+  }
 
+  // To Center filter (destination center)
   const toCenterFilter = buildArrayFilter(toCenter);
-  if (toCenterFilter) filter.toCenter = toCenterFilter;
+  if (toCenterFilter) {
+    if (Array.isArray(toCenterFilter.$in)) {
+      filter.toCenter = { 
+        $in: toCenterFilter.$in.map(id => 
+          mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id
+        )
+      };
+    } else if (mongoose.Types.ObjectId.isValid(toCenterFilter)) {
+      filter.toCenter = new mongoose.Types.ObjectId(toCenterFilter);
+    } else {
+      filter.toCenter = toCenterFilter;
+    }
+  }
 
-  const dateFilterObj = buildDateFilter(
-    dateFilter,
-    customStartDate,
-    customEndDate,
-    startDate,
-    endDate
-  );
-  if (dateFilterObj) filter.date = dateFilterObj;
+  // Outlet filter (filter by fromCenter where centerType is outlet)
+  const outletFilter = buildArrayFilter(outlet);
+  if (outletFilter) {
+    if (Array.isArray(outletFilter.$in)) {
+      filter.fromCenter = { 
+        $in: outletFilter.$in.map(id => 
+          mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id
+        )
+      };
+    } else if (mongoose.Types.ObjectId.isValid(outletFilter)) {
+      filter.fromCenter = new mongoose.Types.ObjectId(outletFilter);
+    } else {
+      filter.fromCenter = outletFilter;
+    }
+  }
 
+  // Center filter (general center filter - applies to both fromCenter and toCenter)
+  const centerFilter = buildArrayFilter(center);
+  if (centerFilter) {
+    if (Array.isArray(centerFilter.$in)) {
+      const centerIds = centerFilter.$in.map(id => 
+        mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id
+      );
+      filter.$or = [
+        { fromCenter: { $in: centerIds } },
+        { toCenter: { $in: centerIds } }
+      ];
+    } else if (mongoose.Types.ObjectId.isValid(centerFilter)) {
+      const centerId = new mongoose.Types.ObjectId(centerFilter);
+      filter.$or = [
+        { fromCenter: centerId },
+        { toCenter: centerId }
+      ];
+    } else {
+      filter.$or = [
+        { fromCenter: centerFilter },
+        { toCenter: centerFilter }
+      ];
+    }
+  }
+
+  // Date filters - Multiple date filter options
+  if (statusStartDate && statusEndDate) {
+    // Status change date filter
+    filter.date = {
+      $gte: new Date(statusStartDate),
+      $lte: new Date(statusEndDate)
+    };
+  } else if (startDate && endDate) {
+    // Transfer date filter
+    filter.date = {
+      $gte: new Date(startDate),
+      $lte: new Date(endDate)
+    };
+  } else {
+    // Original date filter logic
+    const dateFilterObj = buildDateFilter(
+      dateFilter,
+      customStartDate,
+      customEndDate,
+      startDate,
+      endDate
+    );
+    if (dateFilterObj) filter.date = dateFilterObj;
+  }
+
+  // CreatedAt filter
   if (createdAtStart || createdAtEnd) {
     filter.createdAt = {};
     if (createdAtStart) filter.createdAt.$gte = new Date(createdAtStart);
     if (createdAtEnd) filter.createdAt.$lte = new Date(createdAtEnd);
   }
 
+  // Transfer Number filter
   const transferNumberFilter = buildArrayFilter(transferNumber);
   if (transferNumberFilter) {
     filter.transferNumber =
@@ -2358,6 +2454,7 @@ const buildStockTransferFilter = (query) => {
         : { $regex: transferNumberFilter, $options: "i" };
   }
 
+  // Search filter
   if (search) {
     filter.$or = [
       { transferNumber: { $regex: search, $options: "i" } },
@@ -2372,6 +2469,7 @@ const buildStockTransferFilter = (query) => {
     ];
   }
 
+  console.log('Stock Transfer Filter:', JSON.stringify(filter, null, 2));
   return filter;
 };
 
@@ -2515,6 +2613,107 @@ const buildDateFilter = (
   return null;
 };
 
+// export const getAllStockTransfers = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } =
+//       checkStockTransferPermissions(req, [
+//         "stock_transfer_own_center",
+//         "stock_transfer_all_center",
+//       ]);
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. stock_transfer_own_center or stock_transfer_all_center permission required.",
+//       });
+//     }
+
+//     const {
+//       page = 1,
+//       limit = 10,
+//       sortBy = "createdAt",
+//       sortOrder = "desc",
+//       ...filterParams
+//     } = req.query;
+
+//     const filter = buildStockTransferFilter(filterParams);
+
+//     if (
+//       permissions.stock_transfer_own_center &&
+//       !permissions.stock_transfer_all_center &&
+//       userCenter
+//     ) {
+//       const userCenterId = userCenter._id || userCenter;
+//       filter.$or = [{ fromCenter: userCenterId }, { toCenter: userCenterId }];
+//     }
+
+//     const sortOptions = buildStockTransferSortOptions(sortBy, sortOrder);
+
+//     const [stockTransfers, total, statusCounts] = await Promise.all([
+//       StockTransfer.find(filter)
+//         .populate(stockTransferPopulateOptions)
+//         .sort(sortOptions)
+//         .limit(parseInt(limit))
+//         .skip((parseInt(page) - 1) * parseInt(limit))
+//         .lean(),
+
+//       StockTransfer.countDocuments(filter),
+
+//       StockTransfer.aggregate([
+//         { $match: filter },
+//         { $group: { _id: "$status", count: { $sum: 1 } } },
+//       ]),
+//     ]);
+
+//     if (stockTransfers.length === 0) {
+//       return res.status(200).json({
+//         success: true,
+//         message: "No stock transfers found",
+//         data: [],
+//         pagination: {
+//           currentPage: parseInt(page),
+//           totalPages: 0,
+//           totalItems: 0,
+//           itemsPerPage: parseInt(limit),
+//         },
+//         filters: { status: {}, total: 0 },
+//       });
+//     }
+
+//     const statusStats = statusCounts.reduce((acc, stat) => {
+//       acc[stat._id] = stat.count;
+//       return acc;
+//     }, {});
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Stock transfers retrieved successfully",
+//       data: stockTransfers,
+//       pagination: {
+//         currentPage: parseInt(page),
+//         totalPages: Math.ceil(total / limit),
+//         totalItems: total,
+//         itemsPerPage: parseInt(limit),
+//       },
+//       filters: {
+//         status: statusStats,
+//         total: total,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error retrieving stock transfers:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Error retrieving stock transfers",
+//       error: error.message,
+//     });
+//   }
+// };
+
+
+
+
 export const getAllStockTransfers = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } =
@@ -2539,15 +2738,29 @@ export const getAllStockTransfers = async (req, res) => {
       ...filterParams
     } = req.query;
 
-    const filter = buildStockTransferFilter(filterParams);
+    console.log('Stock Transfer Filter Params:', filterParams);
 
+    const filter = buildStockTransferFilter(filterParams);
     if (
       permissions.stock_transfer_own_center &&
       !permissions.stock_transfer_all_center &&
       userCenter
     ) {
       const userCenterId = userCenter._id || userCenter;
-      filter.$or = [{ fromCenter: userCenterId }, { toCenter: userCenterId }];
+      if (filter.$or) {
+        filter.$or = filter.$or.map(condition => ({
+          ...condition,
+          $or: [
+            { fromCenter: userCenterId },
+            { toCenter: userCenterId }
+          ]
+        }));
+      } else {
+        filter.$or = [
+          { fromCenter: userCenterId },
+          { toCenter: userCenterId }
+        ];
+      }
     }
 
     const sortOptions = buildStockTransferSortOptions(sortBy, sortOrder);
@@ -2612,6 +2825,7 @@ export const getAllStockTransfers = async (req, res) => {
     });
   }
 };
+
 
 export const getStockTransferById = async (req, res) => {
   try {

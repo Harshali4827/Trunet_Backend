@@ -9,7 +9,9 @@ import {
   getMonthlyStockUsageSummary,
   getAllStockUsageReports,
   getAllStolenStockReports,
-  getProductDetailsBySerialNumber
+  getProductDetailsBySerialNumber,
+  getONUTrackReport,
+  getReplacementRecords
 } from "../controllers/reportController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
@@ -79,5 +81,17 @@ router.get(
   getProductDetailsBySerialNumber
 );
 
+router.get(
+  "/onu-report",
+  protect,
+  authorizeAccess(MODULE, "view_own_report","view_all_report"),
+  getONUTrackReport
+);
 
+router.get(
+  "/replace-report",
+  protect,
+  authorizeAccess(MODULE, "view_own_report","view_all_report"),
+  getReplacementRecords
+)
 export default router;

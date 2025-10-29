@@ -6,6 +6,7 @@ import StockUsage from "../models/StockUsage.js";
 import OutletStock from "../models/OutletStock.js";
 import StockPurchase from "../models/StockPurchase.js";
 import mongoose from "mongoose";
+import DamageReturn from "../models/DamageReturn.js";
 
 const checkAvailableStockPermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
@@ -1325,7 +1326,7 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
             totalInTransit: 0,
             totalConsumed: 0,
             totalDamaged: 0,
-            totalDamageReturn: 0, // New field
+            totalDamageReturn: 0,
             totalEffectiveAvailable: 0,
             lowStockItems: 0,
             outOfStockItems: 0,
@@ -1356,35 +1357,25 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
 
     const productIds = products.map((product) => product._id);
     let stockData = [];
-
-    // NEW: Get Damage Return quantities from StockUsage
-    const damageReturnData = await StockUsage.aggregate([
+    
+    // FIXED: Get damage return data from DamageReturn collection with status "approved"
+    const damageReturnData = await DamageReturn.aggregate([
       {
         $match: {
-          center: targetCenterId,
-          usageType: "Damage Return",
-          status: "completed",
-          "items.product": { $in: productIds }
-        }
-      },
-      {
-        $unwind: "$items"
-      },
-      {
-        $match: {
-          "items.product": { $in: productIds }
+          center: new mongoose.Types.ObjectId(targetCenterId), // FIXED: Use 'new' keyword
+          status: "approved", // Only count approved damage returns
+          product: { $in: productIds } // FIXED: Use string IDs directly
         }
       },
       {
         $group: {
-          _id: "$items.product",
-          damageReturnQuantity: { $sum: "$items.quantity" },
+          _id: "$product",
+          damageReturnQuantity: { $sum: "$quantity" },
           damageReturnEntries: { $sum: 1 }
         }
       }
     ]);
 
-    // Create damage return map
     const damageReturnMap = new Map();
     damageReturnData.forEach(item => {
       damageReturnMap.set(item._id.toString(), {
@@ -1394,7 +1385,6 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
     });
 
     if (targetCenter.centerType === "Outlet") {
-      // Outlet stock logic
       const [outletStockData, purchaseData] = await Promise.all([
         OutletStock.find({
           outlet: targetCenterId,
@@ -1434,8 +1424,6 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
         const damagedQuantity = item.serialNumbers.filter(
           (sn) => sn.status === "damaged"
         ).length;
-
-        // Get damage return quantity for this product
         const damageReturnInfo = damageReturnMap.get(item.product.toString());
 
         outletStockMap.set(item.product.toString(), {
@@ -1445,8 +1433,8 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           serialNumbersCount: item.serialNumbers.length,
           hasSerialNumbers: item.serialNumbers.length > 0,
           damagedQuantity: damagedQuantity,
-          damageReturnQuantity: damageReturnInfo?.damageReturnQuantity || 0, // NEW
-          damageReturnEntries: damageReturnInfo?.damageReturnEntries || 0,   // NEW
+          damageReturnQuantity: damageReturnInfo?.damageReturnQuantity || 0,
+          damageReturnEntries: damageReturnInfo?.damageReturnEntries || 0,
           effectiveAvailableQuantity: Math.max(
             0,
             item.availableQuantity - damagedQuantity
@@ -1478,19 +1466,19 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           serialNumbersCount: outletStock?.serialNumbersCount || 0,
           hasSerialNumbers: outletStock?.hasSerialNumbers || false,
           damagedQuantity: outletStock?.damagedQuantity || 0,
-          damageReturnQuantity: outletStock?.damageReturnQuantity || 0, // NEW
-          damageReturnEntries: outletStock?.damageReturnEntries || 0,   // NEW
+          damageReturnQuantity: outletStock?.damageReturnQuantity || 0,
+          damageReturnEntries: outletStock?.damageReturnEntries || 0,
           effectiveAvailableQuantity:
             outletStock?.effectiveAvailableQuantity || 0,
         };
       });
     } else if (targetCenter.centerType === "Center") {
-      // Center stock logic
-      stockData = await CenterStock.aggregate([
+      // Get center stock data - FIXED: Use string IDs directly
+      const centerStockData = await CenterStock.aggregate([
         {
           $match: {
-            center: targetCenterId,
-            product: { $in: productIds },
+            center: new mongoose.Types.ObjectId(targetCenterId), // FIXED: Use 'new' keyword
+            product: { $in: productIds }, // FIXED: Use string IDs directly
           },
         },
         {
@@ -1566,8 +1554,8 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
         },
       ]);
 
-      // Add damage return quantities to center stock data
-      stockData = stockData.map(item => {
+      // Combine center stock data with damage return data
+      stockData = centerStockData.map(item => {
         const damageReturnInfo = damageReturnMap.get(item._id.toString());
         return {
           ...item,
@@ -1575,6 +1563,29 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           damageReturnEntries: damageReturnInfo?.damageReturnEntries || 0
         };
       });
+
+      // Handle products that have damage returns but no center stock
+      const existingProductIds = new Set(centerStockData.map(item => item._id.toString()));
+      const missingProducts = productIds.filter(id => !existingProductIds.has(id.toString()));
+      
+      for (const productId of missingProducts) {
+        const damageReturnInfo = damageReturnMap.get(productId.toString());
+        if (damageReturnInfo && damageReturnInfo.damageReturnQuantity > 0) {
+          stockData.push({
+            _id: productId,
+            totalQuantity: 0,
+            availableQuantity: 0,
+            inTransitQuantity: 0,
+            damagedQuantity: 0,
+            availableSerialsCount: 0,
+            stockEntries: 0,
+            trackSerialNumber: "No",
+            effectiveAvailableQuantity: 0,
+            damageReturnQuantity: damageReturnInfo.damageReturnQuantity,
+            damageReturnEntries: damageReturnInfo.damageReturnEntries
+          });
+        }
+      }
     } else {
       return res.status(400).json({
         success: false,
@@ -1582,7 +1593,6 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
       });
     }
 
-    // Create stock map
     const stockMap = new Map();
     stockData.forEach((item) => {
       if (targetCenter.centerType === "Outlet") {
@@ -1596,8 +1606,8 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           serialNumbersCount: item.serialNumbersCount,
           hasSerialNumbers: item.hasSerialNumbers,
           damagedQuantity: item.damagedQuantity,
-          damageReturnQuantity: item.damageReturnQuantity, // NEW
-          damageReturnEntries: item.damageReturnEntries,   // NEW
+          damageReturnQuantity: item.damageReturnQuantity,
+          damageReturnEntries: item.damageReturnEntries,
           effectiveAvailableQuantity: item.effectiveAvailableQuantity,
         });
       } else {
@@ -1606,8 +1616,8 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           availableQuantity: item.availableQuantity,
           inTransitQuantity: item.inTransitQuantity,
           damagedQuantity: item.damagedQuantity,
-          damageReturnQuantity: item.damageReturnQuantity, // NEW
-          damageReturnEntries: item.damageReturnEntries,   // NEW
+          damageReturnQuantity: item.damageReturnQuantity,
+          damageReturnEntries: item.damageReturnEntries,
           availableSerialsCount: item.availableSerialsCount,
           stockEntries: item.stockEntries,
           effectiveAvailableQuantity: item.effectiveAvailableQuantity,
@@ -1615,7 +1625,6 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
       }
     });
 
-    // Format products with stock information
     const formattedProducts = products.map((product) => {
       const productId = product._id.toString();
       const productCategory = product.productCategory
@@ -1636,8 +1645,8 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           serialNumbersCount: 0,
           hasSerialNumbers: false,
           damagedQuantity: 0,
-          damageReturnQuantity: 0, // NEW
-          damageReturnEntries: 0,   // NEW
+          damageReturnQuantity: 0,
+          damageReturnEntries: 0,
           effectiveAvailableQuantity: 0,
         };
 
@@ -1647,8 +1656,8 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           inTransitQuantity: stockData.currentInTransitQuantity,
           consumedQuantity: 0,
           damagedQuantity: stockData.damagedQuantity,
-          damageReturnQuantity: stockData.damageReturnQuantity, // NEW
-          damageReturnEntries: stockData.damageReturnEntries,   // NEW
+          damageReturnQuantity: stockData.damageReturnQuantity,
+          damageReturnEntries: stockData.damageReturnEntries,
           availableSerialsCount: stockData.serialNumbersCount,
           consumedSerialsCount: 0,
           inTransitSerialsCount: 0,
@@ -1661,8 +1670,8 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           availableQuantity: 0,
           inTransitQuantity: 0,
           damagedQuantity: 0,
-          damageReturnQuantity: 0, // NEW
-          damageReturnEntries: 0,   // NEW
+          damageReturnQuantity: 0,
+          damageReturnEntries: 0,
           availableSerialsCount: 0,
           stockEntries: 0,
           effectiveAvailableQuantity: 0,
@@ -1674,8 +1683,8 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           inTransitQuantity: stockData.inTransitQuantity,
           consumedQuantity: 0,
           damagedQuantity: stockData.damagedQuantity,
-          damageReturnQuantity: stockData.damageReturnQuantity, // NEW
-          damageReturnEntries: stockData.damageReturnEntries,   // NEW
+          damageReturnQuantity: stockData.damageReturnQuantity,
+          damageReturnEntries: stockData.damageReturnEntries,
           availableSerialsCount: stockData.availableSerialsCount,
           consumedSerialsCount: 0,
           inTransitSerialsCount: 0,
@@ -1712,10 +1721,9 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
       };
     });
 
-    // Apply sorting
     const validSortFields = [
       "productName", "productCode", "effectiveAvailableQuantity", 
-      "stockStatus", "totalQuantity", "availableQuantity", "damageReturnQuantity" // NEW
+      "stockStatus", "totalQuantity", "availableQuantity", "damageReturnQuantity"
     ];
     const actualSortBy = validSortFields.includes(sortBy) ? sortBy : "productName";
     
@@ -1729,7 +1737,6 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
       return 0;
     });
 
-    // Calculate summary
     const summary = {
       totalProducts: formattedProducts.length,
       totalQuantity: formattedProducts.reduce(
@@ -1752,7 +1759,7 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
         (sum, product) => sum + product.damagedQuantity,
         0
       ),
-      totalDamageReturn: formattedProducts.reduce( // NEW
+      totalDamageReturn: formattedProducts.reduce(
         (sum, product) => sum + product.damageReturnQuantity,
         0
       ),

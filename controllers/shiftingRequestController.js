@@ -263,6 +263,82 @@ export const createShiftingRequest = async (req, res) => {
   }
 };
 
+
+// export const getAllShiftingRequests = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkShiftingPermissions(
+//       req,
+//       ["view_shifting_own_center", "view_shifting_all_center"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. view_shifting_own_center or view_shifting_all_center permission required.",
+//       });
+//     }
+
+//     const { search, center, status, page = 1, limit = 10 } = req.query;
+
+//     const query = {};
+
+//     if (
+//       permissions.view_shifting_own_center &&
+//       !permissions.view_shifting_all_center &&
+//       userCenter
+//     ) {
+//       query.$or = [
+//         { fromCenter: userCenter._id || userCenter },
+//         { toCenter: userCenter._id || userCenter },
+//       ];
+//     } else if (center) {
+//       query.$or = [{ fromCenter: center }, { toCenter: center }];
+//     }
+
+//     if (search) {
+//       query.$or = [
+//         { remark: { $regex: search, $options: "i" } },
+//         { status: { $regex: search, $options: "i" } },
+//         { "customer.name": { $regex: search, $options: "i" } },
+//         { "fromCenter.centerName": { $regex: search, $options: "i" } },
+//         { "toCenter.centerName": { $regex: search, $options: "i" } },
+//       ];
+//     }
+
+//     if (status) {
+//       query.status = status;
+//     }
+
+//     const total = await ShiftingRequest.countDocuments(query);
+//     const skip = (parseInt(page) - 1) * parseInt(limit);
+
+//     const requests = await ShiftingRequest.find(query)
+//       .populate("customer", "name username mobile email center")
+//       .populate("fromCenter", "centerName centerCode")
+//       .populate("toCenter", "centerName centerCode")
+//       .populate("approvedBy", "fullName email")
+//       .populate("rejectedBy", "fullName email")
+//       .sort({ createdAt: -1 })
+//       .skip(skip)
+//       .limit(parseInt(limit));
+
+//     res.status(200).json({
+//       success: true,
+//       data: requests,
+//       pagination: {
+//         total,
+//         page: parseInt(page),
+//         limit: parseInt(limit),
+//         totalPages: Math.ceil(total / limit),
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error fetching shifting requests:", error);
+//     handleControllerError(error, res);
+//   }
+// };
+
 export const getAllShiftingRequests = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkShiftingPermissions(
@@ -281,20 +357,15 @@ export const getAllShiftingRequests = async (req, res) => {
     const { search, center, status, page = 1, limit = 10 } = req.query;
 
     const query = {};
-
     if (
       permissions.view_shifting_own_center &&
       !permissions.view_shifting_all_center &&
       userCenter
     ) {
-      query.$or = [
-        { fromCenter: userCenter._id || userCenter },
-        { toCenter: userCenter._id || userCenter },
-      ];
-    } else if (center) {
-      query.$or = [{ fromCenter: center }, { toCenter: center }];
+      query.toCenter = userCenter._id || userCenter;
+    } else if (center && permissions.view_shifting_all_center) {
+      query.toCenter = center;
     }
-
     if (search) {
       query.$or = [
         { remark: { $regex: search, $options: "i" } },
@@ -304,7 +375,6 @@ export const getAllShiftingRequests = async (req, res) => {
         { "toCenter.centerName": { $regex: search, $options: "i" } },
       ];
     }
-
     if (status) {
       query.status = status;
     }

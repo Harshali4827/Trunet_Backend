@@ -8,6 +8,7 @@ import {
   logout,
   getUserById,
   updateUser,
+  getLoginHistory,
 } from "../controllers/authController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
@@ -20,6 +21,7 @@ router.post("/register", register);
 router.get("/me", protect, getMe);
 
 router.get("/", protect, getAllUsers);
+router.get("/login-history", protect, getLoginHistory);
 router.put(
   "/update-password",
   protect,

@@ -27,6 +27,8 @@ import stockUsage from "./routes/stockUsageRoutes.js";
 import reportSubmission from "./routes/reportSubmissionRoutes.js";
 import availableStock from "./routes/availabelReportRoutes.js";
 import reports from "./routes/reportRoutes.js";
+import damageRoutes from './routes/damageRoutes.js';
+import indentUsageSummaryRoutes from './routes/usageSummaryRoutes.js';
 import "./models/EntityStockUsage.js";
 dotenv.config();
 connectDB();
@@ -68,6 +70,8 @@ app.use("/api/shiftingRequest", shiftingRequestRoutes);
 app.use("/api/reportsubmission", reportSubmission);
 app.use("/api/availableStock", availableStock);
 app.use("/api/reports", reports);
+app.use("/api/damage", damageRoutes);
+app.use("/api", indentUsageSummaryRoutes);
 app.use(errorHandler);
 
 export default app;

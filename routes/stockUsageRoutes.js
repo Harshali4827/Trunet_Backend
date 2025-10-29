@@ -18,6 +18,7 @@ import {
   getProductDevicesByControlRoom,
   changeToDamageReturn,
   getDamageReturnRecordsWithStats,
+  replaceProductSerial,
 } from "../controllers/stockUsageController.js";
 
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
@@ -138,5 +139,7 @@ router.patch(
   // authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
   changeToDamageReturn
 );
+
+router.post('/replace-serial', protect, replaceProductSerial);
 
 export default router;
