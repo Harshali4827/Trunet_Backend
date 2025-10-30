@@ -19,6 +19,7 @@ import {
   changeToDamageReturn,
   getDamageReturnRecordsWithStats,
   replaceProductSerial,
+  returnProductSerial,
 } from "../controllers/stockUsageController.js";
 
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
@@ -51,6 +52,14 @@ router.post(
   authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
   createStockUsage
 );
+
+router.post(
+  "/return/product",
+  protect,
+  authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
+  returnProductSerial
+);
+
 router.get(
   "/",
   protect,

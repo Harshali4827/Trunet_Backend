@@ -6,7 +6,8 @@ import Building from "../models/Building.js";
 import ControlRoom from "../models/ControlRoomModel.js";
 import mongoose from "mongoose";
 import User from "../models/User.js";
-import ReplacementRecord from "../models/ReplacementRecord.js";
+import EntityStockUsage from "../models/EntityStockUsage.js";
+import ReturnRecord from "../models/ReturnRecord.js";
 
 const checkStockUsagePermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
@@ -408,6 +409,58 @@ const validateAndCalculateStock = async (item, center) => {
   return result;
 };
 
+// const processStockDeduction = async (stockUsage) => {
+//   const CenterStock = mongoose.model("CenterStock");
+//   const Product = mongoose.model("Product");
+
+//   for (let item of stockUsage.items) {
+//     const product = await Product.findById(item.product);
+//     const centerStock = await CenterStock.findOne({
+//       center: stockUsage.center,
+//       product: item.product,
+//     });
+
+//     if (!centerStock) continue;
+
+//     if (product.trackSerialNumber === "Yes") {
+//       if (item.serialNumbers && item.serialNumbers.length > 0) {
+//         for (const serialNumber of item.serialNumbers) {
+//           const serial = centerStock.serialNumbers.find(
+//             (sn) =>
+//               sn.serialNumber === serialNumber && sn.status === "available"
+//           );
+
+//           if (serial) {
+//             serial.status = "consumed";
+//             serial.currentLocation = null;
+//             serial.transferHistory.push({
+//               fromCenter: stockUsage.center,
+//               transferDate: new Date(),
+//               transferType: "field_usage",
+//               usageType: stockUsage.usageType,
+//               referenceId: stockUsage._id,
+//               remark: stockUsage.remark,
+//             });
+//           }
+//         }
+//       }
+
+//       centerStock.availableQuantity -= item.quantity;
+//       centerStock.totalQuantity -= item.quantity;
+//     } else {
+//       centerStock.availableQuantity -= item.quantity;
+//       centerStock.totalQuantity -= item.quantity;
+//     }
+
+//     await centerStock.save();
+//   }
+
+//   stockUsage.status = "completed";
+//   await stockUsage.save();
+// };
+
+
+
 const processStockDeduction = async (stockUsage) => {
   const CenterStock = mongoose.model("CenterStock");
   const Product = mongoose.model("Product");
@@ -422,6 +475,8 @@ const processStockDeduction = async (stockUsage) => {
     if (!centerStock) continue;
 
     if (product.trackSerialNumber === "Yes") {
+      let consumedCount = 0;
+      
       if (item.serialNumbers && item.serialNumbers.length > 0) {
         for (const serialNumber of item.serialNumbers) {
           const serial = centerStock.serialNumbers.find(
@@ -432,6 +487,8 @@ const processStockDeduction = async (stockUsage) => {
           if (serial) {
             serial.status = "consumed";
             serial.currentLocation = null;
+            serial.consumedDate = new Date();
+            serial.consumedBy = stockUsage.createdBy;
             serial.transferHistory.push({
               fromCenter: stockUsage.center,
               transferDate: new Date(),
@@ -440,23 +497,60 @@ const processStockDeduction = async (stockUsage) => {
               referenceId: stockUsage._id,
               remark: stockUsage.remark,
             });
+            consumedCount++;
           }
         }
       }
+      centerStock.availableQuantity -= consumedCount;
+      centerStock.consumedQuantity += consumedCount;
+      console.log(`✓ Consumed ${consumedCount} serialized items for product: ${product.productTitle}`);
+      
+    } else {
 
       centerStock.availableQuantity -= item.quantity;
+      centerStock.consumedQuantity += item.quantity;
       centerStock.totalQuantity -= item.quantity;
-    } else {
-      centerStock.availableQuantity -= item.quantity;
-      centerStock.totalQuantity -= item.quantity;
+      
+      console.log(`✓ Consumed ${item.quantity} non-serialized items for product: ${product.productTitle}`);
     }
 
     await centerStock.save();
+    console.log(`✓ CenterStock updated - Available: ${centerStock.availableQuantity}, Consumed: ${centerStock.consumedQuantity}, Total: ${centerStock.totalQuantity}`);
   }
 
   stockUsage.status = "completed";
   await stockUsage.save();
 };
+
+
+// const addStockToUsageEntity = async (stockUsage) => {
+//   const EntityStock = mongoose.model("EntityStock");
+//   const Product = mongoose.model("Product");
+
+//   const entityConfig = getEntityConfig(stockUsage.usageType, stockUsage);
+
+//   if (!entityConfig) {
+//     console.log(
+//       `No entity configuration for usage type: ${stockUsage.usageType}`
+//     );
+//     return;
+//   }
+
+//   for (let item of stockUsage.items) {
+//     const product = await Product.findById(item.product);
+
+//     await EntityStock.updateStock(
+//       entityConfig.entityType,
+//       entityConfig.entityId,
+//       item.product,
+//       item.quantity,
+//       item.serialNumbers || [],
+//       stockUsage._id,
+//       stockUsage.usageType
+//     );
+//   }
+// };
+
 
 const addStockToUsageEntity = async (stockUsage) => {
   const EntityStock = mongoose.model("EntityStock");
@@ -473,16 +567,92 @@ const addStockToUsageEntity = async (stockUsage) => {
 
   for (let item of stockUsage.items) {
     const product = await Product.findById(item.product);
+    const existingEntityStock = await EntityStock.findOne({
+      entityType: entityConfig.entityType,
+      entityId: entityConfig.entityId,
+      product: item.product
+    });
 
-    await EntityStock.updateStock(
-      entityConfig.entityType,
-      entityConfig.entityId,
-      item.product,
-      item.quantity,
-      item.serialNumbers || [],
-      stockUsage._id,
-      stockUsage.usageType
-    );
+    let existingSerials = [];
+    let serialsToAdd = [];
+    let serialsToUpdate = [];
+
+    if (existingEntityStock && item.serialNumbers && item.serialNumbers.length > 0) {
+      for (const serial of item.serialNumbers) {
+        const existingSerial = existingEntityStock.serialNumbers.find(
+          sn => sn.serialNumber === serial
+        );
+        
+        if (existingSerial) {
+          serialsToUpdate.push(serial);
+        } else {
+          serialsToAdd.push(serial);
+        }
+      }
+      
+      existingSerials = existingEntityStock.serialNumbers
+        .filter(sn => item.serialNumbers.includes(sn.serialNumber))
+        .map(sn => sn.serialNumber);
+    } else if (item.serialNumbers && item.serialNumbers.length > 0) {
+      serialsToAdd = [...item.serialNumbers];
+    }
+
+    console.log(`Entity Stock Update for ${entityConfig.entityType}:`, {
+      product: item.product,
+      quantity: item.quantity,
+      totalSerials: item.serialNumbers?.length || 0,
+      existingSerials: existingSerials.length,
+      serialsToUpdate: serialsToUpdate.length,
+      serialsToAdd: serialsToAdd.length
+    });
+
+    if (serialsToUpdate.length > 0 && existingEntityStock) {
+      await EntityStock.findOneAndUpdate(
+        {
+          entityType: entityConfig.entityType,
+          entityId: entityConfig.entityId,
+          product: item.product,
+          "serialNumbers.serialNumber": { $in: serialsToUpdate }
+        },
+        {
+          $set: {
+            "serialNumbers.$[elem].status": "assigned",
+            "serialNumbers.$[elem].lastUpdated": new Date()
+          }
+        },
+        {
+          arrayFilters: [
+            { "elem.serialNumber": { $in: serialsToUpdate }, "elem.status": "available" }
+          ],
+          new: true
+        }
+      );
+      console.log(`✓ Updated ${serialsToUpdate.length} existing serials to assigned status`);
+    }
+    if (serialsToAdd.length > 0) {
+      await EntityStock.updateStock(
+        entityConfig.entityType,
+        entityConfig.entityId,
+        item.product,
+        serialsToAdd.length,
+        serialsToAdd,
+        stockUsage._id,
+        stockUsage.usageType
+      );
+      console.log(`✓ Added ${serialsToAdd.length} new serials to entity stock`);
+    }
+
+    if (!item.serialNumbers || item.serialNumbers.length === 0) {
+      await EntityStock.updateStock(
+        entityConfig.entityType,
+        entityConfig.entityId,
+        item.product,
+        item.quantity,
+        [],
+        stockUsage._id,
+        stockUsage.usageType
+      );
+    }
   }
 };
 
@@ -524,6 +694,7 @@ const getEntityConfig = (usageType, stockUsage) => {
 
   return config[usageType];
 };
+
 
 export const getAllStockUsage = async (req, res) => {
   try {
@@ -1134,6 +1305,103 @@ const consumeNewSerials = async (updateData, center, existingStockUsage) => {
   }
 };
 
+// const updateEntityStockForUsage = async (existingStockUsage, updateData) => {
+//   try {
+//     console.log("=== UPDATING ENTITY STOCK RECORDS ===");
+
+//     let EntityStock;
+//     try {
+//       EntityStock = mongoose.model("EntityStock");
+//     } catch (error) {
+//       console.log("EntityStock model not found, skipping entity stock update");
+//       return;
+//     }
+
+//     const usageType = updateData.usageType || existingStockUsage.usageType;
+//     const entityType = getEntityType(usageType);
+//     const oldEntityId = getEntityId(existingStockUsage);
+//     const newEntityId = getEntityId({
+//       ...existingStockUsage.toObject(),
+//       ...updateData,
+//     });
+
+//     console.log("Entity update details:", {
+//       usageType,
+//       entityType,
+//       oldEntityId: oldEntityId?.toString(),
+//       newEntityId: newEntityId?.toString(),
+//     });
+
+//     if (
+//       oldEntityId &&
+//       newEntityId &&
+//       oldEntityId.toString() !== newEntityId.toString()
+//     ) {
+//       console.log("Entity changed, updating stock for both entities");
+
+//       for (let item of existingStockUsage.items) {
+//         await EntityStock.updateStock(
+//           entityType,
+//           oldEntityId,
+//           item.product,
+//           -item.quantity,
+//           item.serialNumbers || [],
+//           existingStockUsage._id
+//         );
+//       }
+
+//       for (let item of updateData.items) {
+//         await EntityStock.updateStock(
+//           entityType,
+//           newEntityId,
+//           item.product,
+//           item.quantity,
+//           item.serialNumbers || [],
+//           existingStockUsage._id
+//         );
+//       }
+//     } else if (
+//       oldEntityId &&
+//       (!newEntityId || oldEntityId.toString() === newEntityId.toString())
+//     ) {
+//       console.log("Same entity, updating quantities if changed");
+
+//       for (let i = 0; i < updateData.items.length; i++) {
+//         const updatedItem = updateData.items[i];
+//         const existingItem = existingStockUsage.items[i];
+
+//         if (
+//           existingItem &&
+//           updatedItem.product.toString() === existingItem.product.toString()
+//         ) {
+//           const quantityDifference =
+//             updatedItem.quantity - existingItem.quantity;
+//           const serialDifference =
+//             (updatedItem.serialNumbers || []).length -
+//             (existingItem.serialNumbers || []).length;
+
+//           if (quantityDifference !== 0 || serialDifference !== 0) {
+//             await EntityStock.updateStock(
+//               entityType,
+//               oldEntityId,
+//               updatedItem.product,
+//               quantityDifference,
+//               updatedItem.serialNumbers || [],
+//               existingStockUsage._id
+//             );
+//           }
+//         }
+//       }
+//     }
+
+//     console.log("✓ Entity stock records updated successfully");
+//   } catch (error) {
+//     console.error("Error updating entity stock:", error);
+//   }
+// };
+
+
+
 const updateEntityStockForUsage = async (existingStockUsage, updateData) => {
   try {
     console.log("=== UPDATING ENTITY STOCK RECORDS ===");
@@ -1169,25 +1437,85 @@ const updateEntityStockForUsage = async (existingStockUsage, updateData) => {
       console.log("Entity changed, updating stock for both entities");
 
       for (let item of existingStockUsage.items) {
-        await EntityStock.updateStock(
-          entityType,
-          oldEntityId,
-          item.product,
-          -item.quantity,
-          item.serialNumbers || [],
-          existingStockUsage._id
-        );
-      }
+        const existingEntityStock = await EntityStock.findOne({
+          entityType: entityType,
+          entityId: oldEntityId,
+          product: item.product,
+        });
 
+        if (existingEntityStock) {
+          const serialsToRemove = item.serialNumbers || [];
+          const updatedSerials = existingEntityStock.serialNumbers.filter(
+            sn => !serialsToRemove.includes(sn.serialNumber)
+          );
+
+          const removedCount = existingEntityStock.serialNumbers.length - updatedSerials.length;
+
+          await EntityStock.findOneAndUpdate(
+            { entityType: entityType, entityId: oldEntityId, product: item.product },
+            {
+              $set: { serialNumbers: updatedSerials },
+              $inc: {
+                totalQuantity: -removedCount,
+                availableQuantity: -removedCount,
+              },
+              lastUpdated: new Date(),
+            }
+          );
+        }
+      }
       for (let item of updateData.items) {
-        await EntityStock.updateStock(
-          entityType,
-          newEntityId,
-          item.product,
-          item.quantity,
-          item.serialNumbers || [],
-          existingStockUsage._id
-        );
+        const existingEntityStock = await EntityStock.findOne({
+          entityType: entityType,
+          entityId: newEntityId,
+          product: item.product,
+        });
+
+        const existingSerials = existingEntityStock 
+          ? existingEntityStock.serialNumbers.map(sn => sn.serialNumber)
+          : [];
+        const serialsToUpdate = [];
+        const newSerials = [];
+
+        for (const serial of item.serialNumbers || []) {
+          if (existingSerials.includes(serial)) {
+            serialsToUpdate.push(serial);
+          } else {
+            newSerials.push(serial);
+          }
+        }
+        if (serialsToUpdate.length > 0 && existingEntityStock) {
+          await EntityStock.findOneAndUpdate(
+            {
+              entityType: entityType,
+              entityId: newEntityId,
+              product: item.product,
+              "serialNumbers.serialNumber": { $in: serialsToUpdate }
+            },
+            {
+              $set: {
+                "serialNumbers.$[elem].status": "assigned",
+                "serialNumbers.$[elem].lastUpdated": new Date()
+              }
+            },
+            {
+              arrayFilters: [
+                { "elem.serialNumber": { $in: serialsToUpdate } }
+              ]
+            }
+          );
+        }
+        if (newSerials.length > 0) {
+          await EntityStock.updateStock(
+            entityType,
+            newEntityId,
+            item.product,
+            newSerials.length,
+            newSerials,
+            existingStockUsage._id,
+            usageType
+          );
+        }
       }
     } else if (
       oldEntityId &&
@@ -1203,21 +1531,64 @@ const updateEntityStockForUsage = async (existingStockUsage, updateData) => {
           existingItem &&
           updatedItem.product.toString() === existingItem.product.toString()
         ) {
-          const quantityDifference =
-            updatedItem.quantity - existingItem.quantity;
-          const serialDifference =
-            (updatedItem.serialNumbers || []).length -
-            (existingItem.serialNumbers || []).length;
+          const quantityDifference = updatedItem.quantity - existingItem.quantity;
+          
+          const existingSerials = existingItem.serialNumbers || [];
+          const updatedSerials = updatedItem.serialNumbers || [];
+          
+          const removedSerials = existingSerials.filter(s => !updatedSerials.includes(s));
+          const addedSerials = updatedSerials.filter(s => !existingSerials.includes(s));
+          const unchangedSerials = existingSerials.filter(s => updatedSerials.includes(s));
 
-          if (quantityDifference !== 0 || serialDifference !== 0) {
-            await EntityStock.updateStock(
-              entityType,
-              oldEntityId,
-              updatedItem.product,
-              quantityDifference,
-              updatedItem.serialNumbers || [],
-              existingStockUsage._id
-            );
+          if (quantityDifference !== 0 || removedSerials.length > 0 || addedSerials.length > 0) {
+            const existingEntityStock = await EntityStock.findOne({
+              entityType: entityType,
+              entityId: oldEntityId,
+              product: updatedItem.product,
+            });
+
+            if (existingEntityStock) {
+              let currentSerials = existingEntityStock.serialNumbers;
+              if (removedSerials.length > 0) {
+                currentSerials = currentSerials.filter(
+                  sn => !removedSerials.includes(sn.serialNumber)
+                );
+              }
+              if (unchangedSerials.length > 0) {
+                currentSerials = currentSerials.map(sn => 
+                  unchangedSerials.includes(sn.serialNumber) 
+                    ? { ...sn.toObject(), status: "assigned", lastUpdated: new Date() }
+                    : sn
+                );
+              }
+              const existingSerialNumbers = currentSerials.map(sn => sn.serialNumber);
+              const newSerialsToAdd = addedSerials
+                .filter(serial => !existingSerialNumbers.includes(serial))
+                .map(serial => ({
+                  serialNumber: serial,
+                  status: "assigned",
+                  assignedDate: new Date(),
+                  usageReference: existingStockUsage._id,
+                  usageType: usageType,
+                }));
+
+              if (newSerialsToAdd.length > 0) {
+                currentSerials.push(...newSerialsToAdd);
+              }
+
+              await EntityStock.findOneAndUpdate(
+                { entityType: entityType, entityId: oldEntityId, product: updatedItem.product },
+                {
+                  $set: { serialNumbers: currentSerials },
+                  $inc: {
+                    totalQuantity: quantityDifference,
+                    availableQuantity: quantityDifference,
+                  },
+                  lastUpdated: new Date(),
+                },
+                { new: true }
+              );
+            }
           }
         }
       }
@@ -1239,7 +1610,7 @@ const getEntityType = (usageType) => {
     case "Control Room":
       return "controlRoom";
     default:
-      return null;
+        return "other";
   }
 };
 
@@ -2616,6 +2987,7 @@ export const getStockUsageByControlRoom = async (req, res) => {
 /**
  * Get stock usage by center - ONLY ALLOW ACCESS TO USER'S OWN CENTER
  */
+
 export const getStockUsageByCenter = async (req, res) => {
   try {
     const { centerId } = req.params;
@@ -3873,6 +4245,8 @@ export const getDamageReturnRecordsWithStats = async (req, res) => {
 // };
 
 
+
+
 export const replaceProductSerial = async (req, res) => {
   try {
     const { hasAccess } = checkStockUsagePermissions(
@@ -4069,7 +4443,9 @@ export const replaceProductSerial = async (req, res) => {
       await centerStock.save();
       console.log("✓ Center stock updated successfully");
       console.log("Updating EntityStock serial numbers...");
+
       const EntityStock = mongoose.model("EntityStock");
+
       
       if (entityType && entityId) {
         const entityStock = await EntityStock.findOne({
@@ -4178,6 +4554,390 @@ export const replaceProductSerial = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || "Failed to replace serial number",
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+
+
+export const returnProductSerial = async (req, res) => {
+  try {
+    const { hasAccess } = checkStockUsagePermissions(
+      req,
+      ["manage_usage_own_center", "manage_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_usage_own_center or manage_usage_all_center permission required.",
+      });
+    }
+
+    const {
+      usageId,
+      productId,
+      serialNumber,
+      remark = "Product return"
+    } = req.body;
+
+    const returnedBy = req.user.id;
+
+    console.log("=== SINGLE PRODUCT RETURN REQUEST ===");
+    console.log("Request Body:", { usageId, productId, serialNumber, remark });
+    
+    if (!usageId || !productId || !serialNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required: usageId, productId, serialNumber"
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(usageId) || !mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid ID format"
+      });
+    }
+
+    try {
+      const userCenterId = await getUserCenterId(req.user._id);
+      const originalUsage = await StockUsage.findById(usageId)
+        .populate("customer", "name mobile")
+        .populate("fromBuilding", "buildingName displayName")
+        .populate("toBuilding", "buildingName displayName")
+        .populate("fromControlRoom", "buildingName displayName")
+        .populate({
+          path: "items.product",
+          select: "productTitle productCode trackSerialNumber"
+        });
+
+      if (!originalUsage) {
+        return res.status(404).json({
+          success: false,
+          message: `Original stock usage record not found with ID: ${usageId}`
+        });
+      }
+      
+      if (originalUsage.center.toString() !== userCenterId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only return products from your own center"
+        });
+      }
+      const originalItem = originalUsage.items.find(
+        item => item.product._id.toString() === productId.toString()
+      );
+
+      if (!originalItem) {
+        return res.status(404).json({
+          success: false,
+          message: `Product not found in the original usage record`
+        });
+      }
+
+      if (!originalItem.serialNumbers.includes(serialNumber)) {
+        return res.status(400).json({
+          success: false,
+          message: `Serial number '${serialNumber}' was not found in the original usage for this product`
+        });
+      }
+      const currentCenterStock = await CenterStock.findOne({
+        center: userCenterId,
+        product: productId
+      });
+
+      if (!currentCenterStock) {
+        return res.status(404).json({
+          success: false,
+          message: `Center stock not found for product: ${productId}`
+        });
+      }
+
+      // const centerStockUpdate = await CenterStock.findOneAndUpdate(
+      //   {
+      //     center: userCenterId,
+      //     product: productId,
+      //     "serialNumbers.serialNumber": serialNumber,
+      //     "serialNumbers.status": "consumed",
+      //     consumedQuantity: { $gt: 0 } 
+      //   },
+      //   {
+      //     $set: {
+      //       "serialNumbers.$.status": "available",
+      //       "serialNumbers.$.currentLocation": userCenterId,
+      //       "serialNumbers.$.consumedDate": null,
+      //       "serialNumbers.$.consumedBy": null,
+      //     },
+      //     $push: {
+      //       "serialNumbers.$.transferHistory": {
+      //         fromCenter: null,
+      //         toCenter: userCenterId,
+      //         transferDate: new Date(),
+      //         transferType: "return_from_field",
+      //         referenceId: usageId,
+      //         remark: `Returned from ${originalUsage.usageType} - ${remark}`,
+      //         returnedBy: returnedBy
+      //       }
+      //     },
+      //     $inc: {
+      //       availableQuantity: 1,
+      //       consumedQuantity: -1
+      //     },
+      //     lastUpdated: new Date()
+      //   },
+      //   { 
+      //     new: true 
+      //   }
+      // );
+
+      // if (!centerStockUpdate) {
+      //   const existingCenterStock = await CenterStock.findOne({
+      //     center: userCenterId,
+      //     product: productId,
+      //     "serialNumbers.serialNumber": serialNumber
+      //   });
+        
+      //   if (existingCenterStock) {
+      //     const serialInfo = existingCenterStock.serialNumbers.find(
+      //       sn => sn.serialNumber === serialNumber
+      //     );
+          
+      //     if (serialInfo && serialInfo.status === "consumed") {
+      //       const newConsumedQuantity = Math.max(0, existingCenterStock.consumedQuantity - 1);
+            
+      //       const serialIndex = existingCenterStock.serialNumbers.findIndex(
+      //         sn => sn.serialNumber === serialNumber
+      //       );
+            
+      //       if (serialIndex !== -1) {
+      //         existingCenterStock.serialNumbers[serialIndex].status = "available";
+      //         existingCenterStock.serialNumbers[serialIndex].currentLocation = userCenterId;
+      //         existingCenterStock.serialNumbers[serialIndex].consumedDate = null;
+      //         existingCenterStock.serialNumbers[serialIndex].consumedBy = null;
+      //         existingCenterStock.serialNumbers[serialIndex].transferHistory.push({
+      //           fromCenter: null,
+      //           toCenter: userCenterId,
+      //           transferDate: new Date(),
+      //           transferType: "return_from_field",
+      //           referenceId: usageId,
+      //           remark: `Returned from ${originalUsage.usageType} - ${remark}`,
+      //           returnedBy: returnedBy
+      //         });
+      //       }
+            
+      //       existingCenterStock.availableQuantity += 1;
+      //       existingCenterStock.consumedQuantity = newConsumedQuantity;
+      //       existingCenterStock.lastUpdated = new Date();
+            
+      //       await existingCenterStock.save();
+      //       console.log(`✓ CenterStock updated (manual): '${serialNumber}' (consumed → available)`);
+      //     } else {
+      //       return res.status(400).json({
+      //         success: false,
+      //         message: `Serial number '${serialNumber}' exists but is not in consumed status. Current status: ${serialInfo?.status || 'unknown'}`
+      //       });
+      //     }
+      //   } else {
+      //     return res.status(400).json({
+      //       success: false,
+      //       message: `Serial number '${serialNumber}' not found in center stock`
+      //     });
+      //   }
+      // } else {
+      //   console.log(`✓ CenterStock updated: '${serialNumber}' (consumed → available)`);
+      // }
+       // Update CenterStock serial number status
+// Update CenterStock serial number status using array filters
+const centerStockUpdate = await CenterStock.findOneAndUpdate(
+  {
+    center: userCenterId,
+    product: productId,
+    "serialNumbers.serialNumber": serialNumber,
+    "serialNumbers.status": "consumed"
+  },
+  {
+    $set: {
+      "serialNumbers.$[elem].status": "available",
+      "serialNumbers.$[elem].currentLocation": userCenterId,
+      "serialNumbers.$[elem].consumedDate": null,
+      "serialNumbers.$[elem].consumedBy": null,
+    },
+    $push: {
+      "serialNumbers.$[elem].transferHistory": {
+        fromCenter: null,
+        toCenter: userCenterId,
+        transferDate: new Date(),
+        transferType: "return_from_field",
+        referenceId: usageId,
+        remark: `Returned from ${originalUsage.usageType} - ${remark}`,
+        returnedBy: returnedBy
+      }
+    },
+    $inc: {
+      availableQuantity: 1,
+      consumedQuantity: -1
+    },
+    lastUpdated: new Date()
+  },
+  { 
+    arrayFilters: [
+      { "elem.serialNumber": serialNumber, "elem.status": "consumed" }
+    ],
+    new: true 
+  }
+);
+
+if (!centerStockUpdate) {
+  // If findOneAndUpdate fails, use the manual update approach
+  const existingCenterStock = await CenterStock.findOne({
+    center: userCenterId,
+    product: productId
+  });
+  
+  if (existingCenterStock) {
+    const serialIndex = existingCenterStock.serialNumbers.findIndex(
+      sn => sn.serialNumber === serialNumber && sn.status === "consumed"
+    );
+    
+    if (serialIndex !== -1) {
+      existingCenterStock.serialNumbers[serialIndex].status = "available";
+      existingCenterStock.serialNumbers[serialIndex].currentLocation = userCenterId;
+      existingCenterStock.serialNumbers[serialIndex].consumedDate = null;
+      existingCenterStock.serialNumbers[serialIndex].consumedBy = null;
+      existingCenterStock.serialNumbers[serialIndex].transferHistory.push({
+        fromCenter: null,
+        toCenter: userCenterId,
+        transferDate: new Date(),
+        transferType: "return_from_field",
+        referenceId: usageId,
+        remark: `Returned from ${originalUsage.usageType} - ${remark}`,
+        returnedBy: returnedBy
+      });
+      
+      existingCenterStock.availableQuantity += 1;
+      existingCenterStock.consumedQuantity = Math.max(0, existingCenterStock.consumedQuantity - 1);
+      existingCenterStock.lastUpdated = new Date();
+      
+      await existingCenterStock.save();
+      console.log(`✓ CenterStock updated (manual): '${serialNumber}' (consumed → available)`);
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: `Serial number '${serialNumber}' not found in consumed status`
+      });
+    }
+  } else {
+    return res.status(400).json({
+      success: false,
+      message: `Center stock not found for product: ${productId}`
+    });
+  }
+} else {
+  console.log(`✓ CenterStock updated: '${serialNumber}' (consumed → available)`);
+}
+
+      const entityType = getEntityType(originalUsage.usageType);
+      const entityId = getEntityId(originalUsage);
+
+      if (entityType && entityId) {
+        const entityStock = await EntityStockUsage.findOne({
+          entityType: entityType,
+          entityId: entityId,
+          product: productId,
+          "serialNumbers.serialNumber": serialNumber
+        });
+
+        if (entityStock) {
+          const serialIndex = entityStock.serialNumbers.findIndex(
+            sn => sn.serialNumber === serialNumber && sn.status === "assigned"
+          );
+
+          if (serialIndex !== -1) {
+            entityStock.serialNumbers[serialIndex].status = "available";
+            entityStock.serialNumbers[serialIndex].assignedDate = new Date();
+            
+            await entityStock.save();
+            console.log(`✓ EntityStock updated: '${serialNumber}' (assigned → available)`);
+          } else {
+            console.log(`⚠ Serial '${serialNumber}' not found in entity stock or not in assigned status`);
+          }
+        } else {
+          console.log(`⚠ EntityStock not found for ${entityType}: ${entityId}, product: ${productId}`);
+        }
+      }
+      const returnData = {
+        date: new Date(),
+        originalUsageId: usageId,
+        center: userCenterId,
+        usageType: originalUsage.usageType,
+        type: "return",
+        customer: originalUsage.customer,
+        fromBuilding: originalUsage.fromBuilding,
+        toBuilding: originalUsage.toBuilding,
+        fromControlRoom: originalUsage.fromControlRoom,
+        items: [{
+          product: productId,
+          quantity: 1,
+          serialNumber: serialNumber,
+          oldStock: currentCenterStock.availableQuantity,
+          newStock: currentCenterStock.availableQuantity + 1,
+          totalStock: currentCenterStock.totalQuantity
+        }],
+        remark: remark,
+        returnedBy: returnedBy,
+        status: "completed"
+      };
+
+      const returnRecord = new ReturnRecord(returnData);
+      await returnRecord.save();
+      console.log("✓ Return record saved to separate collection");
+
+      console.log("=== SINGLE PRODUCT RETURN COMPLETED SUCCESSFULLY ===");
+      
+      const populatedReturn = await ReturnRecord.findById(returnRecord._id)
+        .populate("center", "name centerType")
+        .populate("customer", "username name mobile")
+        .populate("fromBuilding", "buildingName displayName")
+        .populate("toBuilding", "buildingName displayName")
+        .populate("fromControlRoom", "buildingName displayName")
+        .populate({
+          path: "items.product",
+          select: "productTitle productCode trackSerialNumber"
+        })
+        .populate("returnedBy", "name email")
+        .populate("originalUsageId", "usageType date remark");
+
+      res.json({
+        success: true,
+        message: `Product serial number '${serialNumber}' returned successfully.`,
+        data: {
+          returnRecord: populatedReturn,
+          summary: {
+            serialNumberReturned: serialNumber,
+            productId: productId,
+            originalUsageType: originalUsage.usageType,
+            entityType: entityType,
+            entityId: entityId,
+            stockChanges: {
+              availableQuantity: `${currentCenterStock.availableQuantity} → ${currentCenterStock.availableQuantity + 1}`,
+              consumedQuantity: `${currentCenterStock.consumedQuantity} → ${Math.max(0, currentCenterStock.consumedQuantity - 1)}`
+            }
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error("Return process error:", error);
+      throw error;
+    }
+
+  } catch (error) {
+    console.error("Product return error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to process product return",
       error: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }

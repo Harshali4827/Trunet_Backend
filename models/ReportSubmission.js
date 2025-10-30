@@ -66,7 +66,7 @@ const stockClosingSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["Draft", "Submitted", "Verified", "Rejected"],
+      enum: ["Submitted", "Approved", "Duplicate"],
       default: "Draft",
     },
     totalProductQty: {
@@ -81,6 +81,11 @@ const stockClosingSchema = new mongoose.Schema(
       type: String,
       trim: true,
       maxlength: [500, "Remark cannot exceed 500 characters"],
+    },
+    approvedRemark: {
+      type: String,
+      trim: true,
+      maxlength: [500, "Approved remark cannot exceed 500 characters"],
     },
   },
   {

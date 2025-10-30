@@ -19,8 +19,7 @@ const vendorSchema = new mongoose.Schema(
     },
     mobile: {
       type: String,
-      required: false,
-      trim: true,
+      required: false
     },
     email: {
       type: String,

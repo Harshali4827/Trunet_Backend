@@ -46,10 +46,19 @@ const centerSchema = new mongoose.Schema(
     addressLine2: { type: String },
     city: { type: String },
     state: { type: String },
+    // stockVerified: {
+    //   type: String,
+    //   enum: ["Yes", "No"],
+    //   default: "No",
+    // },
     stockVerified: {
       type: String,
-      enum: ["Yes", "No"],
-      default: "No",
+      enum: {
+        values: ['Yes', 'No', ''],
+        message: '`{VALUE}` is not a valid enum value for path `{PATH}`'
+      },
+      default: '', 
+      trim: true
     },
   },
   { timestamps: true }

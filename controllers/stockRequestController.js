@@ -3176,7 +3176,6 @@ export const completeIncompleteRequest = async (req, res) => {
 
             await outletStock.save();
 
-            // Update center stock for serialized products
             if (receivedCount > 0) {
               await CenterStock.updateStock(
                 stockRequest.center,
@@ -3195,19 +3194,31 @@ export const completeIncompleteRequest = async (req, res) => {
             productItem.receivedQuantity = 0;
           }
         } else {
-          // FIXED: For non-serialized products, update center stock as well
           productItem.receivedQuantity = receipt.receivedQuantity;
-          
-          // ADDED: Update center stock for non-serialized products
+    
           if (receipt.receivedQuantity > 0) {
             await CenterStock.updateStock(
               stockRequest.center,
               receipt.productId,
               receipt.receivedQuantity,
-              [], // empty array for non-serialized products
+              [],
               stockRequest.warehouse,
               "inbound_transfer"
             );
+            const outletStock = await OutletStock.findOne({
+              outlet: stockRequest.warehouse,
+              product: receipt.productId,
+            });
+            
+            if (outletStock) {
+              outletStock.totalQuantity -= receipt.receivedQuantity;
+              outletStock.availableQuantity -= receipt.receivedQuantity;
+              await outletStock.save();
+              
+              console.log(
+                `Deducted ${receipt.receivedQuantity} items from warehouse stock for product ${receipt.productId} in incomplete request completion`
+              );
+            }
           }
         }
       }
@@ -3548,8 +3559,6 @@ export const completeStockRequest = async (req, res) => {
             outletStock.totalQuantity -= receivedCount;
 
             await outletStock.save();
-
-            // Update center stock for serialized products
             if (receivedCount > 0) {
               await CenterStock.updateStock(
                 stockRequest.center,
@@ -3568,19 +3577,33 @@ export const completeStockRequest = async (req, res) => {
             productItem.receivedQuantity = 0;
           }
         } else {
-          // FIXED: For non-serialized products, update center stock as well
+
           productItem.receivedQuantity = receipt.receivedQuantity;
-          
-          // ADDED: Update center stock for non-serialized products
           if (receipt.receivedQuantity > 0) {
             await CenterStock.updateStock(
               stockRequest.center,
               receipt.productId,
               receipt.receivedQuantity,
-              [], // empty array for non-serialized products
+              [],
               stockRequest.warehouse,
               "inbound_transfer"
             );
+
+              // Deduct stock from warehouse for non-serialized products
+    const outletStock = await OutletStock.findOne({
+      outlet: stockRequest.warehouse,
+      product: receipt.productId,
+    });
+    
+    if (outletStock) {
+      outletStock.totalQuantity -= receipt.receivedQuantity;
+      outletStock.availableQuantity -= receipt.receivedQuantity;
+      await outletStock.save();
+      
+      console.log(
+        `Deducted ${receipt.receivedQuantity} items from warehouse stock for product ${receipt.productId}`
+      );
+    }
           }
         }
       }

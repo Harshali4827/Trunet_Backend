@@ -9,6 +9,7 @@ import {
   getUserById,
   updateUser,
   getLoginHistory,
+  deleteUser,
 } from "../controllers/authController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
@@ -22,12 +23,14 @@ router.get("/me", protect, getMe);
 
 router.get("/", protect, getAllUsers);
 router.get("/login-history", protect, getLoginHistory);
+
 router.put(
   "/update-password",
   protect,
   authorizeAccess(MODULE, "manage_user"),
   updatePassword
 );
+
 router.post("/logout", protect, logout);
 
 router.get(
@@ -42,4 +45,10 @@ router.put(
   authorizeAccess(MODULE, "manage_user"),
   updateUser
 );
+router.delete(
+  "/user/:id",
+  protect,
+  authorizeAccess(MODULE, "manage_user"),
+  deleteUser
+)
 export default router;

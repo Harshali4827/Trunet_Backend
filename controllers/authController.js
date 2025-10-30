@@ -633,8 +633,6 @@ export const logout = (req, res) => {
   });
 };
 
-
-
 export const getLoginHistory = async (req, res) => {
   try {
     const filter = {};
@@ -666,6 +664,47 @@ export const getLoginHistory = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching login history",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+export const deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (req.user && req.user.id === id) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot delete your own account",
+      });
+    }
+
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+    await LoginHistory.deleteMany({ user: id });
+    await User.findByIdAndDelete(id);
+
+    res.status(200).json({
+      success: true,
+      message: "User deleted successfully",
+      data: {
+        deletedUser: {
+          _id: user._id,
+          fullName: user.fullName,
+          email: user.email,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Delete user error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error deleting user",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }

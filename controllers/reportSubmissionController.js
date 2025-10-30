@@ -557,96 +557,6 @@ const stockClosingPopulateOptions = [
   { path: "linkedStockClosing", select: "_id closingCenter status" },
 ];
 
-// export const getAllStockClosings = async (req, res) => {
-//   try {
-//     const { hasAccess, permissions, userCenter } = checkStockClosingPermissions(
-//       req,
-//       ["view_closing_stock_own_center", "view_closing_stock_all_center"]
-//     );
-
-//     if (!hasAccess) {
-//       return res.status(403).json({
-//         success: false,
-//         message:
-//           "Access denied. view_closing_stock_own_center or view_closing_stock_all_center permission required.",
-//       });
-//     }
-
-//     const {
-//       page = 1,
-//       limit = 10,
-//       sortBy = "date",
-//       sortOrder = "desc",
-//       centerType,
-//       ...filterParams
-//     } = req.query;
-
-//     const filter = buildStockClosingFilter(
-//       filterParams,
-//       permissions,
-//       userCenter
-//     );
-
-//     const sortOptions = buildStockClosingSortOptions(sortBy, sortOrder);
-
-//     const [stockClosings, totalCount] = await Promise.all([
-//       StockClosing.find(filter)
-//         .populate(stockClosingPopulateOptions)
-//         .sort(sortOptions)
-//         .skip((parseInt(page) - 1) * parseInt(limit))
-//         .limit(parseInt(limit))
-//         .lean(),
-
-//       StockClosing.countDocuments(filter),
-//     ]);
-
-//     const filteredStockClosings = centerType
-//       ? stockClosings.filter(
-//           (sc) => sc.closingCenter && sc.closingCenter.centerType === centerType
-//         )
-//       : stockClosings;
-
-//     const actualTotal = centerType ? filteredStockClosings.length : totalCount;
-
-//     if (filteredStockClosings.length === 0) {
-//       return res.status(200).json({
-//         success: true,
-//         message: "No stock closings found",
-//         data: [],
-//         pagination: {
-//           currentPage: parseInt(page),
-//           totalPages: 0,
-//           totalItems: 0,
-//           itemsPerPage: parseInt(limit),
-//           hasNext: false,
-//           hasPrev: false,
-//         },
-//       });
-//     }
-
-//     const totalPages = Math.ceil(actualTotal / parseInt(limit));
-
-//     res.json({
-//       success: true,
-//       message: "Stock closings retrieved successfully",
-//       data: filteredStockClosings,
-//       pagination: {
-//         currentPage: parseInt(page),
-//         totalPages,
-//         totalItems: actualTotal,
-//         itemsPerPage: parseInt(limit),
-//         hasNext: parseInt(page) < totalPages,
-//         hasPrev: parseInt(page) > 1,
-//       },
-//     });
-//   } catch (error) {
-//     console.error("Get all stock closings error:", error);
-//     handleControllerError(error, res);
-//   }
-// };
-
-
-
 export const getAllStockClosings = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockClosingPermissions(
@@ -1174,6 +1084,157 @@ export const getMyCenterStockClosings = async (req, res) => {
     });
   } catch (error) {
     console.error("Get my center stock closings error:", error);
+    handleControllerError(error, res);
+  }
+};
+
+
+export const updateStockClosingStatus = async (req, res) => {
+  try {
+    const { hasAccess } = checkStockClosingPermissions(req, [
+      "manage_closing_stock_own_center", 
+      "manage_closing_stock_all_center"
+    ]);
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_closing_stock_own_center or manage_closing_stock_all_center permission required.",
+      });
+    }
+
+    const { id } = req.params;
+    const { status } = req.body;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid stock closing ID",
+      });
+    }
+    
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: "Status is required in request body",
+      });
+    }
+
+    const validStatuses = ["Submitted", "Approved", "Duplicate"];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
+      });
+    }
+
+    const { permissions, userCenter } = checkStockClosingPermissions(req, [
+      "view_closing_stock_own_center",
+      "view_closing_stock_all_center",
+    ]);
+
+    let filter = { _id: id };
+
+    if (
+      permissions.manage_closing_stock_own_center &&
+      !permissions.manage_closing_stock_all_center &&
+      userCenter
+    ) {
+      filter = {
+        _id: id,
+        $or: [
+          { closingCenter: userCenter._id || userCenter },
+          { center: userCenter._id || userCenter },
+        ],
+      };
+    }
+
+    const existingStockClosing = await StockClosing.findOne(filter);
+    
+    if (!existingStockClosing) {
+      return res.status(404).json({
+        success: false,
+        message: "Stock closing not found or you don't have permission to update it",
+      });
+    }
+
+    if (existingStockClosing.status === status) {
+      return res.status(400).json({
+        success: false,
+        message: `Stock closing is already in "${status}" status`,
+      });
+    }
+
+    // Determine the approvedRemark based on status
+    let approvedRemark = "";
+    if (status === "Approved") {
+      approvedRemark = "Approved By Admin";
+    } else if (status === "Duplicate") {
+      approvedRemark = "Duplicate Entry";
+    }
+
+    const updateData = { 
+      status,
+      ...(approvedRemark && { approvedRemark })
+    };
+
+    let mainStockClosingId = id;
+    let linkedStockClosingId = null;
+
+    // Check if this is a linked entry (has linkedStockClosing reference)
+    if (existingStockClosing.linkedStockClosing) {
+      // This is a secondary/linked entry - we need to find and update the main entry
+      const mainEntry = await StockClosing.findOne({ 
+        linkedStockClosing: id 
+      });
+      
+      if (mainEntry) {
+        mainStockClosingId = mainEntry._id;
+        linkedStockClosingId = id;
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: "Cannot update status of linked stock closing entry directly. Update the main entry instead.",
+        });
+      }
+    } else {
+      // This is a main entry - check if it has a linked entry
+      linkedStockClosingId = existingStockClosing.linkedStockClosing;
+    }
+
+    // Update the main entry
+    const updatedStockClosing = await StockClosing.findOneAndUpdate(
+      { _id: mainStockClosingId },
+      updateData,
+      { new: true, runValidators: true }
+    ).populate([
+      {
+        path: "products.product",
+        select: "productTitle productCode productPrice",
+      },
+      { path: "center", select: "centerName centerCode centerType" },
+      { path: "closingCenter", select: "centerName centerCode centerType" },
+      { path: "createdBy", select: "name email" },
+      { path: "linkedStockClosing", select: "_id closingCenter status" },
+    ]);
+
+    // Update the linked entry if it exists
+    if (linkedStockClosingId) {
+      await StockClosing.findByIdAndUpdate(
+        linkedStockClosingId,
+        updateData,
+        { new: true, runValidators: true }
+      );
+    }
+
+    res.json({
+      success: true,
+      message: `Stock closing status updated to "${status}" successfully`,
+      data: updatedStockClosing,
+    });
+
+  } catch (error) {
+    console.error("Update stock closing status error:", error);
     handleControllerError(error, res);
   }
 };

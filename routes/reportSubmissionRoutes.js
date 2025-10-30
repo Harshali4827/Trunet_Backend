@@ -5,6 +5,7 @@ import {
   getStockClosingById,
   updateStockClosing,
   deleteStockClosing,
+  updateStockClosingStatus,
 } from "../controllers/reportSubmissionController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
@@ -39,6 +40,12 @@ router.put(
   authorizeAccess(MODULE, "change_closing_qty"),
   updateStockClosing
 );
+
+router.patch(
+  "/:id/status",
+  protect,
+  updateStockClosingStatus
+)
 
 router.delete(
   "/:id",
