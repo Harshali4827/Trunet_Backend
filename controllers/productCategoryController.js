@@ -23,7 +23,7 @@ export const getAllCategories = async (req, res) => {
     const {
       search,
       page = 1,
-      limit = 10,
+      limit = 100,
       sortBy = "createdAt",
       sortOrder = "desc",
     } = req.query;

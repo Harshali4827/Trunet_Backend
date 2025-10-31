@@ -722,7 +722,7 @@ export const getAllStockUsage = async (req, res) => {
       controlRoom,
       status,
       page = 1,
-      limit = 10,
+      limit = 100,
       sortBy = "date",
       sortOrder = "desc",
     } = req.query;
@@ -2080,7 +2080,7 @@ export const getPendingDamageRequests = async (req, res) => {
       });
     }
 
-    const { center, page = 1, limit = 10, startDate, endDate } = req.query;
+    const { center, page = 1, limit = 100, startDate, endDate } = req.query;
 
     const filter = {
       usageType: "Damage Return",
@@ -2329,7 +2329,7 @@ export const getDamageRequestsByStatus = async (req, res) => {
       startDate,
       endDate,
       page = 1,
-      limit = 10,
+      limit = 100,
     } = req.query;
 
     const filter = {
@@ -2581,7 +2581,7 @@ export const getStockUsageByCustomer = async (req, res) => {
     const { customerId } = req.params;
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       startDate,
       endDate,
       status,
@@ -2716,7 +2716,7 @@ export const getStockUsageByBuilding = async (req, res) => {
     const { buildingId } = req.params;
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       startDate,
       endDate,
       status,
@@ -2874,7 +2874,7 @@ export const getStockUsageByControlRoom = async (req, res) => {
     const { controlRoomId } = req.params;
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       startDate,
       endDate,
       status,
@@ -2993,7 +2993,7 @@ export const getStockUsageByCenter = async (req, res) => {
     const { centerId } = req.params;
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       startDate,
       endDate,
       usageType,
@@ -3133,6 +3133,181 @@ export const getStockUsageByCenter = async (req, res) => {
   }
 };
 
+// export const getProductDevicesByCustomer = async (req, res) => {
+//   try {
+//     const { hasAccess, userCenter } = checkStockUsagePermissions(
+//       req,
+//       ["view_usage_own_center", "view_usage_all_center"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+//       });
+//     }
+
+//     const { customerId } = req.params;
+//     const {
+//       page = 1,
+//       limit = 100,
+//       startDate,
+//       endDate,
+//       product,
+//       connectionType,
+//       sortBy = "date",
+//       sortOrder = "desc",
+//     } = req.query;
+
+//     const userCenterId = userCenter?._id || userCenter;
+//     if (!userCenterId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User must be associated with a center",
+//       });
+//     }
+
+//     const customer = await Customer.findOne({
+//       _id: customerId,
+//       center: userCenterId,
+//     }).populate("center", "centerName centerCode");
+
+//     if (!customer) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Customer not found or you don't have access to this customer",
+//       });
+//     }
+
+//     const query = {
+//       usageType: "Customer",
+//       customer: customerId,
+//       center: userCenterId,
+//       status: "completed",
+//       "items.serialNumbers.0": { $exists: true },
+//     };
+
+//     if (startDate || endDate) {
+//       query.date = {};
+//       if (startDate) query.date.$gte = new Date(startDate);
+//       if (endDate) query.date.$lte = new Date(endDate);
+//     }
+
+//     if (product) query["items.product"] = product;
+//     if (connectionType) query.connectionType = connectionType;
+
+//     const total = await StockUsage.countDocuments(query);
+//     const skip = (parseInt(page) - 1) * parseInt(limit);
+
+//     const sortConfig = {};
+//     sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+//     const stockUsages = await StockUsage.find(query)
+//       .populate("center", "centerName centerCode")
+//       .populate({
+//         path: "items.product",
+//         select: "productTitle productCode category trackSerialNumber _id",
+//         match: { trackSerialNumber: "Yes" },
+//       })
+//       .populate("createdBy", "name email")
+//       .sort(sortConfig)
+//       .skip(skip)
+//       .limit(parseInt(limit));
+
+//     const filteredUsages = stockUsages
+//       .map((usage) => ({
+//         ...usage.toObject(),
+//         items: usage.items.filter(
+//           (item) =>
+//             item.product !== null &&
+//             item.serialNumbers &&
+//             item.serialNumbers.length > 0
+//         ),
+//       }))
+//       .filter((usage) => usage.items.length > 0);
+
+//     const formattedData = [];
+
+//     filteredUsages.forEach((usage) => {
+//       usage.items.forEach((item) => {
+//         if (
+//           item.serialNumbers &&
+//           item.serialNumbers.length > 0 &&
+//           item.product
+//         ) {
+//           item.serialNumbers.forEach((serialNumber) => {
+//             formattedData.push({
+//               _id: `${usage._id}_${serialNumber}`,
+//               usageId: usage._id,
+//               center: {
+//                 id: usage.center?._id,
+//                 name: usage.center?.centerName,
+//                 code: usage.center?.centerCode,
+//               },
+    
+//               itemId: item._id,
+//               productId: item.product._id,
+//               Product: item.product.productTitle || "Unknown Product",
+//               "Serial No.": serialNumber,
+//               Type: usage.usageType,
+//               Date: usage.date.toLocaleDateString(),
+//               "Connection Type": usage.connectionType || "N/A",
+//               "Package Amount": usage.packageAmount || 0,
+//               "Package Duration": usage.packageDuration || "N/A",
+//               "ONU Charges": usage.onuCharges || 0,
+//               "Installation Charges": usage.installationCharges || 0,
+//               Remark: usage.remark || "",
+//               Option: getConnectionOption(usage.connectionType, usage.reason),
+//               Status: usage.status,
+//               "Product Code": item.product.productCode || "N/A",
+//               "Assigned Date": usage.date.toLocaleDateString(),
+//               "Product Category": item.product.category || "N/A",
+//               createdBy: usage.createdBy ? {
+//                 id: usage.createdBy._id,
+//                 name: usage.createdBy.name,
+//                 email: usage.createdBy.email
+//               } : null,
+//             });
+//           });
+//         }
+//       });
+//     });
+
+//     res.status(200).json({
+//       success: true,
+//       data: formattedData,
+//       customer: {
+//         id: customer._id,
+//         name: customer.name,
+//         username: customer.username,
+//         mobile: customer.mobile,
+//         email: customer.email,
+//       },
+//       pagination: {
+//         total: formattedData.length,
+//         page: parseInt(page),
+//         limit: parseInt(limit),
+//         totalPages: Math.ceil(formattedData.length / limit),
+//       },
+//       summary: {
+//         totalDevices: formattedData.length,
+//         uniqueProducts: [...new Set(formattedData.map((item) => item.Product))]
+//           .length,
+//         connectionTypes: getConnectionTypeSummary(formattedData),
+//         centers: [...new Set(formattedData.map(item => item.center?.name).filter(Boolean))],
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error fetching product devices by customer:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error",
+//     });
+//   }
+// };
+
+
 export const getProductDevicesByCustomer = async (req, res) => {
   try {
     const { hasAccess, userCenter } = checkStockUsagePermissions(
@@ -3151,7 +3326,7 @@ export const getProductDevicesByCustomer = async (req, res) => {
     const { customerId } = req.params;
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       startDate,
       endDate,
       product,
@@ -3167,7 +3342,6 @@ export const getProductDevicesByCustomer = async (req, res) => {
         message: "User must be associated with a center",
       });
     }
-
     const customer = await Customer.findOne({
       _id: customerId,
       center: userCenterId,
@@ -3179,8 +3353,7 @@ export const getProductDevicesByCustomer = async (req, res) => {
         message: "Customer not found or you don't have access to this customer",
       });
     }
-
-    const query = {
+    const usageQuery = {
       usageType: "Customer",
       customer: customerId,
       center: userCenterId,
@@ -3189,21 +3362,17 @@ export const getProductDevicesByCustomer = async (req, res) => {
     };
 
     if (startDate || endDate) {
-      query.date = {};
-      if (startDate) query.date.$gte = new Date(startDate);
-      if (endDate) query.date.$lte = new Date(endDate);
+      usageQuery.date = {};
+      if (startDate) usageQuery.date.$gte = new Date(startDate);
+      if (endDate) usageQuery.date.$lte = new Date(endDate);
     }
-
-    if (product) query["items.product"] = product;
-    if (connectionType) query.connectionType = connectionType;
-
-    const total = await StockUsage.countDocuments(query);
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    if (product) usageQuery["items.product"] = product;
+    if (connectionType) usageQuery.connectionType = connectionType;
 
     const sortConfig = {};
     sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
 
-    const stockUsages = await StockUsage.find(query)
+    const stockUsages = await StockUsage.find(usageQuery)
       .populate("center", "centerName centerCode")
       .populate({
         path: "items.product",
@@ -3211,9 +3380,7 @@ export const getProductDevicesByCustomer = async (req, res) => {
         match: { trackSerialNumber: "Yes" },
       })
       .populate("createdBy", "name email")
-      .sort(sortConfig)
-      .skip(skip)
-      .limit(parseInt(limit));
+      .sort(sortConfig);
 
     const filteredUsages = stockUsages
       .map((usage) => ({
@@ -3227,56 +3394,106 @@ export const getProductDevicesByCustomer = async (req, res) => {
       }))
       .filter((usage) => usage.items.length > 0);
 
-    const formattedData = [];
-
+    const formattedUsageData = [];
     filteredUsages.forEach((usage) => {
       usage.items.forEach((item) => {
-        if (
-          item.serialNumbers &&
-          item.serialNumbers.length > 0 &&
-          item.product
-        ) {
-          item.serialNumbers.forEach((serialNumber) => {
-            formattedData.push({
-              _id: `${usage._id}_${serialNumber}`,
-              usageId: usage._id,
-              center: {
-                id: usage.center?._id,
-                name: usage.center?.centerName,
-                code: usage.center?.centerCode,
-              },
-    
-              itemId: item._id,
-              productId: item.product._id,
-              Product: item.product.productTitle || "Unknown Product",
-              "Serial No.": serialNumber,
-              Type: usage.usageType,
-              Date: usage.date.toLocaleDateString(),
-              "Connection Type": usage.connectionType || "N/A",
-              "Package Amount": usage.packageAmount || 0,
-              "Package Duration": usage.packageDuration || "N/A",
-              "ONU Charges": usage.onuCharges || 0,
-              "Installation Charges": usage.installationCharges || 0,
-              Remark: usage.remark || "",
-              Option: getConnectionOption(usage.connectionType, usage.reason),
-              Status: usage.status,
-              "Product Code": item.product.productCode || "N/A",
-              "Assigned Date": usage.date.toLocaleDateString(),
-              "Product Category": item.product.category || "N/A",
-              createdBy: usage.createdBy ? {
-                id: usage.createdBy._id,
-                name: usage.createdBy.name,
-                email: usage.createdBy.email
-              } : null,
-            });
+        item.serialNumbers.forEach((serialNumber) => {
+          formattedUsageData.push({
+            source: "usage",
+            _id: `${usage._id}_${serialNumber}`,
+            usageId: usage._id,
+            center: {
+              id: usage.center?._id,
+              name: usage.center?.centerName,
+              code: usage.center?.centerCode,
+            },
+            itemId: item._id,
+            productId: item.product._id,
+            Product: item.product.productTitle || "Unknown Product",
+            "Serial No.": serialNumber,
+            Type: usage.usageType,
+            Date: usage.date.toLocaleDateString(),
+            "Connection Type": usage.connectionType || "N/A",
+            "Package Amount": usage.packageAmount || 0,
+            "Package Duration": usage.packageDuration || "N/A",
+            "ONU Charges": usage.onuCharges || 0,
+            "Installation Charges": usage.installationCharges || 0,
+            Remark: usage.remark || "",
+            Reason: usage.reason || "N/A",
+            Option: getConnectionOption(usage.connectionType, usage.reason),
+            Status: usage.status,
+            "Product Code": item.product.productCode || "N/A",
+            "Product Category": item.product.category || "N/A",
+            createdBy: usage.createdBy
+              ? {
+                  id: usage.createdBy._id,
+                  name: usage.createdBy.name,
+                  email: usage.createdBy.email,
+                }
+              : null,
           });
-        }
+        });
       });
     });
+    const returnRecords = await ReturnRecord.find({
+      customer: customerId,
+      center: userCenterId,
+      status: "completed",
+    })
+      .populate({
+        path: "originalUsageId",
+        model: "StockUsage",
+        select:
+          "connectionType packageAmount packageDuration onuCharges installationCharges remark reason",
+      })
+      .populate({
+        path: "items.product",
+        select: "productTitle productCode category _id",
+      })
+      .populate("center", "centerName centerCode");
+
+    const formattedReturnData = [];
+    returnRecords.forEach((record) => {
+      record.items.forEach((item) => {
+        formattedReturnData.push({
+          source: "return",
+          _id: `${record._id}_${item.serialNumber}`,
+          returnId: record._id,
+          originalUsageId: record.originalUsageId?._id,
+          center: {
+            id: record.center?._id,
+            name: record.center?.centerName,
+            code: record.center?.centerCode,
+          },
+          productId: item.product?._id,
+          Product: item.product?.productTitle || "Unknown Product",
+          "Serial No.": item.serialNumber,
+          Type: "Return",
+          Date: record.date.toLocaleDateString(),
+          "Connection Type": record.originalUsageId?.connectionType || "N/A",
+          "Package Amount": record.originalUsageId?.packageAmount || 0,
+          "Package Duration": record.originalUsageId?.packageDuration || "N/A",
+          "ONU Charges": record.originalUsageId?.onuCharges || 0,
+          "Installation Charges":
+            record.originalUsageId?.installationCharges || 0,
+          Remark: record.originalUsageId?.remark || "",
+          Reason: record.originalUsageId?.reason || "N/A",
+          Status: record.status,
+          "Product Code": item.product?.productCode || "N/A",
+          "Product Category": item.product?.category || "N/A",
+        });
+      });
+    });
+    const combinedData = [...formattedUsageData, ...formattedReturnData];
+    const total = combinedData.length;
+    const paginated = combinedData.slice(
+      (page - 1) * limit,
+      (page - 1) * limit + parseInt(limit)
+    );
 
     res.status(200).json({
       success: true,
-      data: formattedData,
+      data: paginated,
       customer: {
         id: customer._id,
         name: customer.name,
@@ -3285,17 +3502,22 @@ export const getProductDevicesByCustomer = async (req, res) => {
         email: customer.email,
       },
       pagination: {
-        total: formattedData.length,
+        total,
         page: parseInt(page),
         limit: parseInt(limit),
-        totalPages: Math.ceil(formattedData.length / limit),
+        totalPages: Math.ceil(total / limit),
       },
       summary: {
-        totalDevices: formattedData.length,
-        uniqueProducts: [...new Set(formattedData.map((item) => item.Product))]
-          .length,
-        connectionTypes: getConnectionTypeSummary(formattedData),
-        centers: [...new Set(formattedData.map(item => item.center?.name).filter(Boolean))],
+        totalDevices: total,
+        uniqueProducts: [
+          ...new Set(combinedData.map((item) => item.Product)),
+        ].length,
+        connectionTypes: getConnectionTypeSummary(combinedData),
+        centers: [
+          ...new Set(
+            combinedData.map((item) => item.center?.name).filter(Boolean)
+          ),
+        ],
       },
     });
   } catch (error) {
@@ -3306,6 +3528,208 @@ export const getProductDevicesByCustomer = async (req, res) => {
     });
   }
 };
+
+
+// export const getProductDevicesByBuilding = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+//       req,
+//       ["view_usage_own_center", "view_usage_all_center"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+//       });
+//     }
+
+//     const { buildingId } = req.params;
+//     const {
+//       page = 1,
+//       limit = 100,
+//       startDate,
+//       endDate,
+//       product,
+//       usageType = "all",
+//       sortBy = "date",
+//       sortOrder = "desc",
+//     } = req.query;
+
+//     const userCenterId = userCenter?._id || userCenter;
+//     if (!userCenterId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User must be associated with a center",
+//       });
+//     }
+
+//     const building = await Building.findOne({
+//       _id: buildingId,
+//       center: userCenterId,
+//     });
+
+//     if (!building) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Building not found or you don't have access to this building",
+//       });
+//     }
+
+//     const query = {
+//       center: userCenterId,
+//       status: "completed",
+//       "items.serialNumbers.0": { $exists: true },
+//       $or: [
+//         { usageType: "Building", fromBuilding: buildingId },
+//         {
+//           usageType: "Building to Building",
+//           $or: [{ fromBuilding: buildingId }, { toBuilding: buildingId }],
+//         },
+//       ],
+//     };
+
+//     if (usageType && usageType !== "all") {
+//       if (usageType === "Building") {
+//         query.$or = [{ usageType: "Building", fromBuilding: buildingId }];
+//       } else if (usageType === "Building to Building") {
+//         query.$or = [
+//           { usageType: "Building to Building", fromBuilding: buildingId },
+//           { usageType: "Building to Building", toBuilding: buildingId },
+//         ];
+//       }
+//     }
+
+//     if (startDate || endDate) {
+//       query.date = {};
+//       if (startDate) query.date.$gte = new Date(startDate);
+//       if (endDate) query.date.$lte = new Date(endDate);
+//     }
+
+//     if (product) query["items.product"] = product;
+
+//     const total = await StockUsage.countDocuments(query);
+//     const skip = (parseInt(page) - 1) * parseInt(limit);
+
+//     const sortConfig = {};
+//     sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+//     const stockUsages = await StockUsage.find(query)
+//       .populate("center", "centerName centerCode")
+//       .populate("fromBuilding", "buildingName displayName")
+//       .populate("toBuilding", "buildingName displayName")
+//       .populate({
+//         path: "items.product",
+//         select: "productTitle productCode category trackSerialNumber _id",
+//         match: { trackSerialNumber: "Yes" },
+//       })
+//       .populate("createdBy", "name email")
+//       .sort(sortConfig)
+//       .skip(skip)
+//       .limit(parseInt(limit));
+
+//     const filteredUsages = stockUsages
+//       .map((usage) => ({
+//         ...usage.toObject(),
+//         items: usage.items.filter(
+//           (item) =>
+//             item.product !== null &&
+//             item.serialNumbers &&
+//             item.serialNumbers.length > 0
+//         ),
+//       }))
+//       .filter((usage) => usage.items.length > 0);
+
+//     const formattedData = [];
+
+//     filteredUsages.forEach((usage) => {
+//       usage.items.forEach((item) => {
+//         if (
+//           item.serialNumbers &&
+//           item.serialNumbers.length > 0 &&
+//           item.product
+//         ) {
+//           let transferType = "Building Usage";
+//           if (usage.usageType === "Building to Building") {
+//             if (usage.fromBuilding?._id.toString() === buildingId) {
+//               transferType = "Outgoing Transfer";
+//             } else if (usage.toBuilding?._id.toString() === buildingId) {
+//               transferType = "Incoming Transfer";
+//             }
+//           }
+
+//           item.serialNumbers.forEach((serialNumber) => {
+//             formattedData.push({
+//               _id: `${usage._id}_${serialNumber}`,
+//               usageId: usage._id, 
+//               center: {
+//                 id: usage.center?._id,
+//                 name: usage.center?.centerName,
+//                 code: usage.center?.centerCode,
+//               },
+//               productId: item.product._id, 
+//               Product: item.product.productTitle || "Unknown Product",
+//               "Serial No.": serialNumber,
+//               Type: transferType,
+//               Date: usage.date.toLocaleDateString(),
+//               "Connection Type": "Building Assignment",
+//               "Package Amount": 0,
+//               "Package Duration": "N/A",
+//               "ONU Charges": 0,
+//               "Installation Charges": 0,
+//               Remark: usage.remark || `Building: ${building.buildingName}`,
+//               Option: transferType,
+//               Status: usage.status,
+//               "Product Code": item.product.productCode || "N/A",
+//               "From Building": usage.fromBuilding?.buildingName || "N/A",
+//               "To Building": usage.toBuilding?.buildingName || "N/A",
+//               "Assigned Date": usage.date.toLocaleDateString(),
+//               "Product Category": item.product.category || "N/A",
+//             });
+//           });
+//         }
+//       });
+//     });
+
+//     res.status(200).json({
+//       success: true,
+//       data: formattedData,
+//       building: {
+//         id: building._id,
+//         name: building.buildingName,
+//         displayName: building.displayName,
+//         address: building.address1,
+//       },
+//       pagination: {
+//         total: formattedData.length,
+//         page: parseInt(page),
+//         limit: parseInt(limit),
+//         totalPages: Math.ceil(formattedData.length / limit),
+//       },
+//       summary: {
+//         totalDevices: formattedData.length,
+//         uniqueProducts: [...new Set(formattedData.map((item) => item.Product))]
+//           .length,
+//         incomingTransfers: formattedData.filter(
+//           (item) => item.Type === "Incoming Transfer"
+//         ).length,
+//         outgoingTransfers: formattedData.filter(
+//           (item) => item.Type === "Outgoing Transfer"
+//         ).length,
+//         buildingUsage: formattedData.filter(
+//           (item) => item.Type === "Building Usage"
+//         ).length,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error fetching product devices by building:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error",
+//     });
+//   }
+// };
 
 
 export const getProductDevicesByBuilding = async (req, res) => {
@@ -3326,7 +3750,7 @@ export const getProductDevicesByBuilding = async (req, res) => {
     const { buildingId } = req.params;
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       startDate,
       endDate,
       product,
@@ -3355,7 +3779,8 @@ export const getProductDevicesByBuilding = async (req, res) => {
       });
     }
 
-    const query = {
+    // Build query for StockUsage
+    const stockUsageQuery = {
       center: userCenterId,
       status: "completed",
       "items.serialNumbers.0": { $exists: true },
@@ -3368,46 +3793,90 @@ export const getProductDevicesByBuilding = async (req, res) => {
       ],
     };
 
+    // Build query for ReturnRecord
+    const returnRecordQuery = {
+      center: userCenterId,
+      status: "completed",
+      "items.serialNumber": { $exists: true, $ne: "" },
+      $or: [
+        { usageType: "Building", fromBuilding: buildingId },
+        {
+          usageType: "Building to Building",
+          $or: [{ fromBuilding: buildingId }, { toBuilding: buildingId }],
+        },
+        { usageType: "Damage Return", fromBuilding: buildingId },
+      ],
+    };
+
+    // Apply usageType filter
     if (usageType && usageType !== "all") {
       if (usageType === "Building") {
-        query.$or = [{ usageType: "Building", fromBuilding: buildingId }];
+        stockUsageQuery.$or = [{ usageType: "Building", fromBuilding: buildingId }];
+        returnRecordQuery.$or = [{ usageType: "Building", fromBuilding: buildingId }];
       } else if (usageType === "Building to Building") {
-        query.$or = [
+        stockUsageQuery.$or = [
           { usageType: "Building to Building", fromBuilding: buildingId },
           { usageType: "Building to Building", toBuilding: buildingId },
         ];
+        returnRecordQuery.$or = [
+          { usageType: "Building to Building", fromBuilding: buildingId },
+          { usageType: "Building to Building", toBuilding: buildingId },
+        ];
+      } else if (usageType === "Damage Return") {
+        // Only for return records
+        stockUsageQuery.$or = [{ _id: null }]; // This will return no stock usage records
+        returnRecordQuery.$or = [{ usageType: "Damage Return", fromBuilding: buildingId }];
       }
     }
 
+    // Apply date filter
+    const dateFilter = {};
+    if (startDate) dateFilter.$gte = new Date(startDate);
+    if (endDate) dateFilter.$lte = new Date(endDate);
+
     if (startDate || endDate) {
-      query.date = {};
-      if (startDate) query.date.$gte = new Date(startDate);
-      if (endDate) query.date.$lte = new Date(endDate);
+      stockUsageQuery.date = { ...dateFilter };
+      returnRecordQuery.date = { ...dateFilter };
     }
 
-    if (product) query["items.product"] = product;
-
-    const total = await StockUsage.countDocuments(query);
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // Apply product filter
+    if (product) {
+      stockUsageQuery["items.product"] = product;
+      returnRecordQuery["items.product"] = product;
+    }
 
     const sortConfig = {};
     sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
 
-    const stockUsages = await StockUsage.find(query)
-      .populate("center", "centerName centerCode")
-      .populate("fromBuilding", "buildingName displayName")
-      .populate("toBuilding", "buildingName displayName")
-      .populate({
-        path: "items.product",
-        select: "productTitle productCode category trackSerialNumber _id",
-        match: { trackSerialNumber: "Yes" },
-      })
-      .populate("createdBy", "name email")
-      .sort(sortConfig)
-      .skip(skip)
-      .limit(parseInt(limit));
+    // Execute both queries in parallel
+    const [stockUsages, returnRecords] = await Promise.all([
+      StockUsage.find(stockUsageQuery)
+        .populate("center", "centerName centerCode")
+        .populate("fromBuilding", "buildingName displayName")
+        .populate("toBuilding", "buildingName displayName")
+        .populate({
+          path: "items.product",
+          select: "productTitle productCode category trackSerialNumber _id",
+          match: { trackSerialNumber: "Yes" },
+        })
+        .populate("createdBy", "name email")
+        .sort(sortConfig),
 
-    const filteredUsages = stockUsages
+      ReturnRecord.find(returnRecordQuery)
+        .populate("center", "centerName centerCode")
+        .populate("fromBuilding", "buildingName displayName")
+        .populate("toBuilding", "buildingName displayName")
+        .populate({
+          path: "items.product",
+          select: "productTitle productCode category trackSerialNumber _id",
+          match: { trackSerialNumber: "Yes" },
+        })
+        .populate("returnedBy", "name email")
+        .sort(sortConfig),
+    ]);
+
+    // Process StockUsage data
+    const stockUsageData = stockUsages
       .map((usage) => ({
         ...usage.toObject(),
         items: usage.items.filter(
@@ -3419,9 +3888,23 @@ export const getProductDevicesByBuilding = async (req, res) => {
       }))
       .filter((usage) => usage.items.length > 0);
 
+    // Process ReturnRecord data
+    const returnRecordData = returnRecords
+      .map((record) => ({
+        ...record.toObject(),
+        items: record.items.filter(
+          (item) =>
+            item.product !== null &&
+            item.serialNumber &&
+            item.serialNumber.trim() !== ""
+        ),
+      }))
+      .filter((record) => record.items.length > 0);
+
     const formattedData = [];
 
-    filteredUsages.forEach((usage) => {
+    // Process StockUsage entries
+    stockUsageData.forEach((usage) => {
       usage.items.forEach((item) => {
         if (
           item.serialNumbers &&
@@ -3440,13 +3923,14 @@ export const getProductDevicesByBuilding = async (req, res) => {
           item.serialNumbers.forEach((serialNumber) => {
             formattedData.push({
               _id: `${usage._id}_${serialNumber}`,
-              usageId: usage._id, 
+              recordId: usage._id,
+              recordType: "usage",
               center: {
                 id: usage.center?._id,
                 name: usage.center?.centerName,
                 code: usage.center?.centerCode,
               },
-              productId: item.product._id, 
+              productId: item.product._id,
               Product: item.product.productTitle || "Unknown Product",
               "Serial No.": serialNumber,
               Type: transferType,
@@ -3464,15 +3948,100 @@ export const getProductDevicesByBuilding = async (req, res) => {
               "To Building": usage.toBuilding?.buildingName || "N/A",
               "Assigned Date": usage.date.toLocaleDateString(),
               "Product Category": item.product.category || "N/A",
+              "Created By": usage.createdBy?.name || "N/A",
             });
           });
         }
       });
     });
 
+    // Process ReturnRecord entries
+    returnRecordData.forEach((record) => {
+      record.items.forEach((item) => {
+        if (item.serialNumber && item.serialNumber.trim() !== "" && item.product) {
+          let transferType = "Return";
+          if (record.usageType === "Building to Building") {
+            if (record.fromBuilding?._id.toString() === buildingId) {
+              transferType = "Outgoing Return";
+            } else if (record.toBuilding?._id.toString() === buildingId) {
+              transferType = "Incoming Return";
+            }
+          } else if (record.usageType === "Damage Return") {
+            transferType = "Damage Return";
+          }
+
+          formattedData.push({
+            _id: `${record._id}_${item.serialNumber}`,
+            recordId: record._id,
+            recordType: "return",
+            center: {
+              id: record.center?._id,
+              name: record.center?.centerName,
+              code: record.center?.centerCode,
+            },
+            productId: item.product._id,
+            Product: item.product.productTitle || "Unknown Product",
+            "Serial No.": item.serialNumber,
+            Type: transferType,
+            Date: record.date.toLocaleDateString(),
+            "Connection Type": "Return Record",
+            "Package Amount": 0,
+            "Package Duration": "N/A",
+            "ONU Charges": 0,
+            "Installation Charges": 0,
+            Remark: record.remark || `Return from Building: ${building.buildingName}`,
+            Option: transferType,
+            Status: record.status,
+            "Product Code": item.product.productCode || "N/A",
+            "From Building": record.fromBuilding?.buildingName || "N/A",
+            "To Building": record.toBuilding?.buildingName || "N/A",
+            "Assigned Date": record.date.toLocaleDateString(),
+            "Product Category": item.product.category || "N/A",
+            "Returned By": record.returnedBy?.name || "N/A",
+            "Original Usage ID": record.originalUsageId,
+          });
+        }
+      });
+    });
+
+    formattedData.sort((a, b) => {
+      const aValue = a[sortBy];
+      const bValue = b[sortBy];
+      
+      if (sortOrder === "desc") {
+        return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
+      } else {
+        return aValue > bValue ? 1 : aValue < bValue ? -1 : 0;
+      }
+    });
+
+    const startIndex = (parseInt(page) - 1) * parseInt(limit);
+    const endIndex = startIndex + parseInt(limit);
+    const paginatedData = formattedData.slice(startIndex, endIndex);
+
+    const summary = {
+      totalDevices: formattedData.length,
+      uniqueProducts: [...new Set(formattedData.map((item) => item.Product))].length,
+      incomingTransfers: formattedData.filter(
+        (item) => item.Type === "Incoming Transfer"
+      ).length,
+      outgoingTransfers: formattedData.filter(
+        (item) => item.Type === "Outgoing Transfer"
+      ).length,
+      buildingUsage: formattedData.filter(
+        (item) => item.Type === "Building Usage"
+      ).length,
+      returns: formattedData.filter(
+        (item) => item.recordType === "return"
+      ).length,
+      damageReturns: formattedData.filter(
+        (item) => item.Type === "Damage Return"
+      ).length,
+    };
+
     res.status(200).json({
       success: true,
-      data: formattedData,
+      data: paginatedData,
       building: {
         id: building._id,
         name: building.buildingName,
@@ -3485,20 +4054,7 @@ export const getProductDevicesByBuilding = async (req, res) => {
         limit: parseInt(limit),
         totalPages: Math.ceil(formattedData.length / limit),
       },
-      summary: {
-        totalDevices: formattedData.length,
-        uniqueProducts: [...new Set(formattedData.map((item) => item.Product))]
-          .length,
-        incomingTransfers: formattedData.filter(
-          (item) => item.Type === "Incoming Transfer"
-        ).length,
-        outgoingTransfers: formattedData.filter(
-          (item) => item.Type === "Outgoing Transfer"
-        ).length,
-        buildingUsage: formattedData.filter(
-          (item) => item.Type === "Building Usage"
-        ).length,
-      },
+      summary,
     });
   } catch (error) {
     console.error("Error fetching product devices by building:", error);
@@ -3512,6 +4068,171 @@ export const getProductDevicesByBuilding = async (req, res) => {
 /**
  * Get product devices by control room - ONLY products with trackSerialNumber = "Yes"
  */
+
+
+// export const getProductDevicesByControlRoom = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+//       req,
+//       ["view_usage_own_center", "view_usage_all_center"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+//       });
+//     }
+
+//     const { controlRoomId } = req.params;
+//     const {
+//       page = 1,
+//       limit = 100,
+//       startDate,
+//       endDate,
+//       product,
+//       sortBy = "date",
+//       sortOrder = "desc",
+//     } = req.query;
+
+//     const userCenterId = userCenter?._id || userCenter;
+//     if (!userCenterId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User must be associated with a center",
+//       });
+//     }
+
+//     const controlRoom = await ControlRoom.findOne({
+//       _id: controlRoomId,
+//       center: userCenterId,
+//     });
+
+//     if (!controlRoom) {
+//       return res.status(404).json({
+//         success: false,
+//         message:
+//           "Control room not found or you don't have access to this control room",
+//       });
+//     }
+
+//     const query = {
+//       usageType: "Control Room",
+//       fromControlRoom: controlRoomId,
+//       center: userCenterId,
+//       status: "completed",
+//       "items.serialNumbers.0": { $exists: true },
+//     };
+
+//     if (startDate || endDate) {
+//       query.date = {};
+//       if (startDate) query.date.$gte = new Date(startDate);
+//       if (endDate) query.date.$lte = new Date(endDate);
+//     }
+
+//     if (product) query["items.product"] = product;
+
+//     const total = await StockUsage.countDocuments(query);
+//     const skip = (parseInt(page) - 1) * parseInt(limit);
+
+//     const sortConfig = {};
+//     sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+//     const stockUsages = await StockUsage.find(query)
+//       .populate("center", "centerName centerCode")
+//       .populate("fromControlRoom", "buildingName displayName")
+//       .populate({
+//         path: "items.product",
+//         select: "productTitle productCode category trackSerialNumber _id",
+//         match: { trackSerialNumber: "Yes" },
+//       })
+//       .populate("createdBy", "name email")
+//       .sort(sortConfig)
+//       .skip(skip)
+//       .limit(parseInt(limit));
+
+//     const filteredUsages = stockUsages
+//       .map((usage) => ({
+//         ...usage.toObject(),
+//         items: usage.items.filter(
+//           (item) =>
+//             item.product !== null &&
+//             item.serialNumbers &&
+//             item.serialNumbers.length > 0
+//         ),
+//       }))
+//       .filter((usage) => usage.items.length > 0);
+
+//     const formattedData = [];
+
+//     filteredUsages.forEach((usage) => {
+//       usage.items.forEach((item) => {
+//         if (
+//           item.serialNumbers &&
+//           item.serialNumbers.length > 0 &&
+//           item.product
+//         ) {
+//           item.serialNumbers.forEach((serialNumber) => {
+//             formattedData.push({
+//               _id: `${usage._id}_${serialNumber}`,
+//               usageId: usage._id, 
+//               productId: item.product._id,
+//               Product: item.product.productTitle || "Unknown Product",
+//               "Serial No.": serialNumber,
+//               Type: usage.usageType,
+//               Date: usage.date.toLocaleDateString(),
+//               "Connection Type": "Control Room Assignment",
+//               "Package Amount": 0,
+//               "Package Duration": "N/A",
+//               "ONU Charges": 0,
+//               "Installation Charges": 0,
+//               Remark:
+//                 usage.remark || `Control Room: ${controlRoom.buildingName}`,
+//               Option: "Infrastructure",
+//               Status: usage.status,
+//               "Product Code": item.product.productCode || "N/A",
+//               "Control Room": usage.fromControlRoom?.buildingName || "Unknown",
+//               "Assigned Date": usage.date.toLocaleDateString(),
+//               "Product Category": item.product.category || "N/A",
+//             });
+//           });
+//         }
+//       });
+//     });
+
+//     res.status(200).json({
+//       success: true,
+//       data: formattedData,
+//       controlRoom: {
+//         id: controlRoom._id,
+//         name: controlRoom.buildingName,
+//         displayName: controlRoom.displayName,
+//         address: controlRoom.address1,
+//       },
+//       pagination: {
+//         total: formattedData.length,
+//         page: parseInt(page),
+//         limit: parseInt(limit),
+//         totalPages: Math.ceil(formattedData.length / limit),
+//       },
+//       summary: {
+//         totalDevices: formattedData.length,
+//         uniqueProducts: [...new Set(formattedData.map((item) => item.Product))]
+//           .length,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error fetching product devices by control room:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error",
+//     });
+//   }
+// };
+
+
+
 export const getProductDevicesByControlRoom = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
@@ -3530,7 +4251,7 @@ export const getProductDevicesByControlRoom = async (req, res) => {
     const { controlRoomId } = req.params;
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       startDate,
       endDate,
       product,
@@ -3559,7 +4280,7 @@ export const getProductDevicesByControlRoom = async (req, res) => {
       });
     }
 
-    const query = {
+    const stockUsageQuery = {
       usageType: "Control Room",
       fromControlRoom: controlRoomId,
       center: userCenterId,
@@ -3567,34 +4288,60 @@ export const getProductDevicesByControlRoom = async (req, res) => {
       "items.serialNumbers.0": { $exists: true },
     };
 
+    const returnRecordQuery = {
+      center: userCenterId,
+      status: "completed",
+      "items.serialNumber": { $exists: true, $ne: "" },
+      $or: [
+        { usageType: "Control Room", fromControlRoom: controlRoomId },
+        { usageType: "Damage Return", fromControlRoom: controlRoomId },
+      ],
+    };
+
+    const dateFilter = {};
+    if (startDate) dateFilter.$gte = new Date(startDate);
+    if (endDate) dateFilter.$lte = new Date(endDate);
+
     if (startDate || endDate) {
-      query.date = {};
-      if (startDate) query.date.$gte = new Date(startDate);
-      if (endDate) query.date.$lte = new Date(endDate);
+      stockUsageQuery.date = { ...dateFilter };
+      returnRecordQuery.date = { ...dateFilter };
     }
 
-    if (product) query["items.product"] = product;
 
-    const total = await StockUsage.countDocuments(query);
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    if (product) {
+      stockUsageQuery["items.product"] = product;
+      returnRecordQuery["items.product"] = product;
+    }
 
     const sortConfig = {};
     sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
 
-    const stockUsages = await StockUsage.find(query)
-      .populate("center", "centerName centerCode")
-      .populate("fromControlRoom", "buildingName displayName")
-      .populate({
-        path: "items.product",
-        select: "productTitle productCode category trackSerialNumber _id",
-        match: { trackSerialNumber: "Yes" },
-      })
-      .populate("createdBy", "name email")
-      .sort(sortConfig)
-      .skip(skip)
-      .limit(parseInt(limit));
+ 
+    const [stockUsages, returnRecords] = await Promise.all([
+      StockUsage.find(stockUsageQuery)
+        .populate("center", "centerName centerCode")
+        .populate("fromControlRoom", "buildingName displayName")
+        .populate({
+          path: "items.product",
+          select: "productTitle productCode category trackSerialNumber _id",
+          match: { trackSerialNumber: "Yes" },
+        })
+        .populate("createdBy", "name email")
+        .sort(sortConfig),
 
-    const filteredUsages = stockUsages
+      ReturnRecord.find(returnRecordQuery)
+        .populate("center", "centerName centerCode")
+        .populate("fromControlRoom", "buildingName displayName")
+        .populate({
+          path: "items.product",
+          select: "productTitle productCode category trackSerialNumber _id",
+          match: { trackSerialNumber: "Yes" },
+        })
+        .populate("returnedBy", "name email")
+        .sort(sortConfig),
+    ]);
+
+    const stockUsageData = stockUsages
       .map((usage) => ({
         ...usage.toObject(),
         items: usage.items.filter(
@@ -3606,9 +4353,21 @@ export const getProductDevicesByControlRoom = async (req, res) => {
       }))
       .filter((usage) => usage.items.length > 0);
 
+    const returnRecordData = returnRecords
+      .map((record) => ({
+        ...record.toObject(),
+        items: record.items.filter(
+          (item) =>
+            item.product !== null &&
+            item.serialNumber &&
+            item.serialNumber.trim() !== ""
+        ),
+      }))
+      .filter((record) => record.items.length > 0);
+
     const formattedData = [];
 
-    filteredUsages.forEach((usage) => {
+    stockUsageData.forEach((usage) => {
       usage.items.forEach((item) => {
         if (
           item.serialNumbers &&
@@ -3618,7 +4377,14 @@ export const getProductDevicesByControlRoom = async (req, res) => {
           item.serialNumbers.forEach((serialNumber) => {
             formattedData.push({
               _id: `${usage._id}_${serialNumber}`,
-              usageId: usage._id, 
+              recordId: usage._id,
+              recordType: "usage",
+              center: {
+                id: usage.center?._id,
+                name: usage.center?.centerName,
+                code: usage.center?.centerCode,
+              },
+              productId: item.product._id,
               Product: item.product.productTitle || "Unknown Product",
               "Serial No.": serialNumber,
               Type: usage.usageType,
@@ -3628,23 +4394,97 @@ export const getProductDevicesByControlRoom = async (req, res) => {
               "Package Duration": "N/A",
               "ONU Charges": 0,
               "Installation Charges": 0,
-              Remark:
-                usage.remark || `Control Room: ${controlRoom.buildingName}`,
+              Remark: usage.remark || `Control Room: ${controlRoom.buildingName}`,
               Option: "Infrastructure",
               Status: usage.status,
               "Product Code": item.product.productCode || "N/A",
               "Control Room": usage.fromControlRoom?.buildingName || "Unknown",
               "Assigned Date": usage.date.toLocaleDateString(),
               "Product Category": item.product.category || "N/A",
+              "Created By": usage.createdBy?.name || "N/A",
             });
           });
         }
       });
     });
 
+    returnRecordData.forEach((record) => {
+      record.items.forEach((item) => {
+        if (item.serialNumber && item.serialNumber.trim() !== "" && item.product) {
+          let returnType = "Return";
+          if (record.usageType === "Damage Return") {
+            returnType = "Damage Return";
+          }
+
+          formattedData.push({
+            _id: `${record._id}_${item.serialNumber}`,
+            recordId: record._id,
+            recordType: "return",
+            center: {
+              id: record.center?._id,
+              name: record.center?.centerName,
+              code: record.center?.centerCode,
+            },
+            productId: item.product._id,
+            Product: item.product.productTitle || "Unknown Product",
+            "Serial No.": item.serialNumber,
+            Type: returnType,
+            Date: record.date.toLocaleDateString(),
+            "Connection Type": "Return Record",
+            "Package Amount": 0,
+            "Package Duration": "N/A",
+            "ONU Charges": 0,
+            "Installation Charges": 0,
+            Remark: record.remark || `Return from Control Room: ${controlRoom.buildingName}`,
+            Option: returnType,
+            Status: record.status,
+            "Product Code": item.product.productCode || "N/A",
+            "Control Room": record.fromControlRoom?.buildingName || "Unknown",
+            "Assigned Date": record.date.toLocaleDateString(),
+            "Product Category": item.product.category || "N/A",
+            "Returned By": record.returnedBy?.name || "N/A",
+            "Original Usage ID": record.originalUsageId,
+          });
+        }
+      });
+    });
+
+    formattedData.sort((a, b) => {
+      const aValue = a[sortBy];
+      const bValue = b[sortBy];
+      
+      if (sortOrder === "desc") {
+        return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
+      } else {
+        return aValue > bValue ? 1 : aValue < bValue ? -1 : 0;
+      }
+    });
+
+    
+    const startIndex = (parseInt(page) - 1) * parseInt(limit);
+    const endIndex = startIndex + parseInt(limit);
+    const paginatedData = formattedData.slice(startIndex, endIndex);
+
+    const summary = {
+      totalDevices: formattedData.length,
+      uniqueProducts: [...new Set(formattedData.map((item) => item.Product))].length,
+      controlRoomAssignments: formattedData.filter(
+        (item) => item.recordType === "usage" && item.Type === "Control Room"
+      ).length,
+      controlRoomReturns: formattedData.filter(
+        (item) => item.recordType === "return" && item.Type === "Control Room Return"
+      ).length,
+      damageReturns: formattedData.filter(
+        (item) => item.Type === "Damage Return"
+      ).length,
+      totalReturns: formattedData.filter(
+        (item) => item.recordType === "return"
+      ).length,
+    };
+
     res.status(200).json({
       success: true,
-      data: formattedData,
+      data: paginatedData,
       controlRoom: {
         id: controlRoom._id,
         name: controlRoom.buildingName,
@@ -3657,11 +4497,7 @@ export const getProductDevicesByControlRoom = async (req, res) => {
         limit: parseInt(limit),
         totalPages: Math.ceil(formattedData.length / limit),
       },
-      summary: {
-        totalDevices: formattedData.length,
-        uniqueProducts: [...new Set(formattedData.map((item) => item.Product))]
-          .length,
-      },
+      summary,
     });
   } catch (error) {
     console.error("Error fetching product devices by control room:", error);
@@ -3671,6 +4507,7 @@ export const getProductDevicesByControlRoom = async (req, res) => {
     });
   }
 };
+
 
 const getConnectionOption = (connectionType, reason) => {
   if (connectionType === "NC") return "New Connection";
@@ -3867,7 +4704,7 @@ export const getDamageReturnRecordsWithStats = async (req, res) => {
       endDate,
       status,
       page = 1,
-      limit = 10,
+      limit = 100,
       sortBy = "date",
       sortOrder = "desc",
     } = req.query;

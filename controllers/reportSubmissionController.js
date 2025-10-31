@@ -574,7 +574,7 @@ export const getAllStockClosings = async (req, res) => {
 
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       sortBy = "date",
       sortOrder = "desc",
       centerType,
@@ -1012,7 +1012,7 @@ export const getMyCenterStockClosings = async (req, res) => {
 
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       sortBy = "date",
       sortOrder = "desc",
       startDate,

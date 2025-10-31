@@ -354,7 +354,7 @@ export const getAllShiftingRequests = async (req, res) => {
       });
     }
 
-    const { search, center, status, page = 1, limit = 10 } = req.query;
+    const { search, center, status, page = 1, limit = 100 } = req.query;
 
     const query = {};
     if (
@@ -599,7 +599,7 @@ export const getCustomerShiftingHistory = async (req, res) => {
     }
 
     const { customerId } = req.params;
-    const { page = 1, limit = 10 } = req.query;
+    const { page = 1, limit = 100 } = req.query;
 
     const userCenterId = userCenter?._id || userCenter;
     if (!userCenterId) {
@@ -898,7 +898,7 @@ export const getShiftingRequestsByCustomer = async (req, res) => {
     const { customerId } = req.params;
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       status,
       startDate,
       endDate,

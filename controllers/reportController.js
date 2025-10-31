@@ -149,7 +149,7 @@ export const getAllStockPurchasesReports = async (req, res) => {
 
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       type,
       vendor,
       startDate,
@@ -373,7 +373,7 @@ export const getAllStockRequestsReports = async (req, res) => {
 
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       status,
       warehouse,
       center,
@@ -1899,7 +1899,7 @@ export const getAllStockTransfersReports = async (req, res) => {
 
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       status,
       fromCenter,
       toCenter,
@@ -3063,7 +3063,7 @@ export const getAllStockUsageReports = async (req, res) => {
 
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       status,
       center,
       usageType,
@@ -3612,7 +3612,7 @@ export const getAllStolenStockReports = async (req, res) => {
 
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       center,
       centerId,
       product,
@@ -4759,7 +4759,7 @@ async function getConsumptionDetails(serialNumber) {
 //       customer,
 //       search,
 //       page = 1,
-//       limit = 10,
+//       limit = 100,
 //       sortBy = "date",
 //       sortOrder = "desc",
 //     } = req.query;
@@ -4953,7 +4953,7 @@ export const getONUTrackReport = async (req, res) => {
       product,
       partner,
       page = 1,
-      limit = 10,
+      limit = 100,
       sortBy = "date",
       sortOrder = "desc",
     } = req.query;
@@ -5255,7 +5255,7 @@ export const getReplacementRecords = async (req, res) => {
       connectionType,
       reason,
       page = 1,
-      limit = 10,
+      limit = 100,
       sortBy = "date",
       sortOrder = "desc"
     } = req.query;

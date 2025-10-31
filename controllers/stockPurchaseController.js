@@ -517,7 +517,7 @@ export const getAllStockPurchases = async (req, res) => {
 
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       sortBy = "createdAt",
       sortOrder = "desc",
       search,
@@ -881,7 +881,7 @@ export const getPurchasesByVendor = async (req, res) => {
     }
 
     const { vendorId } = req.params;
-    const { page = 1, limit = 10 } = req.query;
+    const { page = 1, limit = 100 } = req.query;
 
     const outletId = await validateUserOutletAccess(req.user._id);
 
@@ -927,6 +927,303 @@ export const getPurchasesByVendor = async (req, res) => {
   }
 };
 
+// export const getAllProductsWithStock = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } =
+//       checkStockPurchasePermissions(req, [
+//         "view_own_purchase_stock",
+//         "view_all_purchase_stock",
+//       ]);
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
+//       });
+//     }
+
+//     const { page = 1, limit = 50, search, category } = req.query;
+
+//     const user = await User.findById(req.user._id).populate(
+//       "center",
+//       "centerName centerCode centerType"
+//     );
+
+//     if (!user || !user.center) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User center information not found",
+//       });
+//     }
+
+//     const centerId = user.center._id;
+//     const centerType = user.center.centerType;
+
+//     const canViewAllCenters = permissions.view_all_purchase_stock;
+
+//     const productFilter = {};
+
+//     if (search) {
+//       productFilter.$or = [
+//         { productTitle: { $regex: search, $options: "i" } },
+//         { productCode: { $regex: search, $options: "i" } },
+//         { description: { $regex: search, $options: "i" } },
+//       ];
+//     }
+
+//     if (category) {
+//       productFilter.category = category;
+//     }
+
+//     const products = await Product.find(productFilter)
+//       .select(
+//         "productTitle productCode description category productPrice trackSerialNumber productImage"
+//       )
+//       .sort({ productTitle: 1 })
+//       .limit(limit * 1)
+//       .skip((page - 1) * limit);
+
+//     const totalProducts = await Product.countDocuments(productFilter);
+
+//     let stockData = [];
+//     let centerDetails = null;
+
+//     if (centerType === "Outlet") {
+//       centerDetails = await Center.findById(centerId).select(
+//         "_id partner area centerType centerName centerCode"
+//       );
+
+//       const productIds = products.map((product) => product._id);
+
+//       const outletStockData = await OutletStock.find({
+//         outlet: centerId,
+//         product: { $in: productIds },
+//       }).select(
+//         "product totalQuantity availableQuantity inTransitQuantity serialNumbers"
+//       );
+
+//       const purchaseData = await StockPurchase.aggregate([
+//         {
+//           $match: {
+//             outlet: centerId,
+//             "products.product": { $in: productIds },
+//           },
+//         },
+//         {
+//           $unwind: "$products",
+//         },
+//         {
+//           $match: {
+//             "products.product": { $in: productIds },
+//           },
+//         },
+//         {
+//           $group: {
+//             _id: "$products.product",
+//             totalPurchased: { $sum: "$products.purchasedQuantity" },
+//             totalAvailable: { $sum: "$products.availableQuantity" },
+//             purchaseCount: { $sum: 1 },
+//           },
+//         },
+//       ]);
+
+//       const outletStockMap = new Map();
+//       outletStockData.forEach((item) => {
+//         outletStockMap.set(item.product.toString(), {
+//           currentTotalQuantity: item.totalQuantity,
+//           currentAvailableQuantity: item.availableQuantity,
+//           currentInTransitQuantity: item.inTransitQuantity,
+//           serialNumbersCount: item.serialNumbers.length,
+//           hasSerialNumbers: item.serialNumbers.length > 0,
+//         });
+//       });
+
+//       const purchaseMap = new Map();
+//       purchaseData.forEach((item) => {
+//         purchaseMap.set(item._id.toString(), {
+//           totalPurchased: item.totalPurchased,
+//           totalAvailable: item.totalAvailable,
+//           purchaseCount: item.purchaseCount,
+//         });
+//       });
+
+//       stockData = productIds.map((productId) => {
+//         const outletStock = outletStockMap.get(productId.toString());
+//         const purchaseInfo = purchaseMap.get(productId.toString());
+
+//         return {
+//           _id: productId,
+//           totalPurchased: purchaseInfo?.totalPurchased || 0,
+//           totalAvailable: purchaseInfo?.totalAvailable || 0,
+//           purchaseCount: purchaseInfo?.purchaseCount || 0,
+//           currentTotalQuantity: outletStock?.currentTotalQuantity || 0,
+//           currentAvailableQuantity: outletStock?.currentAvailableQuantity || 0,
+//           currentInTransitQuantity: outletStock?.currentInTransitQuantity || 0,
+//           serialNumbersCount: outletStock?.serialNumbersCount || 0,
+//           hasSerialNumbers: outletStock?.hasSerialNumbers || false,
+//         };
+//       });
+//     } else if (centerType === "Center") {
+//       centerDetails = await Center.findById(centerId).select(
+//         "_id partner area centerType centerName centerCode"
+//       );
+
+//       const productIds = products.map((product) => product._id);
+
+//       stockData = await CenterStock.aggregate([
+//         {
+//           $match: {
+//             center: centerId,
+//             product: { $in: productIds },
+//           },
+//         },
+//         {
+//           $group: {
+//             _id: "$product",
+//             totalQuantity: { $sum: "$totalQuantity" },
+//             availableQuantity: { $sum: "$availableQuantity" },
+//             inTransitQuantity: { $sum: "$inTransitQuantity" },
+//             stockEntries: { $sum: 1 },
+//           },
+//         },
+//       ]);
+//     } else {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid center type",
+//       });
+//     }
+
+//     const stockMap = new Map();
+//     stockData.forEach((item) => {
+//       if (centerType === "Outlet") {
+//         stockMap.set(item._id.toString(), {
+//           totalPurchased: item.totalPurchased,
+//           totalAvailable: item.totalAvailable,
+//           purchaseCount: item.purchaseCount,
+//           currentTotalQuantity: item.currentTotalQuantity,
+//           currentAvailableQuantity: item.currentAvailableQuantity,
+//           currentInTransitQuantity: item.currentInTransitQuantity,
+//           serialNumbersCount: item.serialNumbersCount,
+//           hasSerialNumbers: item.hasSerialNumbers,
+//         });
+//       } else {
+//         stockMap.set(item._id.toString(), {
+//           totalQuantity: item.totalQuantity,
+//           availableQuantity: item.availableQuantity,
+//           inTransitQuantity: item.inTransitQuantity,
+//           stockEntries: item.stockEntries,
+//         });
+//       }
+//     });
+
+//     const productsWithStock = products.map((product) => {
+//       const productId = product._id.toString();
+
+//       if (centerType === "Outlet") {
+//         const stockData = stockMap.get(productId) || {
+//           totalPurchased: 0,
+//           totalAvailable: 0,
+//           purchaseCount: 0,
+//           currentTotalQuantity: 0,
+//           currentAvailableQuantity: 0,
+//           currentInTransitQuantity: 0,
+//           serialNumbersCount: 0,
+//           hasSerialNumbers: false,
+//         };
+
+//         const stockInfo = {
+//           totalPurchased: stockData.totalPurchased,
+//           totalAvailable: stockData.totalAvailable,
+//           purchaseCount: stockData.purchaseCount,
+
+//           currentTotalQuantity: stockData.currentTotalQuantity,
+//           currentAvailableQuantity: stockData.currentAvailableQuantity,
+//           currentInTransitQuantity: stockData.currentInTransitQuantity,
+
+//           serialNumbersCount: stockData.serialNumbersCount,
+//           hasSerialNumbers: stockData.hasSerialNumbers,
+
+//           currentStock: stockData.currentAvailableQuantity,
+//         };
+
+//         return {
+//           ...product.toObject(),
+//           stock: stockInfo,
+//         };
+//       } else {
+//         const stockData = stockMap.get(productId) || {
+//           totalQuantity: 0,
+//           availableQuantity: 0,
+//           inTransitQuantity: 0,
+//           stockEntries: 0,
+//         };
+
+//         const stockInfo = {
+//           totalQuantity: stockData.totalQuantity,
+//           availableQuantity: stockData.availableQuantity,
+//           inTransitQuantity: stockData.inTransitQuantity,
+//           stockEntries: stockData.stockEntries,
+//           currentStock: stockData.availableQuantity,
+//         };
+
+//         return {
+//           ...product.toObject(),
+//           stock: stockInfo,
+//         };
+//       }
+//     });
+
+//     const totalStockSummary = {
+//       totalProducts: productsWithStock.length,
+//       totalItemsInStock: 0,
+//       totalAvailableItems: 0,
+//       totalInTransitItems: 0,
+//     };
+
+//     productsWithStock.forEach((product) => {
+//       if (centerType === "Outlet") {
+//         totalStockSummary.totalItemsInStock +=
+//           product.stock.currentTotalQuantity;
+//         totalStockSummary.totalAvailableItems +=
+//           product.stock.currentAvailableQuantity;
+//         totalStockSummary.totalInTransitItems +=
+//           product.stock.currentInTransitQuantity;
+//       } else {
+//         totalStockSummary.totalItemsInStock += product.stock.totalQuantity;
+//         totalStockSummary.totalAvailableItems +=
+//           product.stock.availableQuantity;
+//         totalStockSummary.totalInTransitItems +=
+//           product.stock.inTransitQuantity;
+//       }
+//     });
+
+//     res.status(200).json({
+//       success: true,
+//       message: `Products with stock information retrieved successfully for ${centerType.toLowerCase()}`,
+//       data: productsWithStock,
+//       center: centerDetails,
+//       stockSummary: {
+//         centerType,
+//         ...totalStockSummary,
+//       },
+//       pagination: {
+//         currentPage: parseInt(page),
+//         totalPages: Math.ceil(totalProducts / limit),
+//         totalItems: totalProducts,
+//         itemsPerPage: parseInt(limit),
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error retrieving products with stock:", error);
+//     handleControllerError(error, res);
+//   }
+// };
+
+
+
+//remove pagination
 export const getAllProductsWithStock = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } =
@@ -943,7 +1240,7 @@ export const getAllProductsWithStock = async (req, res) => {
       });
     }
 
-    const { page = 1, limit = 50, search, category } = req.query;
+    const { search, category } = req.query;
 
     const user = await User.findById(req.user._id).populate(
       "center",
@@ -980,11 +1277,9 @@ export const getAllProductsWithStock = async (req, res) => {
       .select(
         "productTitle productCode description category productPrice trackSerialNumber productImage"
       )
-      .sort({ productTitle: 1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .sort({ productTitle: 1 });
 
-    const totalProducts = await Product.countDocuments(productFilter);
+    const totalProducts = products.length;
 
     let stockData = [];
     let centerDetails = null;
@@ -1208,12 +1503,7 @@ export const getAllProductsWithStock = async (req, res) => {
         centerType,
         ...totalStockSummary,
       },
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(totalProducts / limit),
-        totalItems: totalProducts,
-        itemsPerPage: parseInt(limit),
-      },
+      totalItems: totalProducts,
     });
   } catch (error) {
     console.error("Error retrieving products with stock:", error);

@@ -150,7 +150,7 @@ export const getCenterAllStock = async (req, res) => {
 
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       centerId,
       center,
       product,
@@ -1228,7 +1228,7 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
 
     const {
       page = 1,
-      limit = 50,
+      limit = 100,
       search,
       category,
       centerId,
@@ -1936,7 +1936,7 @@ export const getStockUsageByCenter = async (req, res) => {
 
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       sortBy = "date",
       sortOrder = "desc",
       ...filterParams

@@ -78,7 +78,7 @@ export const getCenters = async (req, res) => {
     const {
       centerType,
       page = 1,
-      limit = 10,
+      limit = 100,
       search,
       sortBy = "centerName",
       sortOrder = "asc",

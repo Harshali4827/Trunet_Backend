@@ -580,7 +580,7 @@ export const getAllStockRequests = async (req, res) => {
     }
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       sortBy = "createdAt",
       sortOrder = "desc",
       ...filterParams
@@ -4594,25 +4594,26 @@ export const getStockRequestCount = async (req, res) => {
   }
 };
 
-
 export const getStockRequestNotifications = async (req, res) => {
   try {
     const {
-      page = 1,
-      limit = 10,
       type,
       center,
       days = 7
     } = req.query;
+    
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - parseInt(days));
     startDate.setHours(0, 0, 0, 0);
+    
     const filter = {
       createdAt: { $gte: startDate }
     };
+    
     if (center) {
       filter.center = center;
     }
+    
     if (type && type !== 'all') {
       switch (type) {
         case 'submitted':
@@ -4640,25 +4641,22 @@ export const getStockRequestNotifications = async (req, res) => {
       .populate("completionInfo.completedBy", "fullName")
       .populate("completionInfo.incompleteBy", "fullName")
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit))
       .lean();
-    const notifications = stockRequests.map(request => {
+
+    // Filter out requests with missing center data and format notifications
+    const validStockRequests = stockRequests.filter(request => 
+      request.center && request.center.centerName
+    );
+
+    const notifications = validStockRequests.map(request => {
       return formatStockRequestToNotification(request);
     });
-
-    const total = await StockRequest.countDocuments(filter);
 
     res.status(200).json({
       success: true,
       message: "Stock request notifications retrieved successfully",
       data: notifications,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalItems: total,
-        itemsPerPage: parseInt(limit),
-      }
+      totalCount: notifications.length
     });
 
   } catch (error) {
@@ -4670,6 +4668,7 @@ export const getStockRequestNotifications = async (req, res) => {
     });
   }
 };
+
 
 const formatStockRequestToNotification = (stockRequest) => {
   const formatDate = (date) => {
@@ -4685,57 +4684,61 @@ const formatStockRequestToNotification = (stockRequest) => {
   let notificationType = '';
   let timestamp = stockRequest.createdAt;
 
+  const centerName = stockRequest.center?.centerName || 'Unknown Center';
+  const orderNumber = stockRequest.orderNumber || 'N/A';
+  const createdByName = stockRequest.createdBy?.fullName || 'Unknown User';
+
   switch (stockRequest.status) {
     case 'Submitted':
       notificationType = 'new_request';
       title = 'New Stock Request Submitted';
-      message = `New Stock Request No. ${stockRequest.orderNumber} had been Submitted From ${stockRequest.center.centerName} By ${stockRequest.createdBy.fullName} - ${formatDate(stockRequest.createdAt)}`;
+      message = `New Stock Request No. ${orderNumber} had been Submitted From ${centerName} By ${createdByName} - ${formatDate(stockRequest.createdAt)}`;
       break;
 
     case 'Completed':
       notificationType = 'request_completed';
       title = 'Stock Request Completed';
-      const completedBy = stockRequest.completionInfo.completedBy?.fullName || 
-                         stockRequest.receivingInfo.receivedBy?.fullName || 
+      const completedBy = stockRequest.completionInfo?.completedBy?.fullName || 
+                         stockRequest.receivingInfo?.receivedBy?.fullName || 
                          'System';
-      message = `Your indent Request No. ${stockRequest.orderNumber} had been Completed From ${stockRequest.center.centerName} By ${completedBy} - ${formatDate(stockRequest.completionInfo.completedOn || stockRequest.updatedAt)}`;
-      timestamp = stockRequest.completionInfo.completedOn || stockRequest.updatedAt;
+      message = `Your indent Request No. ${orderNumber} had been Completed From ${centerName} By ${completedBy} - ${formatDate(stockRequest.completionInfo?.completedOn || stockRequest.updatedAt)}`;
+      timestamp = stockRequest.completionInfo?.completedOn || stockRequest.updatedAt;
       break;
 
     case 'Confirmed':
       notificationType = 'request_approved';
       title = 'Stock Request Approved';
-      const approvedBy = stockRequest.approvalInfo.approvedBy?.fullName || 'System';
-      message = `Stock Request No. ${stockRequest.orderNumber} has been Approved From ${stockRequest.center.centerName} By ${approvedBy} - ${formatDate(stockRequest.approvalInfo.approvedAt || stockRequest.updatedAt)}`;
-      timestamp = stockRequest.approvalInfo.approvedAt || stockRequest.updatedAt;
+      const approvedBy = stockRequest.approvalInfo?.approvedBy?.fullName || 'System';
+      message = `Stock Request No. ${orderNumber} has been Approved From ${centerName} By ${approvedBy} - ${formatDate(stockRequest.approvalInfo?.approvedAt || stockRequest.updatedAt)}`;
+      timestamp = stockRequest.approvalInfo?.approvedAt || stockRequest.updatedAt;
       break;
 
     case 'Shipped':
       notificationType = 'request_shipped';
       title = 'Stock Request Shipped';
-      const shippedBy = stockRequest.shippingInfo.shippedBy?.fullName || 'System';
-      message = `Stock Request No. ${stockRequest.orderNumber} has been Shipped From ${stockRequest.center.centerName} By ${shippedBy} - ${formatDate(stockRequest.shippingInfo.shippedAt || stockRequest.updatedAt)}`;
-      timestamp = stockRequest.shippingInfo.shippedAt || stockRequest.updatedAt;
+      const shippedBy = stockRequest.shippingInfo?.shippedBy?.fullName || 'System';
+      message = `Stock Request No. ${orderNumber} has been Shipped From ${centerName} By ${shippedBy} - ${formatDate(stockRequest.shippingInfo?.shippedAt || stockRequest.updatedAt)}`;
+      timestamp = stockRequest.shippingInfo?.shippedAt || stockRequest.updatedAt;
       break;
 
     case 'Incompleted':
       notificationType = 'request_incompleted';
       title = 'Stock Request Incompleted';
-      const incompletedBy = stockRequest.completionInfo.incompleteBy?.fullName || 'System';
-      message = `Stock Request No. ${stockRequest.orderNumber} has been Marked Incomplete From ${stockRequest.center.centerName} By ${incompletedBy} - ${formatDate(stockRequest.completionInfo.incompleteOn || stockRequest.updatedAt)}`;
-      timestamp = stockRequest.completionInfo.incompleteOn || stockRequest.updatedAt;
+      const incompletedBy = stockRequest.completionInfo?.incompleteBy?.fullName || 'System';
+      message = `Stock Request No. ${orderNumber} has been Marked Incomplete From ${centerName} By ${incompletedBy} - ${formatDate(stockRequest.completionInfo?.incompleteOn || stockRequest.updatedAt)}`;
+      timestamp = stockRequest.completionInfo?.incompleteOn || stockRequest.updatedAt;
       break;
 
     case 'Rejected':
       notificationType = 'request_rejected';
       title = 'Stock Request Rejected';
-      message = `Stock Request No. ${stockRequest.orderNumber} has been Rejected From ${stockRequest.center.centerName} - ${formatDate(stockRequest.updatedAt)}`;
+      message = `Stock Request No. ${orderNumber} has been Rejected From ${centerName} - ${formatDate(stockRequest.updatedAt)}`;
       break;
 
     default:
       notificationType = 'status_updated';
       title = 'Stock Request Updated';
-      message = `Stock Request No. ${stockRequest.orderNumber} status updated to ${stockRequest.status} From ${stockRequest.center.centerName} - ${formatDate(stockRequest.updatedAt)}`;
+      message = `Stock Request No. ${orderNumber} status updated to ${stockRequest.status} From ${centerName} - ${formatDate(stockRequest.updatedAt)}`;
       timestamp = stockRequest.updatedAt;
   }
 

@@ -108,7 +108,7 @@ export const getCustomers = async (req, res) => {
       search,
       center,
       page = 1,
-      limit = 10,
+      limit = 100,
       sortBy = "createdAt",
       sortOrder = "desc",
     } = req.query;

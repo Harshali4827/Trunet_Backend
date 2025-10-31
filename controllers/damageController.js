@@ -1007,7 +1007,7 @@ export const getPendingDamageReturns = async (req, res) => {
       });
     }
 
-    const { center, page = 1, limit = 10 } = req.query;
+    const { center, page = 1, limit = 100 } = req.query;
 
     const filter = { status: "pending" };
 
@@ -1190,7 +1190,7 @@ export const getAllDamageReturns = async (req, res) => {
         serialNumber,
         type,
         page = 1,
-        limit = 10,
+        limit = 100,
         sortBy = "createdAt",
         sortOrder = "desc",
         search
