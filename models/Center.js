@@ -2,21 +2,25 @@ import mongoose from "mongoose";
 
 const centerSchema = new mongoose.Schema(
   {
-    partner: {
+    reseller: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Partner",
-      required: [true, "Partner ID is required"],
+      ref: "Reseller",
+      required: function() {
+        return this.centerType === "Center";
+      },
     },
     area: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Area",
-      required: [true, "Area ID is required"],
+      required: function() {
+        return this.centerType === "Center";
+      },
     },
     centerType: {
       type: String,
       required: [true, "Center type is required"],
       enum: ["Center", "Outlet"],
-      default: "Branch",
+      default: "Center",
     },
     centerName: {
       type: String,
@@ -27,6 +31,7 @@ const centerSchema = new mongoose.Schema(
       type: String,
       required: [true, "Center code is required"],
       unique: true,
+      sparse: true,
       uppercase: true,
     },
     email: {
@@ -46,11 +51,6 @@ const centerSchema = new mongoose.Schema(
     addressLine2: { type: String },
     city: { type: String },
     state: { type: String },
-    // stockVerified: {
-    //   type: String,
-    //   enum: ["Yes", "No"],
-    //   default: "No",
-    // },
     stockVerified: {
       type: String,
       enum: {

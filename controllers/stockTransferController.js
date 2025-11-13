@@ -83,6 +83,65 @@ const checkTransferCenterAccess = (stockTransfer, userCenter, permissions) => {
   return false;
 };
 
+const validateResellerForTransfer = async (fromCenterId, toCenterId) => {
+  try {
+    const Center = mongoose.model("Center");
+    
+    const [fromCenter, toCenter] = await Promise.all([
+      Center.findById(fromCenterId).populate("reseller"),
+      Center.findById(toCenterId).populate("reseller")
+    ]);
+
+    if (!fromCenter || !toCenter) {
+      throw new Error("One or both centers not found");
+    }
+
+    const isCenterToCenter = 
+      fromCenter.centerType === "Center" && 
+      toCenter.centerType === "Center";
+
+    if (!isCenterToCenter) {
+      return {
+        isValid: true,
+        requiresValidation: false,
+        message: "Reseller validation not required for this transfer type"
+      };
+    }
+
+    if (!fromCenter.reseller || !toCenter.reseller) {
+      throw new Error("Reseller information not found for one or both centers");
+    }
+
+    if (fromCenter.reseller._id.toString() !== toCenter.reseller._id.toString()) {
+      return {
+        isValid: false,
+        requiresValidation: true,
+        fromCenter: {
+          name: fromCenter.centerName,
+          type: fromCenter.centerType,
+          reseller: fromCenter.reseller.resellerName
+        },
+        toCenter: {
+          name: toCenter.centerName,
+          type: toCenter.centerType,
+          reseller: toCenter.reseller.resellerName
+        }
+      };
+    }
+
+    return {
+      isValid: true,
+      requiresValidation: true,
+      reseller: fromCenter.reseller.resellerName,
+      fromCenterType: fromCenter.centerType,
+      toCenterType: toCenter.centerType
+    };
+  } catch (error) {
+    throw new Error(`Reseller validation failed: ${error.message}`);
+  }
+};
+
+
 export const createStockTransfer = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } =
@@ -163,16 +222,24 @@ export const createStockTransfer = async (req, res) => {
     }
 
     const toCenterId = user.center._id;
-
-    const fromCenterExists = await Center.findById(fromCenter);
-    const toCenterExists = await Center.findById(toCenterId);
-
-    if (!fromCenterExists || !toCenterExists) {
-      return res.status(404).json({
+    const resellerValidation = await validateResellerForTransfer(fromCenter, toCenterId);
+    
+    if (!resellerValidation.isValid) {
+      return res.status(400).json({
         success: false,
-        message: "Source or destination center not found",
+        message: "Stock transfer between Centers is only allowed within the same reseller",
+        details: {
+          error: `Cannot transfer between Centers of different resellers`,
+          fromCenter: resellerValidation.fromCenter,
+          toCenter: resellerValidation.toCenter,
+          rule: "Center-to-Center transfers require same reseller"
+        }
       });
     }
+
+    console.log(`[DEBUG] Transfer: ${resellerValidation.fromCenterType} → ${resellerValidation.toCenterType}`);
+    console.log(`[DEBUG] Reseller validation: ${resellerValidation.requiresValidation ? 'Applied' : 'Not required'}`);
+
 
     if (
       permissions.manage_stock_transfer_own_center &&

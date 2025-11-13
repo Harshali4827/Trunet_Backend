@@ -37,7 +37,17 @@ const stockRequestSchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
+    
+    challanNo: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
 
+    challanDate: {
+      type: Date,
+    },
     remark: {
       type: String,
       trim: true,
@@ -125,6 +135,16 @@ const stockRequestSchema = new mongoose.Schema(
       default: "Submitted",
     },
 
+    warehouseChallanApproval: {
+      type: String,
+      enum: ["pending", "approved", "rejected"],
+      default: "pending",
+    },
+    centerChallanApproval: {
+      type: String,
+      enum: ["pending", "approved", "rejected"],
+      default: "pending",
+    },
     approvalInfo: {
       approvedAt: {
         type: Date,
@@ -134,6 +154,30 @@ const stockRequestSchema = new mongoose.Schema(
         ref: "User",
       },
       approvedRemark: {
+        type: String,
+        trim: true,
+      },
+    
+      warehouseChallanApprovedAt: {
+        type: Date,
+      },
+      warehouseChallanApprovedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      warehouseChallanApprovedRemark: {
+        type: String,
+        trim: true,
+      },
+
+      centerChallanApprovedAt: {
+        type: Date,
+      },
+      centerChallanApprovedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      centerChallanApprovedRemark: {
         type: String,
         trim: true,
       },
@@ -242,13 +286,38 @@ stockRequestSchema.pre("save", function (next) {
   next();
 });
 
-stockRequestSchema.methods.approveRequest = function (
+
+stockRequestSchema.statics.generateChallanNumber = async function () {
+  const currentYear = new Date().getFullYear();
+  const prefix = `CHL/${currentYear}/`;
+
+  const lastChallan = await this.findOne({
+    challanNo: new RegExp(`^${prefix}`)
+  }).sort({ challanNo: -1 });
+  
+  let sequence = 1;
+  if (lastChallan && lastChallan.challanNo) {
+    const lastSequence = parseInt(lastChallan.challanNo.split('/').pop());
+    if (!isNaN(lastSequence)) {
+      sequence = lastSequence + 1;
+    }
+  }
+  
+  return `${prefix}${sequence.toString().padStart(4, '0')}`;
+};
+
+
+stockRequestSchema.methods.approveRequest = async function (
   approvedBy,
   productApprovals = []
 ) {
   this.status = "Confirmed";
   this.approvalInfo.approvedBy = approvedBy;
   this.approvalInfo.approvedAt = new Date();
+ 
+  const StockRequest = mongoose.model("StockRequest");
+  this.challanNo = await StockRequest.generateChallanNumber();
+  this.challanDate = new Date(); 
 
   if (productApprovals.length > 0) {
     this.products.forEach((product, index) => {

@@ -143,16 +143,16 @@ export const getCustomers = async (req, res) => {
       Customer.find(filter)
         .populate({
           path: "center",
-          select: "centerName centerType area partner",
+          select: "centerName centerType area reseller",
           populate: [
             {
-              path: "partner",
-              select: "partnerName",
+              path: "reseller",
+              select: "businessName",
             },
             {
               path: "area",
               select: "areaName",
-            },
+            }
           ],
         })
         .sort(sort)
@@ -193,7 +193,7 @@ export const getCustomerById = async (req, res) => {
     const customer = await Customer.findById(req.params.id).populate({
       path: "center",
       populate: [
-        { path: "partner", select: "partnerName" },
+        { path: "reseller", select: "businessName"},
         { path: "area", select: "areaName" },
       ],
     });
@@ -302,7 +302,7 @@ export const updateCustomer = async (req, res) => {
     ).populate({
       path: "center",
       populate: [
-        { path: "partner", select: "partnerName" },
+        { path: "reseller", select: "businessName"},
         { path: "area", select: "areaName" },
       ],
     });

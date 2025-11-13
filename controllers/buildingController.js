@@ -103,7 +103,7 @@ export const getBuildings = async (req, res) => {
     const {
       search,
       center,
-      partner,
+      reseller,
       area,
       centerType,
       status,
@@ -139,7 +139,7 @@ export const getBuildings = async (req, res) => {
     }
 
     let centerFilter = {};
-    if (partner) centerFilter.partner = partner;
+    if (reseller) centerFilter.reseller = reseller;
     if (area) centerFilter.area = area;
     if (centerType) centerFilter.centerType = centerType;
     if (status) centerFilter.status = status;
@@ -186,11 +186,11 @@ export const getBuildings = async (req, res) => {
       Building.find(filter)
         .populate({
           path: "center",
-          select: "centerName centerType area partner status",
+          select: "centerName centerType area reseller status",
           populate: [
             {
-              path: "partner",
-              select: "partnerName",
+              path: "reseller",
+              select: "businessName",
             },
             {
               path: "area",
@@ -235,9 +235,9 @@ export const getBuildingById = async (req, res) => {
     const building = await Building.findById(req.params.id).populate({
       path: "center",
       select:
-        "centerName centerType area partner addressLine1 addressLine2 city state status",
+        "centerName centerType area reseller addressLine1 addressLine2 city state status",
       populate: [
-        { path: "partner", select: "partnerName" },
+        { path: "reseller", select: "businessName" },
         { path: "area", select: "areaName" },
       ],
     });
@@ -320,9 +320,9 @@ export const updateBuilding = async (req, res) => {
     ).populate({
       path: "center",
       select:
-        "centerName centerType area partner addressLine1 addressLine2 city state status",
+        "centerName centerType area reseller addressLine1 addressLine2 city state status",
       populate: [
-        { path: "partner", select: "partnerName" },
+        { path: "reseller", select: "resellerName" },
         { path: "area", select: "areaName" },
       ],
     });

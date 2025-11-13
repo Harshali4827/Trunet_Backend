@@ -16,11 +16,20 @@ const productSchema = new mongoose.Schema(
       type: String,
       required: false,
       unique: true,
+      sparse: true,
       trim: true,
     },
     productPrice: {
       type: Number,
-      required: false,
+      required: true,
+    },
+    salePrice: {
+      type: Number,
+      required: true,
+    },
+    hsnCode: {
+      type: String,
+      required: true,
     },
     productImage: {
       type: String,

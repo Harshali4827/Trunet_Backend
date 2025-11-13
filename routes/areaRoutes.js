@@ -2,7 +2,7 @@ import express from "express";
 import {
   createArea,
   getAreas,
-  getAreasByPartner,
+  getAreasByReseller,
   getAreaById,
   updateArea,
   deleteArea,
@@ -13,7 +13,7 @@ const router = express.Router();
 
 router.post("/", createArea);
 router.get("/", getAreas);
-router.get("/partner/:partnerId", getAreasByPartner);
+router.get("/reseller/:resellerId", getAreasByReseller);
 router.get("/:id", getAreaById);
 router.put("/:id", protect, updateArea);
 router.delete("/:id", protect, deleteArea);

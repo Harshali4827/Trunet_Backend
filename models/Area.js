@@ -2,10 +2,10 @@ import mongoose from "mongoose";
 
 const areaSchema = new mongoose.Schema(
   {
-    partner: {
+    reseller: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Partner",
-      required: [true, "Partner ID is required"],
+      ref: "Reseller",
+      required: [true, "Reseller ID is required"],
     },
     areaName: {
       type: String,

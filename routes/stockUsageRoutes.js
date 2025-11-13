@@ -5,7 +5,6 @@ import {
   getStockUsageById,
   updateStockUsage,
   deleteStockUsage,
-  cancelStockUsage,
   approveDamageRequest,
   rejectDamageRequest,
   getPendingDamageRequests,
@@ -20,6 +19,7 @@ import {
   getDamageReturnRecordsWithStats,
   replaceProductSerial,
   returnProductSerial,
+  getAllFaultyStock,
 } from "../controllers/stockUsageController.js";
 
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
@@ -40,12 +40,18 @@ router.get(
   authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
   getDamageRequestsByStatus
 );
+
+
 router.get(
   "/damage-return",
   protect,
   // authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
   getDamageReturnRecordsWithStats
 );
+router.get("/faulty-stock",protect,
+  authorizeAccess(MODULE,  "view_usage_own_center", "view_usage_all_center"),
+  getAllFaultyStock);
+
 router.post(
   "/",
   protect,
@@ -84,12 +90,7 @@ router.delete(
   authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
   deleteStockUsage
 );
-router.patch(
-  "/:id/cancel",
-  protect,
-  authorizeAccess(MODULE, "manage_usage_own_center", "manage_usage_all_center"),
-  cancelStockUsage
-);
+
 
 router.patch(
   "/:id/approve",
@@ -150,5 +151,6 @@ router.patch(
 );
 
 router.post('/replace-serial', protect, replaceProductSerial);
+
 
 export default router;

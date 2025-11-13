@@ -1,27 +1,27 @@
 import Area from "../models/Area.js";
-import Partner from "../models/Partner.js";
+import Reseller from "../models/Reseller.js";
 
 export const createArea = async (req, res) => {
   try {
-    const { partnerId, areaName } = req.body;
+    const { resellerId, areaName } = req.body;
 
-    if (!partnerId || !areaName) {
+    if (!resellerId || !areaName) {
       return res
         .status(400)
         .json({
           success: false,
-          message: "Partner ID and Area name are required",
+          message: "Reseller ID and Area name are required",
         });
     }
 
-    const partner = await Partner.findById(partnerId);
-    if (!partner) {
+    const reseller = await Reseller.findById(resellerId);
+    if (!reseller) {
       return res
         .status(404)
-        .json({ success: false, message: "Partner not found" });
+        .json({ success: false, message: "Reseller not found" });
     }
 
-    const area = new Area({ partner: partnerId, areaName });
+    const area = new Area({ reseller: resellerId, areaName });
     await area.save();
 
     res.status(201).json({ success: true, data: area });
@@ -32,18 +32,18 @@ export const createArea = async (req, res) => {
 
 export const getAreas = async (req, res) => {
   try {
-    const areas = await Area.find().populate("partner", "partnerName");
+    const areas = await Area.find().populate("reseller", "businessName");
     res.status(200).json({ success: true, data: areas });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-export const getAreasByPartner = async (req, res) => {
+export const getAreasByReseller = async (req, res) => {
   try {
-    const areas = await Area.find({ partner: req.params.partnerId }).populate(
-      "partner",
-      "partnerName"
+    const areas = await Area.find({ reseller: req.params.resellerId }).populate(
+      "reseller",
+      "businessName"
     );
     res.status(200).json({ success: true, data: areas });
   } catch (error) {
@@ -54,8 +54,8 @@ export const getAreasByPartner = async (req, res) => {
 export const getAreaById = async (req, res) => {
   try {
     const area = await Area.findById(req.params.id).populate(
-      "partner",
-      "partnerName"
+      "reseller",
+      "businessName"
     );
     if (!area)
       return res
@@ -74,7 +74,7 @@ export const updateArea = async (req, res) => {
       req.params.id,
       { areaName },
       { new: true, runValidators: true }
-    ).populate("partner", "partnerName");
+    ).populate("reseller", "businessName");
 
     if (!area)
       return res

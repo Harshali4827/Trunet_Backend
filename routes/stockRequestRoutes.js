@@ -18,6 +18,8 @@ import {
   getMostRecentOrderNumber,
   getStockRequestCount,
   getStockRequestNotifications,
+  updateWarehouseChallanApproval,
+  updateCenterChallanApproval,
 } from "../controllers/stockRequestController.js";
 import {
   validateCreateStockRequest,
@@ -218,6 +220,18 @@ router.patch(
   validateUpdateApprovedQuantities,
   updateApprovedQuantities
 );
+
+router.patch('/:id/warehouse-challan-approval',protect, authorizeAccess(
+  MODULE,
+  "manage_indent"
+), updateWarehouseChallanApproval);
+
+
+router.patch('/:id/center-challan-approval',protect, authorizeAccess(
+  MODULE,
+  "manage_indent"
+), updateCenterChallanApproval);
+
 
 router.patch(
   "/:id/status",

@@ -279,8 +279,8 @@ export const getMe = async (req, res) => {
         path: "center",
         select: "centerName centerCode centerType addressLine1 city state",
         populate: [
-          { path: "partner", select: "partnerName" },
-          { path: "area", select: "areaName" },
+          { path: "reseller", select:"businessName"},
+          { path: "area", select: "areaName" }
         ],
       });
 
@@ -313,40 +313,6 @@ export const getMe = async (req, res) => {
     });
   }
 };
-
-// export const updatePassword = async (req, res) => {
-//   try {
-//     const { currentPassword, newPassword, confirmNewPassword } = req.body;
-
-//     if (newPassword !== confirmNewPassword) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "New passwords do not match",
-//       });
-//     }
-
-//     const user = await User.findById(req.user.id).select("+password");
-
-//     if (!(await user.correctPassword(currentPassword, user.password))) {
-//       return res.status(401).json({
-//         success: false,
-//         message: "Current password is incorrect",
-//       });
-//     }
-
-//     user.password = newPassword;
-//     user.confirmPassword = confirmNewPassword;
-//     await user.save();
-//   } catch (error) {
-//     console.error("Update password error:", error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Internal server error",
-//     });
-//   }
-// };
-
-
 
 export const updatePassword = async (req, res) => {
   try {
@@ -441,7 +407,13 @@ export const getAllUsers = async (req, res) => {
 
     const users = await User.find(filter)
       .populate("role", "roleTitle")
-      .populate("center", "centerName centerCode")
+      .populate({
+        path: "center",
+        select: "centerName centerCode centerType addressLine1 city state",
+        populate: [
+          { path: "reseller", select: "businessName" }
+        ],
+      })
       .select("-password")
       .sort(sort)
       .skip(skip)
@@ -507,7 +479,7 @@ export const getUserById = async (req, res) => {
         path: "center",
         select: "centerName centerCode centerType addressLine1 city state",
         populate: [
-          { path: "partner", select: "partnerName" },
+          { path: "reseller", select: "businessName" },
           { path: "area", select: "areaName" },
         ],
       })
@@ -632,7 +604,7 @@ export const updateUser = async (req, res) => {
       path: "center",
       select: "centerName centerCode centerType addressLine1 city state",
       populate: [
-        { path: "partner", select: "partnerName" },
+        { path: "reseller", select: "businessName" },
         { path: "area", select: "areaName" },
       ],
     });

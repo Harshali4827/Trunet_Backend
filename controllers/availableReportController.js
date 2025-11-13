@@ -1358,13 +1358,12 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
     const productIds = products.map((product) => product._id);
     let stockData = [];
     
-    // FIXED: Get damage return data from DamageReturn collection with status "approved"
     const damageReturnData = await DamageReturn.aggregate([
       {
         $match: {
-          center: new mongoose.Types.ObjectId(targetCenterId), // FIXED: Use 'new' keyword
-          status: "approved", // Only count approved damage returns
-          product: { $in: productIds } // FIXED: Use string IDs directly
+          center: new mongoose.Types.ObjectId(targetCenterId), 
+          status: "approved",
+          product: { $in: productIds }
         }
       },
       {
@@ -1473,12 +1472,11 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
         };
       });
     } else if (targetCenter.centerType === "Center") {
-      // Get center stock data - FIXED: Use string IDs directly
       const centerStockData = await CenterStock.aggregate([
         {
           $match: {
-            center: new mongoose.Types.ObjectId(targetCenterId), // FIXED: Use 'new' keyword
-            product: { $in: productIds }, // FIXED: Use string IDs directly
+            center: new mongoose.Types.ObjectId(targetCenterId),
+            product: { $in: productIds },
           },
         },
         {

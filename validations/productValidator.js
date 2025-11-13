@@ -1,61 +1,3 @@
-// import { body } from "express-validator";
-// export const createProductValidator = [
-//   body("productCategory")
-//     .notEmpty()
-//     .withMessage("Product category is required"),
-//   body("productTitle").notEmpty().withMessage("Product title is required"),
-//   body("productCode")
-//     .optional()
-//     .isString()
-//     .withMessage("Product code must be a string"),
-//   body("productPrice")
-//     .optional()
-//     .isNumeric()
-//     .withMessage("Product price must be a number"),
-//   body("status")
-//     .optional()
-//     .isIn(["Enable", "Disable"])
-//     .withMessage("Status must be either Enable or Disable"),
-//   body("trackSerialNumber")
-//     .optional()
-//     .isIn(["Yes", "No"])
-//     .withMessage("Track Serial Number must be Yes or No"),
-//   body("repairable")
-//     .optional()
-//     .isIn(["Yes", "No"])
-//     .withMessage("Repairable must be Yes or No"),
-//   body("replaceable")
-//     .optional()
-//     .isIn(["Yes", "No"])
-//     .withMessage("Replaceable must be Yes or No"),
-// ];
-
-// export const updateProductValidator = [
-//   body("productCategory").optional(),
-//   body("productTitle").optional(),
-//   body("productCode").optional(),
-//   body("productPrice").optional().isNumeric(),
-//   body("status")
-//     .optional()
-//     .isIn(["Enable", "Disable"])
-//     .withMessage("Status must be either Enable or Disable"),
-//   body("trackSerialNumber")
-//     .optional()
-//     .isIn(["Yes", "No"])
-//     .withMessage("Track Serial Number must be Yes or No"),
-//   body("repairable")
-//     .optional()
-//     .isIn(["Yes", "No"])
-//     .withMessage("Repairable must be Yes or No"),
-//   body("replaceable")
-//     .optional()
-//     .isIn(["Yes", "No"])
-//     .withMessage("Replaceable must be Yes or No"),
-// ];
-
-
-
-
 import { body } from "express-validator";
 import mongoose from "mongoose";
 export const createProductValidator = [
@@ -84,6 +26,10 @@ export const createProductValidator = [
     .optional({ checkFalsy: true })
     .isFloat({ min: 0 })
     .withMessage("Product price must be a valid number"),
+  body("salePrice")
+    .optional({ checkFalsy: true })
+    .isFloat({ min: 0 })
+    .withMessage("Sale price must be a valid number"),
   body("productWeight")
     .optional({ checkFalsy: true })
     .isString()

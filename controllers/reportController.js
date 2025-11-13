@@ -6,6 +6,7 @@ import StockTransfer from "../models/StockTransfer.js";
 import StockUsage from "../models/StockUsage.js";
 import CenterStock from "../models/CenterStock.js";
 import ReplacementRecord from "../models/ReplacementRecord.js";
+import FilledStock from "../models/FilledStock.js";
 
 const checkReportPermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
@@ -798,276 +799,6 @@ export const getAllStockRequestsReports = async (req, res) => {
     handleControllerError(error, res);
   }
 };
-
-
-
-// export const getMonthlyStockRequestsSummary = async (req, res) => {
-//   try {
-//     const { hasAccess, permissions, userCenter } = checkReportPermissions(req, [
-//       "view_own_report",
-//       "view_all_report",
-//     ]);
-
-//     if (!hasAccess) {
-//       return res.status(403).json({
-//         success: false,
-//         message:
-//           "Access denied. view_own_report or view_all_report permission required.",
-//       });
-//     }
-
-//     const {
-//       month,
-//       year,
-//       center,
-//       warehouse,
-//       product,
-//       page = 1,
-//       limit = 50,
-//     } = req.query;
-
-//     const currentDate = new Date();
-//     const currentMonth = month ? parseInt(month) : currentDate.getMonth() + 1;
-//     const currentYear = year ? parseInt(year) : currentDate.getFullYear();
-
-//     if (currentMonth < 1 || currentMonth > 12) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Month must be between 1 and 12",
-//       });
-//     }
-
-//     if (currentYear < 2000 || currentYear > 2100) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Year must be between 2000 and 2100",
-//       });
-//     }
-
-//     const startDate = new Date(currentYear, currentMonth - 1, 1);
-//     const endDate = new Date(currentYear, currentMonth, 0, 23, 59, 59, 999);
-
-//     const filter = {
-//       createdAt: {
-//         $gte: startDate,
-//         $lte: endDate,
-//       },
-//     };
-
-//     if (permissions.view_own_report && !permissions.view_all_report) {
-//       const userCenterId = userCenter?._id || userCenter;
-//       if (userCenterId) {
-//         filter.center = userCenterId;
-//       }
-//     } else if (permissions.view_all_report && center) {
-//       filter.center = center;
-//     }
-
-//     if (warehouse) {
-//       filter.warehouse = warehouse;
-//     }
-
-//     if (product) {
-//       filter["products.product"] = product;
-//     }
-
-//     const aggregationPipeline = [
-//       { $match: filter },
-
-//       { $unwind: "$products" },
-
-//       {
-//         $lookup: {
-//           from: "centers",
-//           localField: "center",
-//           foreignField: "_id",
-//           as: "centerDetails",
-//         },
-//       },
-
-//       {
-//         $lookup: {
-//           from: "centers",
-//           localField: "warehouse",
-//           foreignField: "_id",
-//           as: "warehouseDetails",
-//         },
-//       },
-
-//       {
-//         $lookup: {
-//           from: "products",
-//           localField: "products.product",
-//           foreignField: "_id",
-//           as: "productDetails",
-//         },
-//       },
-
-//       {
-//         $project: {
-//           center: { $arrayElemAt: ["$centerDetails.centerName", 0] },
-//           parentCenter: { $arrayElemAt: ["$warehouseDetails.centerName", 0] },
-//           product: { $arrayElemAt: ["$productDetails.productTitle", 0] },
-//           productCode: { $arrayElemAt: ["$productDetails.productCode", 0] },
-//           quantity: "$products.quantity",
-//           orderNumber: 1,
-//           status: 1,
-//           date: 1,
-//         },
-//       },
-
-//       {
-//         $group: {
-//           _id: {
-//             center: "$center",
-//             parentCenter: "$parentCenter",
-//             product: "$product",
-//             productCode: "$productCode",
-//           },
-//           totalQty: { $sum: "$quantity" },
-//           requestCount: { $sum: 1 },
-//           orderNumbers: { $push: "$orderNumber" },
-//           statuses: { $push: "$status" },
-//         },
-//       },
-
-//       {
-//         $project: {
-//           _id: 0,
-//           center: "$_id.center",
-//           parentCenter: "$_id.parentCenter",
-//           product: "$_id.product",
-//           productCode: "$_id.productCode",
-//           totalQty: 1,
-//           requestCount: 1,
-//           orderNumbers: 1,
-//           statusBreakdown: {
-//             $arrayToObject: {
-//               $map: {
-//                 input: "$statuses",
-//                 as: "status",
-//                 in: {
-//                   k: "$$status",
-//                   v: {
-//                     $size: {
-//                       $filter: {
-//                         input: "$statuses",
-//                         as: "s",
-//                         cond: { $eq: ["$$s", "$$status"] },
-//                       },
-//                     },
-//                   },
-//                 },
-//               },
-//             },
-//           },
-//         },
-//       },
-
-//       {
-//         $sort: {
-//           center: 1,
-//           parentCenter: 1,
-//           product: 1,
-//         },
-//       },
-//     ];
-
-//     const skip = (page - 1) * limit;
-//     aggregationPipeline.push({ $skip: skip }, { $limit: parseInt(limit) });
-
-//     const monthlySummary = await StockRequest.aggregate(aggregationPipeline);
-
-//     const countPipeline = [
-//       { $match: filter },
-//       { $unwind: "$products" },
-//       {
-//         $group: {
-//           _id: {
-//             center: "$center",
-//             warehouse: "$warehouse",
-//             product: "$products.product",
-//           },
-//         },
-//       },
-//       { $count: "total" },
-//     ];
-
-//     const totalResult = await StockRequest.aggregate(countPipeline);
-//     const total = totalResult.length > 0 ? totalResult[0].total : 0;
-
-//     const statsPipeline = [
-//       { $match: filter },
-//       { $unwind: "$products" },
-//       {
-//         $group: {
-//           _id: null,
-//           totalProductsRequested: { $sum: "$products.quantity" },
-//           totalRequests: { $sum: 1 },
-//           uniqueProducts: { $addToSet: "$products.product" },
-//           uniqueCenters: { $addToSet: "$center" },
-//         },
-//       },
-//       {
-//         $project: {
-//           totalProductsRequested: 1,
-//           totalRequests: 1,
-//           uniqueProductsCount: { $size: "$uniqueProducts" },
-//           uniqueCentersCount: { $size: "$uniqueCenters" },
-//         },
-//       },
-//     ];
-
-//     const statsResult = await StockRequest.aggregate(statsPipeline);
-//     const stats =
-//       statsResult.length > 0
-//         ? statsResult[0]
-//         : {
-//             totalProductsRequested: 0,
-//             totalRequests: 0,
-//             uniqueProductsCount: 0,
-//             uniqueCentersCount: 0,
-//           };
-
-//     const response = {
-//       success: true,
-//       message: `Monthly stock requests summary for ${currentMonth}/${currentYear} retrieved successfully`,
-//       data: monthlySummary.map((item) => ({
-//         Center: item.center,
-//         ParentCenter: item.parentCenter,
-//         Product: item.product,
-//         ProductCode: item.productCode,
-//         TotalQty: item.totalQty,
-//         RequestCount: item.requestCount,
-//       })),
-//       summary: {
-//         period: `${currentMonth}/${currentYear}`,
-//         totalProductsRequested: stats.totalProductsRequested,
-//         totalRequests: stats.totalRequests,
-//         uniqueProducts: stats.uniqueProductsCount,
-//         uniqueCenters: stats.uniqueCentersCount,
-//         dateRange: {
-//           start: startDate,
-//           end: endDate,
-//         },
-//       },
-//       pagination: {
-//         currentPage: parseInt(page),
-//         totalPages: Math.ceil(total / limit),
-//         totalItems: total,
-//         itemsPerPage: parseInt(limit),
-//       },
-//     };
-
-//     res.status(200).json(response);
-//   } catch (error) {
-//     console.error("Error fetching monthly stock requests summary:", error);
-//     handleControllerError(error, res);
-//   }
-// };
-
-
-
 
 export const getMonthlyStockRequestsSummary = async (req, res) => {
   try {
@@ -4734,197 +4465,6 @@ async function getConsumptionDetails(serialNumber) {
   }
 }
 
-// export const getONUTrackReport = async (req, res) => {
-//   try {
-//     const { hasAccess, permissions, userCenter } = checkReportPermissions(req, [
-//       "view_own_report",
-//       "view_all_report",
-//     ]);
-
-//     if (!hasAccess) {
-//       return res.status(403).json({
-//         success: false,
-//         message:
-//           "Access denied. view_own_report or view_all_report permission required.",
-//       });
-//     }
-
-//     const {
-//       center,
-//       usageType,
-//       status,
-//       dateFilter,
-//       startDate,
-//       endDate,
-//       customer,
-//       search,
-//       page = 1,
-//       limit = 100,
-//       sortBy = "date",
-//       sortOrder = "desc",
-//     } = req.query;
-
-//     const filter = {};
-
-//     // 🔹 Center logic
-//     if (
-//       permissions.view_usage_own_center &&
-//       !permissions.view_usage_all_center &&
-//       userCenter
-//     ) {
-//       filter.center = userCenter._id || userCenter;
-//     } else if (center) {
-//       filter.center = center;
-//     }
-
-//     // 🔹 Filters
-//     if (usageType) filter.usageType = usageType;
-//     if (status) filter.status = status;
-//     if (customer) filter.customer = customer;
-//     if (dateFilter || startDate || endDate) {
-//       filter.date = buildDateFilter(dateFilter, startDate, endDate);
-//     }
-
-//     // 🔹 Search filter
-//     if (search) {
-//       filter.$or = [
-//         { "center.centerName": { $regex: search, $options: "i" } },
-//         { "customer.name": { $regex: search, $options: "i" } },
-//         { "items.product.productTitle": { $regex: search, $options: "i" } },
-//       ];
-//     }
-
-//     const pageNum = parseInt(page);
-//     const limitNum = parseInt(limit);
-//     const skip = (pageNum - 1) * limitNum;
-//     const sort = {};
-//     sort[sortBy] = sortOrder === "desc" ? -1 : 1;
-
-//     // 🔹 Fetch stock usage data
-//     const stockUsage = await StockUsage.find(filter)
-//       .populate({
-//         path: "center",
-//         select: "centerName centerCode partner area",
-//         populate: [
-//           { path: "partner", select: "partnerName" },
-//           { path: "area", select: "areaName" },
-//         ],
-//       })
-//       .populate("customer", "username name mobile")
-//       .populate("createdBy", "name email")
-//       .populate({
-//         path: "items.product",
-//         select: "productTitle productCode _id productPrice trackSerialNumber",
-//         transform: (doc) => {
-//           if (doc) {
-//             return {
-//               productId: doc._id,
-//               productTitle: doc.productTitle,
-//               productCode: doc.productCode,
-//               productPrice: doc.productPrice,
-//               trackSerialNumber: doc.trackSerialNumber,
-//             };
-//           }
-//           return doc;
-//         },
-//       })
-//       .sort(sort)
-//       .skip(skip)
-//       .limit(limitNum)
-//       .lean();
-
-//     // 🔹 Collect center/product combinations
-//     const centerProductPairs = [];
-//     stockUsage.forEach((usage) => {
-//       usage.items.forEach((item) => {
-//         if (item.product && item.product.productId && usage.center?._id) {
-//           centerProductPairs.push({
-//             center: usage.center._id.toString(),
-//             product: item.product.productId.toString(),
-//           });
-//         }
-//       });
-//     });
-
-//     // 🔹 Fetch all relevant CenterStock documents once
-//     const uniquePairs = Array.from(
-//       new Set(centerProductPairs.map((p) => `${p.center}_${p.product}`))
-//     ).map((key) => {
-//       const [center, product] = key.split("_");
-//       return { center, product };
-//     });
-
-//     const centerStocks = await CenterStock.find({
-//       $or: uniquePairs.map((p) => ({
-//         center: p.center,
-//         product: p.product,
-//       })),
-//     })
-//       .select("center product serialNumbers.serialNumber serialNumbers.status serialNumbers.currentLocation serialNumbers.purchaseId")
-//       .lean();
-
-//     // 🔹 Build lookup map: { centerId_productId: { serialNumber: {status, currentLocation, purchaseId} } }
-//     const centerStockMap = {};
-//     centerStocks.forEach((cs) => {
-//       const key = `${cs.center.toString()}_${cs.product.toString()}`;
-//       centerStockMap[key] = {};
-//       cs.serialNumbers.forEach((sn) => {
-//         centerStockMap[key][sn.serialNumber] = {
-//           status: sn.status,
-//           currentLocation: sn.currentLocation,
-//           purchaseId: sn.purchaseId,
-//         };
-//       });
-//     });
-
-//     // 🔹 Merge updated serial statuses into response
-//     const filteredStockUsage = stockUsage.map((usage) => {
-//       const updatedItems = usage.items.map((item) => {
-//         const key = `${usage.center._id}_${item.product.productId}`;
-//         const stockMap = centerStockMap[key] || {};
-
-//         const updatedSerials = (item.serialNumbers || []).map((sn) => {
-//           const serialData = stockMap[sn];
-//           return {
-//             serialNumber: sn,
-//             status: serialData ? serialData.status : "unknown",
-//             currentLocation: serialData ? serialData.currentLocation : null,
-//             purchaseId: serialData ? serialData.purchaseId : null,
-//           };
-//         });
-
-//         return { ...item, serialNumbers: updatedSerials };
-//       });
-
-//       return { ...usage, items: updatedItems };
-//     });
-
-//     // 🔹 Pagination count
-//     const total = await StockUsage.countDocuments(filter);
-//     const totalPages = Math.ceil(total / limitNum);
-
-//     // 🔹 Response
-//     res.json({
-//       success: true,
-//       data: filteredStockUsage,
-//       pagination: {
-//         currentPage: pageNum,
-//         totalPages,
-//         totalRecords: total,
-//         hasNext: pageNum < totalPages,
-//         hasPrev: pageNum > 1,
-//       },
-//     });
-//   } catch (error) {
-//     console.error("Get All Stock Usage Error:", error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Failed to fetch stock usage data",
-//       error: error.message,
-//     });
-//   }
-// };
-
 
 export const getONUTrackReport = async (req, res) => {
   try {
@@ -4951,7 +4491,7 @@ export const getONUTrackReport = async (req, res) => {
       customer,
       search,
       product,
-      partner,
+      reseller,
       page = 1,
       limit = 100,
       sortBy = "date",
@@ -4991,9 +4531,9 @@ export const getONUTrackReport = async (req, res) => {
       }
     }
 
-    // 🔹 Partner filter
-    if (partner) {
-      filter["center.partner"] = partner;
+    // 🔹 Reseller filter
+    if (reseller) {
+      filter["center.reseller"] = reseller;
     }
 
     // 🔹 Product filter
@@ -5028,9 +4568,9 @@ export const getONUTrackReport = async (req, res) => {
     const stockUsage = await StockUsage.find(filter)
       .populate({
         path: "center",
-        select: "centerName centerCode partner area centerType",
+        select: "centerName centerCode reseller area centerType",
         populate: [
-          { path: "partner", select: "partnerName" },
+          { path: "reseller", select: "businessName" },
           { path: "area", select: "areaName" },
         ],
       })
@@ -5156,9 +4696,9 @@ export const getONUTrackReport = async (req, res) => {
       const allStockUsage = await StockUsage.find(filter)
         .populate({
           path: "center",
-          select: "centerName centerCode partner area centerType",
+          select: "centerName centerCode reseller area centerType",
           populate: [
-            { path: "partner", select: "partnerName" },
+            { path: "reseller", select: "businessName" },
             { path: "area", select: "areaName" },
           ],
         })
@@ -5212,7 +4752,7 @@ export const getONUTrackReport = async (req, res) => {
       filters: {
         status: status || 'all',
         product: product || '',
-        partner: partner || '',
+        reseller: reseller || '',
         search: search || '',
         usageType: usageType || '',
         customer: customer || ''
@@ -5249,9 +4789,6 @@ export const getReplacementRecords = async (req, res) => {
       usageType,
       product,
       center,
-      customerName,
-      buildingName,
-      statusReason,
       connectionType,
       reason,
       page = 1,
@@ -5450,6 +4987,7 @@ export const getReplacementRecords = async (req, res) => {
   }
 };
 
+
 const getConnectionDescription = (connectionType, reason) => {
   const descriptions = {
     "NC": "New Connection",
@@ -5458,4 +4996,130 @@ const getConnectionDescription = (connectionType, reason) => {
     "Repair": "Repair"
   };
   return descriptions[connectionType] || descriptions[reason] || "Other";
+};
+
+
+
+export const getAllFilledStock = async (req, res) => {
+  try {
+    const { hasAccess, permissions, userCenter } = checkReportPermissions(
+      req,
+      [ "view_own_report",
+        "view_all_report",
+      ]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_own_report or view_all_report permission required.",
+      });
+    }
+
+    const {
+      center,
+      customer,
+      product,
+      status,
+      startDate,
+      endDate,
+      page = 1,
+      limit = 100,
+      sortBy = "createdAt",
+      sortOrder = "desc",
+    } = req.query;
+
+    const query = {};
+    if (permissions.view_all_report) {
+      if (center) {
+        query.center = center;
+      }
+    } else if (permissions.view_own_report) {
+      if (userCenter) {
+        query.center = userCenter._id || userCenter;
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: "User must be associated with a center",
+        });
+      }
+    
+      if (center && center !== (userCenter._id || userCenter).toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You can only view your center data.",
+        });
+      }
+    }
+
+    if (customer) query.customer = customer;
+    if (product) query.product = product;
+    if (status) query.status = status;
+
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate);
+      if (endDate) query.createdAt.$lte = new Date(endDate);
+    }
+
+    const total = await FilledStock.countDocuments(query);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const sortConfig = {};
+    sortConfig[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+    const filledStocks = await FilledStock.find(query)
+      .populate("customer", "name username mobile email")
+      .populate("product", "productTitle productCode category")
+      .populate("center", "centerName centerCode address")
+      .populate("shiftingRequestId", "date fromCenter toCenter status")
+      .populate("originalUsageId", "date usageType remark")
+      .sort(sortConfig)
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    const formattedData = filledStocks.map(stock => ({
+      _id: stock._id,
+      "CustomerName": stock.customer?.name || "",
+      "CustomerUsername": stock.customer?.username || "",
+      "CustomerMobile": stock.customer?.mobile || "",
+      "ProductName": stock.product?.productTitle || "",
+      "ProductCode": stock.product?.productCode || "",
+      "CenterName": stock.center?.centerName || "",
+      "CenterCode": stock.center?.centerCode || "",
+      "Quantity": stock.quantity,
+      "SerialNumbers": stock.serialNumbers.map(sn => ({
+        serialNumber: sn.serialNumber,
+        status: sn.status,
+        assignedDate: sn.assignedDate
+      })),
+      "ShiftingDate": stock.shiftingRequestId?.date || stock.createdAt,
+      "OriginalUsageType": stock.originalUsageId?.usageType || "N/A",
+      "Status": stock.status,
+      "LastUpdated": stock.lastUpdated,
+      "CreatedAt": stock.createdAt
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: formattedData,
+      pagination: {
+        total,
+        currentPage: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / limit),
+      },
+      accessInfo: {
+        canViewAll: permissions.view_all_report,
+        userCenter: userCenter ? {
+          id: userCenter._id || userCenter,
+          name: req.user.center?.centerName || "User Center"
+        } : null
+      }
+    });
+  } catch (error) {
+    console.error("Error fetching filled stock:", error);
+    handleControllerError(error, res);
+  }
 };

@@ -3,10 +3,10 @@ import {
   createCenter,
   getCenters,
   getCenterById,
-  getCentersByPartner,
   getCentersByArea,
   updateCenter,
   deleteCenter,
+  getCentersByReseller,
 } from "../controllers/centerController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
@@ -35,9 +35,9 @@ router.get(
 );
 
 router.get(
-  "/partner/:partnerId",
+  "/resellers/center",
   authorizeAccess(MODULE, "view_own_center", "view_all_center"),
-  getCentersByPartner
+  getCentersByReseller
 );
 
 router.get(

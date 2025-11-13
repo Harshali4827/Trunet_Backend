@@ -30,6 +30,9 @@ import reports from "./routes/reportRoutes.js";
 import damageRoutes from './routes/damageRoutes.js';
 import indentUsageSummaryRoutes from './routes/usageSummaryRoutes.js';
 import allDataRoutes from './routes/allDataRoutes.js';
+import resellerRoutes from './routes/resellerRoutes.js';
+import raisePORoutes from './routes/raisePORoutes.js';
+import faultyStockRoutes from './routes/faultyStockRoutes.js';
 import "./models/EntityStockUsage.js";
 dotenv.config();
 connectDB();
@@ -74,7 +77,9 @@ app.use("/api/reports", reports);
 app.use("/api/damage", damageRoutes);
 app.use("/api", indentUsageSummaryRoutes);
 app.use("/api", allDataRoutes)
-
+app.use("/api/resellers", resellerRoutes);
+app.use("/api/raisePO", raisePORoutes);
+app.use("/api/faulty-stock", faultyStockRoutes)
 app.use(errorHandler);
 
 export default app;

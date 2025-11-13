@@ -11,7 +11,8 @@ import {
   getAllStolenStockReports,
   getProductDetailsBySerialNumber,
   getONUTrackReport,
-  getReplacementRecords
+  getReplacementRecords,
+  getAllFilledStock
 } from "../controllers/reportController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
@@ -93,5 +94,12 @@ router.get(
   protect,
   authorizeAccess(MODULE, "view_own_report","view_all_report"),
   getReplacementRecords
+)
+
+router.get(
+  "/filledstock-report",
+  protect,
+  authorizeAccess(MODULE, "view_own_report","view_all_report"),
+  getAllFilledStock
 )
 export default router;
