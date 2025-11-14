@@ -258,8 +258,8 @@ export const validateCreateStockPurchase = [
     .withMessage(
       "Each product must have product ID, non-negative price, and quantity ≥ 1"
     )
-    .custom(customValidators.validateSerialNumbers)
-    .withMessage("Serial number validation failed"),
+    .custom(customValidators.validateSerialNumbers),
+
 
   body("products.*.product")
     .notEmpty()

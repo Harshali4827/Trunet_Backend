@@ -1,0 +1,3 @@
+productCategory,productTitle,productCode,productPrice,salePrice,hsnCode,productWeight,productBarcode,status,description,trackSerialNumber,repairable,replaceable
+Test Category,Test Product 1,TEST001,100,120,85176990,0.5kg,123456789,Enable,Test description,No,No,No
+Test Category,Test Product 2,TEST002,200,240,85176990,1kg,123456790,Enable,Test description 2,No,Yes,No

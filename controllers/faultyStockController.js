@@ -1,7 +1,6 @@
 import mongoose from "mongoose";
 import RepairTransfer from '../models/RepairTransfer.js'
 
-
 const checkStockUsagePermissions = (req, requiredPermissions = []) => {
     const userPermissions = req.user.role?.permissions || [];
     const usageModule = userPermissions.find((perm) => perm.module === "Usage");
@@ -652,7 +651,6 @@ export const getRepairTransfersForCenter = async (req, res) => {
   }
 };
 
-
 export const getDamagedAndUnderRepairSerials = async (req, res) => {
   try {
     const { productId } = req.params;
@@ -713,22 +711,12 @@ export const getDamagedAndUnderRepairSerials = async (req, res) => {
           allSerialNumbers.push({
             serialNumber: serial.serialNumber,
             status: serial.status,
-            source: "faulty_stock",
+      
             center: {
               id: stock.center._id,
               name: stock.center.centerName,
-              code: stock.center.centerCode
             },
-            reseller: stock.reseller ? {
-              id: stock.reseller._id,
-              name: stock.reseller.resellerName
-            } : null,
-            reportedDate: stock.damageDate,
-            overallStatus: stock.overallStatus,
-            repairHistory: serial.repairHistory || [],
-            repairCost: serial.repairCost || 0,
             repairRemark: serial.repairRemark,
-            technician: serial.technician,
             recordId: stock._id
           });
         }
@@ -802,12 +790,12 @@ export const getDamagedAndUnderRepairSerials = async (req, res) => {
       success: true,
       data: {
         product: {
-          id: product._id,
+          _id: product._id,
           title: product.productTitle,
           code: product.productCode,
           trackSerialNumber: product.trackSerialNumber
         },
-        serialNumbers: uniqueSerials,
+        availableSerials: uniqueSerials,
         summary: {
           status: statusSummary,
           centers: Object.values(centerSummary),
@@ -829,6 +817,636 @@ export const getDamagedAndUnderRepairSerials = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || "Failed to fetch damaged and under repair serial numbers"
+    });
+  }
+};
+
+
+export const markAsRepairedOrIrreparable = async (req, res) => {
+  try {
+    const { hasAccess, userCenter } = checkStockUsagePermissions(
+      req,
+      ["manage_usage_own_center", "manage_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. manage_usage_own_center or manage_usage_all_center permission required.",
+      });
+    }
+
+    const { date, remark, items } = req.body;
+    const updatedBy = req.user.id;
+
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: "Date is required"
+      });
+    }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Items array is required and cannot be empty",
+      });
+    }
+
+    const RepairTransfer = mongoose.model("RepairTransfer");
+    const FaultyStock = mongoose.model("FaultyStock");
+    const CenterStock = mongoose.model("CenterStock");
+    const Product = mongoose.model("Product");
+
+    const results = [];
+    const errors = [];
+
+    for (const item of items) {
+      try {
+        const { product, quantity, serialNumbers, productRemark, finalStatus } = item;
+
+        if (!product || !mongoose.Types.ObjectId.isValid(product)) {
+          errors.push(`Invalid product ID: ${product}`);
+          continue;
+        }
+
+        if (!quantity || quantity < 1) {
+          errors.push(`Invalid quantity for product ${product}`);
+          continue;
+        }
+
+        if (!finalStatus || !["repaired", "irreparable"].includes(finalStatus)) {
+          errors.push(`Invalid final status for product ${product}. Must be "repaired" or "irreparable"`);
+          continue;
+        }
+
+        const productDoc = await Product.findById(product);
+        if (!productDoc) {
+          errors.push(`Product not found: ${product}`);
+          continue;
+        }
+
+        const repairTransfer = await RepairTransfer.findOne({
+          product: product,
+          toCenter: userCenter?._id || req.user.center,
+          status: { $in: ["transferred", "in_repair"] }
+        });
+
+        if (!repairTransfer) {
+          errors.push(`No active repair transfer found for product: ${productDoc.productTitle}`);
+          continue;
+        }
+        if (quantity > repairTransfer.quantity) {
+          errors.push(`Quantity (${quantity}) exceeds available repair quantity (${repairTransfer.quantity}) for ${productDoc.productTitle}`);
+          continue;
+        }
+
+        if (productDoc.trackSerialNumber === "Yes") {
+          if (!serialNumbers || !Array.isArray(serialNumbers) || serialNumbers.length === 0) {
+            errors.push(`Serial numbers are required for product: ${productDoc.productTitle}`);
+            continue;
+          }
+
+          if (serialNumbers.length !== quantity) {
+            errors.push(`Quantity (${quantity}) doesn't match serial numbers count (${serialNumbers.length}) for product ${productDoc.productTitle}`);
+            continue;
+          }
+          const availableSerialNumbers = repairTransfer.serialNumbers.map(sn => sn.serialNumber);
+          const invalidSerials = serialNumbers.filter(sn => !availableSerialNumbers.includes(sn));
+          
+          if (invalidSerials.length > 0) {
+            errors.push(`Invalid serial numbers for product ${productDoc.productTitle}: ${invalidSerials.join(', ')}`);
+            continue;
+          }
+        }
+
+        repairTransfer.status = finalStatus === "repaired" ? "repaired" : "returned";
+        repairTransfer.actualReturnDate = new Date();
+        repairTransfer.repairUpdates.push({
+          date: new Date(date),
+          status: finalStatus,
+          remark: productRemark || remark || `Marked as ${finalStatus}`,
+          updatedBy: updatedBy,
+          cost: 0
+        });
+        if (serialNumbers && serialNumbers.length > 0) {
+          repairTransfer.serialNumbers = repairTransfer.serialNumbers.map(sn => {
+            if (serialNumbers.includes(sn.serialNumber)) {
+              return {
+                ...sn.toObject(),
+                status: finalStatus,
+                repairHistory: [
+                  ...(sn.repairHistory || []),
+                  {
+                    date: new Date(date),
+                    status: finalStatus,
+                    remark: productRemark || remark || `Marked as ${finalStatus}`,
+                    updatedBy: updatedBy,
+                    cost: 0
+                  }
+                ]
+              };
+            }
+            return sn;
+          });
+        }
+
+        await repairTransfer.save();
+
+        const faultyStock = await FaultyStock.findById(repairTransfer.faultyStock);
+        if (faultyStock) {
+          if (serialNumbers && serialNumbers.length > 0) {
+            faultyStock.serialNumbers = faultyStock.serialNumbers.map(sn => {
+              if (serialNumbers.includes(sn.serialNumber)) {
+                return {
+                  ...sn.toObject(),
+                  status: finalStatus,
+                  repairHistory: [
+                    ...(sn.repairHistory || []),
+                    {
+                      date: new Date(date),
+                      status: finalStatus,
+                      remark: productRemark || remark || `Marked as ${finalStatus}`,
+                      updatedBy: updatedBy,
+                      cost: 0
+                    }
+                  ]
+                };
+              }
+              return sn;
+            });
+          }
+          faultyStock.updateOverallStatus();
+          
+          if (finalStatus === "repaired") {
+            faultyStock.repairDate = new Date(date);
+          }
+          
+          await faultyStock.save();
+
+          if (finalStatus === "repaired") {
+            const centerStock = await CenterStock.findOne({
+              center: repairTransfer.fromCenter,
+              product: product
+            });
+
+            if (centerStock) {
+              if (productDoc.trackSerialNumber === "Yes" && serialNumbers && serialNumbers.length > 0) {
+                for (const serialNumber of serialNumbers) {
+                  const existingSerial = centerStock.serialNumbers.find(sn => sn.serialNumber === serialNumber);
+                  
+                  if (!existingSerial) {
+                    centerStock.serialNumbers.push({
+                      serialNumber: serialNumber,
+                      status: "available",
+                      currentLocation: repairTransfer.fromCenter,
+                      transferHistory: [{
+                        fromCenter: repairTransfer.toCenter,
+                        toCenter: repairTransfer.fromCenter,
+                        transferDate: new Date(date),
+                        transferType: "return_from_repair",
+                        referenceId: repairTransfer._id,
+                        remark: `Returned from repair - ${finalStatus}`
+                      }]
+                    });
+                  } else {
+                    existingSerial.status = "available";
+                    existingSerial.currentLocation = repairTransfer.fromCenter;
+                    existingSerial.transferHistory.push({
+                      fromCenter: repairTransfer.toCenter,
+                      toCenter: repairTransfer.fromCenter,
+                      transferDate: new Date(date),
+                      transferType: "return_from_repair",
+                      referenceId: repairTransfer._id,
+                      remark: `Returned from repair - ${finalStatus}`
+                    });
+                  }
+                }
+                
+                centerStock.availableQuantity += quantity;
+                centerStock.totalQuantity += quantity;
+              } else {
+                centerStock.availableQuantity += quantity;
+                centerStock.totalQuantity += quantity;
+              }
+              
+              await centerStock.save();
+            } else {
+
+              const newCenterStock = new CenterStock({
+                center: repairTransfer.fromCenter,
+                product: product,
+                availableQuantity: quantity,
+                totalQuantity: quantity,
+                serialNumbers: productDoc.trackSerialNumber === "Yes" ? serialNumbers.map(sn => ({
+                  serialNumber: sn,
+                  status: "available",
+                  currentLocation: repairTransfer.fromCenter,
+                  transferHistory: [{
+                    fromCenter: repairTransfer.toCenter,
+                    toCenter: repairTransfer.fromCenter,
+                    transferDate: new Date(date),
+                    transferType: "return_from_repair",
+                    referenceId: repairTransfer._id,
+                    remark: `Returned from repair - ${finalStatus}`
+                  }]
+                })) : []
+              });
+              
+              await newCenterStock.save();
+            }
+          }
+        }
+
+        results.push({
+          product: productDoc.productTitle,
+          productCode: productDoc.productCode,
+          quantity: quantity,
+          serialNumbers: serialNumbers || [],
+          finalStatus: finalStatus,
+          repairTransferId: repairTransfer._id,
+          status: "success"
+        });
+
+        console.log(`✓ Marked as ${finalStatus}: ${productDoc.productTitle} (Qty: ${quantity})`);
+
+      } catch (error) {
+        errors.push(`Error processing ${item.product}: ${error.message}`);
+      }
+    }
+
+    if (errors.length > 0 && results.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Failed to process any items",
+        errors: errors
+      });
+    }
+
+    if (errors.length > 0) {
+      return res.json({
+        success: true,
+        message: `Partially completed. ${results.length} items processed successfully, ${errors.length} failed`,
+        data: {
+          processed: results,
+          errors: errors,
+          totalItems: results.length,
+          totalQuantity: results.reduce((sum, item) => sum + item.quantity, 0),
+          repairedCount: results.filter(item => item.finalStatus === "repaired").length,
+          irreparableCount: results.filter(item => item.finalStatus === "irreparable").length
+        }
+      });
+    }
+    res.json({
+      success: true,
+      message: `Successfully processed ${results.length} items`,
+      data: {
+        processed: results,
+        totalItems: results.length,
+        totalQuantity: results.reduce((sum, item) => sum + item.quantity, 0),
+        repairedCount: results.filter(item => item.finalStatus === "repaired").length,
+        irreparableCount: results.filter(item => item.finalStatus === "irreparable").length
+      }
+    });
+
+  } catch (error) {
+    console.error("Mark as repaired/irreparable error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to process repair status",
+    });
+  }
+};
+
+
+export const getDamageAndUnderRepairProduct = async (req, res) => {
+  try {
+    const { hasAccess, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
+
+    const {
+      status,
+      page = 1,
+      limit = 50,
+    } = req.query;
+
+    const RepairTransfer = mongoose.model("RepairTransfer");
+    
+    const filter = {
+      toCenter: userCenter?._id || req.user.center
+    };
+
+    if (status && status !== "all") {
+      filter.status = status;
+    }
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const repairTransfers = await RepairTransfer.find(filter)
+      .populate("fromCenter", "centerName centerCode")
+      .populate("product", "productTitle productCode trackSerialNumber")
+      .populate("transferredBy", "name email")
+      .sort({ date: -1 })
+      .skip(skip)
+      .limit(limitNum);
+
+    const repairItems = [];
+    
+    for (const transfer of repairTransfers) {
+      const serialNumbers = transfer.serialNumbers || [];
+      
+      if (transfer.product?.trackSerialNumber === "Yes") {
+  
+        const underRepairSerials = serialNumbers.filter(serial => 
+          serial.status === "under_repair" || serial.status === "damaged"
+        );
+        
+        if (underRepairSerials.length > 0) {
+          repairItems.push({
+            ...transfer.toObject(),
+            quantity: underRepairSerials.length,
+            serialNumbers: underRepairSerials, 
+            availableForRepair: true,
+            displayQuantity: underRepairSerials.length,
+            pendingSerialsCount: underRepairSerials.length,
+            totalSerialsCount: serialNumbers.length
+          });
+        }
+      } else {
+        const repairedCount = transfer.repairUpdates?.filter(update => 
+          update.status === "repaired"
+        ).length || 0;
+        
+        const availableQty = transfer.quantity - repairedCount;
+        
+        if (availableQty > 0) {
+          repairItems.push({
+            ...transfer.toObject(),
+            quantity: availableQty,
+            displayQuantity: availableQty,
+            availableForRepair: true,
+            repairedCount: repairedCount,
+            originalQuantity: transfer.quantity
+          });
+        }
+      }
+    }
+
+    const totalTransfers = await RepairTransfer.countDocuments(filter);
+    const totalRepairItems = repairItems.length;
+
+    const dashboardStats = await RepairTransfer.aggregate([
+      { $match: { toCenter: userCenter?._id || req.user.center } },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+          totalQuantity: { $sum: "$quantity" }
+        }
+      }
+    ]);
+    const pendingRepairsStats = {
+      _id: "pending_repairs",
+      count: totalRepairItems,
+      totalQuantity: repairItems.reduce((sum, item) => sum + item.displayQuantity, 0)
+    };
+
+    dashboardStats.push(pendingRepairsStats);
+
+    res.json({
+      success: true,
+      data: repairItems,
+      dashboardStats: dashboardStats,
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(totalRepairItems / limitNum),
+        totalRecords: totalRepairItems,
+        hasNext: pageNum < Math.ceil(totalRepairItems / limitNum),
+        hasPrev: pageNum > 1,
+      }
+    });
+  } catch (error) {
+    console.error("Get repair transfers for center error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch repair transfers for center",
+    });
+  }
+};
+
+
+export const getRepairedProducts = async (req, res) => {
+  try {
+    const { hasAccess, userCenter } = checkStockUsagePermissions(
+      req,
+      ["view_usage_own_center", "view_usage_all_center"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+      });
+    }
+
+    const {
+      startDate,
+      endDate,
+      centerId,
+      productId,
+      page = 1,
+      limit = 50,
+    } = req.query;
+
+    const RepairTransfer = mongoose.model("RepairTransfer");
+    const FaultyStock = mongoose.model("FaultyStock");
+    
+    const filter = {
+      toCenter: userCenter?._id || req.user.center,
+      status: "repaired"
+    };
+
+    if (startDate && endDate) {
+      filter.date = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      };
+    }
+
+    if (centerId && mongoose.Types.ObjectId.isValid(centerId)) {
+      filter.fromCenter = centerId;
+    }
+
+    if (productId && mongoose.Types.ObjectId.isValid(productId)) {
+      filter.product = productId;
+    }
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const repairedTransfers = await RepairTransfer.find(filter)
+      .populate("fromCenter", "centerName centerCode")
+      .populate("product", "productTitle productCode trackSerialNumber category")
+      .populate("transferredBy", "name email")
+      .sort({ date: -1 })
+      .skip(skip)
+      .limit(limitNum);
+    const repairedProducts = [];
+
+    for (const transfer of repairedTransfers) {
+      const productId = transfer.product._id;
+      let existingProduct = repairedProducts.find(p => p.product._id.toString() === productId.toString());
+      
+      if (!existingProduct) {
+        existingProduct = {
+          product: transfer.product,
+          totalRepairedQuantity: 0,
+          repairTransfers: [],
+          repairedSerials: [],
+          repairDates: [],
+          fromCenters: []
+        };
+        repairedProducts.push(existingProduct);
+      }
+
+      let repairedQuantity = 0;
+      const repairedSerialsInTransfer = [];
+
+      if (transfer.product.trackSerialNumber === "Yes") {
+        transfer.serialNumbers.forEach(serial => {
+          if (serial.status === "repaired") {
+            repairedQuantity += 1;
+            repairedSerialsInTransfer.push({
+              serialNumber: serial.serialNumber,
+              repairDate: transfer.actualReturnDate || transfer.updatedAt,
+              repairHistory: serial.repairHistory,
+              transferId: transfer._id
+            });
+          }
+        });
+      } else {
+        repairedQuantity = transfer.quantity;
+      }
+
+      existingProduct.totalRepairedQuantity += repairedQuantity;
+ 
+      existingProduct.repairTransfers.push({
+        transferId: transfer._id,
+        date: transfer.date,
+        actualReturnDate: transfer.actualReturnDate,
+        quantity: repairedQuantity,
+        fromCenter: transfer.fromCenter,
+        transferRemark: transfer.transferRemark,
+        repairedSerials: repairedSerialsInTransfer,
+        totalRepairCost: transfer.totalRepairCost
+      });
+
+      const repairDate = transfer.actualReturnDate || transfer.updatedAt;
+      if (!existingProduct.repairDates.includes(repairDate)) {
+        existingProduct.repairDates.push(repairDate);
+      }
+
+      const centerExists = existingProduct.fromCenters.some(center => 
+        center._id.toString() === transfer.fromCenter._id.toString()
+      );
+      if (!centerExists) {
+        existingProduct.fromCenters.push(transfer.fromCenter);
+      }
+
+      existingProduct.repairedSerials.push(...repairedSerialsInTransfer);
+    }
+
+    repairedProducts.forEach(product => {
+      product.repairDates.sort((a, b) => new Date(b) - new Date(a));
+      product.repairTransfers.sort((a, b) => new Date(b.date) - new Date(a.date));
+    });
+
+    repairedProducts.sort((a, b) => b.totalRepairedQuantity - a.totalRepairedQuantity);
+
+    const total = await RepairTransfer.countDocuments(filter);
+
+    const stats = await RepairTransfer.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          totalRepairedTransfers: { $sum: 1 },
+          totalRepairedItems: { $sum: "$quantity" },
+          totalRepairCost: { $sum: "$totalRepairCost" }
+        }
+      }
+    ]);
+    const productStats = await RepairTransfer.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$product",
+          repairedQuantity: { $sum: "$quantity" },
+          transferCount: { $sum: 1 },
+          totalRepairCost: { $sum: "$totalRepairCost" }
+        }
+      },
+      {
+        $lookup: {
+          from: "products",
+          localField: "_id",
+          foreignField: "_id",
+          as: "productDetails"
+        }
+      },
+      {
+        $unwind: "$productDetails"
+      },
+      {
+        $project: {
+          productName: "$productDetails.productTitle",
+          productCode: "$productDetails.productCode",
+          repairedQuantity: 1,
+          transferCount: 1,
+          totalRepairCost: 1
+        }
+      },
+      { $sort: { repairedQuantity: -1 } }
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        repairedProducts,
+        summary: {
+          totalProducts: repairedProducts.length,
+          totalRepairedTransfers: stats[0]?.totalRepairedTransfers || 0,
+          totalRepairedItems: stats[0]?.totalRepairedItems || 0,
+          totalRepairCost: stats[0]?.totalRepairCost || 0,
+          productStats
+        }
+      },
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(total / limitNum),
+        totalRecords: total,
+        hasNext: pageNum < Math.ceil(total / limitNum),
+        hasPrev: pageNum > 1,
+      }
+    });
+
+  } catch (error) {
+    console.error("Get repaired products error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to fetch repaired products",
     });
   }
 };

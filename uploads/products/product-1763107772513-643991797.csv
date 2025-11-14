@@ -1,0 +1,2 @@
+productCategory,productTitle,productCode,productPrice,salePrice,hsnCode,productWeight,productBarcode,status,description,trackSerialNumber,repairable,replaceable
+"Networking Equipment","Wireless Router","WR101",1500,1800,"85176990","0.5kg","123456789012","Enable","High-speed wireless router","No","Yes","Yes"

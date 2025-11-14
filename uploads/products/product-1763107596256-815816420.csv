@@ -1,0 +1,4 @@
+productCategory,productTitle,productCode,productPrice,salePrice,hsnCode,productWeight,productBarcode,status,description,trackSerialNumber,repairable,replaceable
+"Wireless Router","WR001","Networking Equipment",1500,1800,"85176990","0.5kg","123456789012","Enable","High-speed wireless router","No","Yes","Yes"
+"Ethernet Cable","EC001","Cables",200,250,"85444290","0.1kg","123456789013","Enable","CAT6 Ethernet cable","No","No","No"
+"Network Switch","NS001","Networking Equipment",5000,6000,"85176290","2kg","123456789014","Enable","24-port network switch","No","Yes","Yes"

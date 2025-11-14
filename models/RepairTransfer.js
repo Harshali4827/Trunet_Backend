@@ -41,6 +41,7 @@ const repairTransferSchema = new mongoose.Schema({
       enum: ["damaged", "under_repair", "repaired", "irreparable", "disposed", "returned_to_vendor"],
       required: true
     },
+    
     repairHistory: [{
       date: Date,
       status: String,
