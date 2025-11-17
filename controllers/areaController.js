@@ -67,25 +67,70 @@ export const getAreaById = async (req, res) => {
   }
 };
 
+// export const updateArea = async (req, res) => {
+//   try {
+//     const { areaName } = req.body;
+//     const area = await Area.findByIdAndUpdate(
+//       req.params.id,
+//       { areaName },
+//       { new: true, runValidators: true }
+//     ).populate("reseller", "businessName");
+
+//     if (!area)
+//       return res
+//         .status(404)
+//         .json({ success: false, message: "Area not found" });
+//     res.status(200).json({ success: true, data: area });
+//   } catch (error) {
+//     res.status(500).json({ success: false, message: error.message });
+//   }
+// };
+
+
 export const updateArea = async (req, res) => {
   try {
-    const { areaName } = req.body;
+    const { areaName, resellerId } = req.body;
+    
+    // Build update object dynamically
+    const updateData = {};
+    if (areaName) updateData.areaName = areaName;
+    if (resellerId) {
+      // Verify the new reseller exists
+      const reseller = await Reseller.findById(resellerId);
+      if (!reseller) {
+        return res.status(404).json({ 
+          success: false, 
+          message: "Reseller not found" 
+        });
+      }
+      updateData.reseller = resellerId;
+    }
+
     const area = await Area.findByIdAndUpdate(
       req.params.id,
-      { areaName },
+      updateData,
       { new: true, runValidators: true }
     ).populate("reseller", "businessName");
 
-    if (!area)
-      return res
-        .status(404)
-        .json({ success: false, message: "Area not found" });
-    res.status(200).json({ success: true, data: area });
+    if (!area) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Area not found" 
+      });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      message: "Area updated successfully",
+      data: area 
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
-
 export const deleteArea = async (req, res) => {
   try {
     const area = await Area.findByIdAndDelete(req.params.id);

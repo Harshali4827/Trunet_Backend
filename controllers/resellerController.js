@@ -72,15 +72,6 @@ export const createReseller = async (req, res) => {
       }
     });
   } catch (error) {
-    if (error.code === 11000) {
-      const field = Object.keys(error.keyPattern)[0];
-      return res.status(400).json({ 
-        success: false, 
-        message: `${field} already exists`, 
-        error: `The ${field} '${error.keyValue[field]}' is already registered` 
-      });
-    }
-    
     res.status(400).json({ 
       success: false, 
       message: "Error creating reseller", 
