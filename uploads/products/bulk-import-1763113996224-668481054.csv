@@ -1,3 +1,0 @@
-productCategory,productTitle,productCode,productPrice,salePrice,hsnCode,productWeight,productBarcode,status,description,trackSerialNumber,repairable,replaceable
-"Electronics","Sample Product 1","PROD001","1000","900","85171200","1.5kg","1234567890123","Enable","Sample product description","Yes","Yes","No"
-"Clothing","Sample Product 2","PROD002","500","450","61102000","0.2kg","1234567890124","Enable","Another sample product","No","No","Yes"

@@ -836,16 +836,16 @@ export const login = async (req, res) => {
   try {
     console.log("Login request body:", req.body);
 
-    const { loginId, password } = req.body;
+    const { username, password } = req.body;
 
-    if (!loginId || !password) {
+    if (!username || !password) {
       return res.status(400).json({
         success: false,
-        message: "Please provide login ID (username/email/mobile) and password",
+        message: "Please provide username and password",
       });
     }
 
-    const user = await User.findByCredentials(loginId, password);
+    const user = await User.findByCredentials(username, password); 
     const browser = getBrowserInfo(req.headers['user-agent']);
     const ip = getClientIP(req);
 

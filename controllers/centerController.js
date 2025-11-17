@@ -499,7 +499,6 @@ export const createCenter = async (req, res) => {
       stockVerified,
     } = req.body;
 
-    // Remove reseller validation since it's now required for both types
     if (!resellerId) {
       return res.status(400).json({
         success: false,
@@ -507,7 +506,6 @@ export const createCenter = async (req, res) => {
       });
     }
 
-    // Validate reseller exists
     const reseller = await Reseller.findById(resellerId);
     if (!reseller) {
       return res.status(404).json({ 
@@ -515,8 +513,6 @@ export const createCenter = async (req, res) => {
         message: "Reseller not found" 
       });
     }
-
-    // Validate area exists
     const area = await Area.findById(areaId);
     if (!area) {
       return res.status(404).json({ 

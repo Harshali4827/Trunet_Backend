@@ -297,27 +297,15 @@ userSchema.methods.incrementLoginAttempts = async function () {
   return await this.updateOne(updates);
 };
 
-userSchema.statics.findByCredentials = async function (identifier, password) {
-  // Check if identifier is email
-  const isEmail = /^\S+@\S+\.\S+$/.test(identifier);
-  // Check if identifier is mobile (10 digits)
-  const isMobile = /^[0-9]{10}$/.test(identifier);
-  // Check if identifier is username (letters, numbers, underscores)
-  const isUsername = /^[a-zA-Z0-9_]+$/.test(identifier);
 
-  let query = {};
-  
-  if (isEmail) {
-    query = { email: identifier.toLowerCase() };
-  } else if (isMobile) {
-    query = { mobile: identifier };
-  } else if (isUsername) {
-    query = { username: identifier.toLowerCase() };
-  } else {
-    throw new Error("Invalid login identifier");
+userSchema.statics.findByCredentials = async function (username, password) {
+  const isUsername = /^[a-zA-Z0-9_]+$/.test(username);
+
+  if (!isUsername) {
+    throw new Error("Invalid username format");
   }
 
-  const user = await this.findOne(query)
+  const user = await this.findOne({ username: username.toLowerCase() })
     .select("+password +loginAttempts +lockUntil")
     .populate("role", "roleTitle")
     .populate("center", "centerName centerCode centerType");
