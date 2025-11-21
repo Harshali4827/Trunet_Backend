@@ -6,12 +6,10 @@ export const createArea = async (req, res) => {
     const { resellerId, areaName } = req.body;
 
     if (!resellerId || !areaName) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Reseller ID and Area name are required",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Reseller ID and Area name are required",
+      });
     }
 
     const reseller = await Reseller.findById(resellerId);
@@ -30,12 +28,70 @@ export const createArea = async (req, res) => {
   }
 };
 
+// export const getAreas = async (req, res) => {
+//   try {
+//     const areas = await Area.find().populate("reseller", "businessName");
+//     res.status(200).json({ success: true, data: areas });
+//   } catch (error) {
+//     res.status(500).json({ success: false, message: error.message });
+//   }
+// };
+
 export const getAreas = async (req, res) => {
   try {
-    const areas = await Area.find().populate("reseller", "businessName");
-    res.status(200).json({ success: true, data: areas });
+    const {
+      page = 1,
+      limit = 100,
+      sortBy = "areaName",
+      sortOrder = "asc",
+    } = req.query;
+
+    const sortOptions = {};
+    const validSortFields = ["areaName", "createdAt", "updatedAt"];
+    const actualSortBy = validSortFields.includes(sortBy) ? sortBy : "areaName";
+    sortOptions[actualSortBy] = sortOrder === "desc" ? -1 : 1;
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const areas = await Area.find()
+      .populate("reseller", "businessName")
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
+
+    const totalAreas = await Area.countDocuments();
+
+    res.status(200).json({
+      success: true,
+      message: "Areas retrieved successfully",
+      data: {
+        areas: areas,
+        pagination: {
+          currentPage: pageNum,
+          totalPages: Math.ceil(totalAreas / limitNum),
+          totalItems: totalAreas,
+          itemsPerPage: limitNum,
+          hasNextPage: pageNum < Math.ceil(totalAreas / limitNum),
+          hasPrevPage: pageNum > 1,
+          nextPage:
+            pageNum < Math.ceil(totalAreas / limitNum) ? pageNum + 1 : null,
+          prevPage: pageNum > 1 ? pageNum - 1 : null,
+        },
+      },
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error("Error retrieving areas:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving areas",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : "Internal server error",
+    });
   }
 };
 
@@ -86,11 +142,10 @@ export const getAreaById = async (req, res) => {
 //   }
 // };
 
-
 export const updateArea = async (req, res) => {
   try {
     const { areaName, resellerId } = req.body;
-    
+
     // Build update object dynamically
     const updateData = {};
     if (areaName) updateData.areaName = areaName;
@@ -98,36 +153,35 @@ export const updateArea = async (req, res) => {
       // Verify the new reseller exists
       const reseller = await Reseller.findById(resellerId);
       if (!reseller) {
-        return res.status(404).json({ 
-          success: false, 
-          message: "Reseller not found" 
+        return res.status(404).json({
+          success: false,
+          message: "Reseller not found",
         });
       }
       updateData.reseller = resellerId;
     }
 
-    const area = await Area.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true, runValidators: true }
-    ).populate("reseller", "businessName");
+    const area = await Area.findByIdAndUpdate(req.params.id, updateData, {
+      new: true,
+      runValidators: true,
+    }).populate("reseller", "businessName");
 
     if (!area) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Area not found" 
+      return res.status(404).json({
+        success: false,
+        message: "Area not found",
       });
     }
 
-    res.status(200).json({ 
-      success: true, 
+    res.status(200).json({
+      success: true,
       message: "Area updated successfully",
-      data: area 
+      data: area,
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message,
     });
   }
 };
