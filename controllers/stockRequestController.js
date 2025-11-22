@@ -54,6 +54,38 @@ const checkCenterAccess = (stockRequest, userCenter, permissions) => {
   return false;
 };
 
+
+
+const getOutletStockForRequests = async (warehouseId, productIds) => {
+  try {
+    const OutletStock = mongoose.model("OutletStock");
+    
+    const outletStockData = await OutletStock.find({
+      outlet: warehouseId,
+      product: { $in: productIds }
+    }).select("product totalQuantity availableQuantity inTransitQuantity serialNumbers");
+    const outletStockMap = new Map();
+    outletStockData.forEach((item) => {
+      outletStockMap.set(item.product.toString(), {
+        totalQuantity: item.totalQuantity,
+        availableQuantity: item.availableQuantity,
+        inTransitQuantity: item.inTransitQuantity,
+        serialNumbersCount: item.serialNumbers.length,
+        hasSerialNumbers: item.serialNumbers.length > 0,
+        availableSerials: item.serialNumbers
+          .filter(sn => sn.status === "available")
+          .map(sn => sn.serialNumber)
+      });
+    });
+
+    return outletStockMap;
+  } catch (error) {
+    console.error("Error fetching outlet stock for requests:", error);
+    throw error;
+  }
+};
+
+
 export const createStockRequest = async (req, res) => {
   try {
     const { hasAccess, permissions } = checkStockRequestPermissions(req, [
@@ -807,6 +839,138 @@ export const getAllStockRequests = async (req, res) => {
   }
 };
 
+// export const getStockRequestById = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
+//       req,
+//       ["indent_all_center", "indent_own_center"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. indent_own_center or indent_all_center permission required.",
+//       });
+//     }
+
+//     const { id } = req.params;
+
+//     const stockRequest = await StockRequest.findById(id)
+//       .populate("warehouse", "_id centerName centerCode centerType")
+//       // .populate("center", "_id centerName centerCode centerType")
+//       .populate({
+//         path: "center",
+//         select: "_id centerName centerCode centerType",
+//         populate: [
+//           {
+//             path: "reseller",
+//             select: "_id businessName contactNumber name mobile email gstNumber panNumber address1 address2 city state"
+//           },
+//           {
+//             path: "area",
+//             select: "_id areaName"
+//           }
+//         ]
+//       })
+//       .populate(
+//         "products.product",
+//         "_id productTitle productCode productImage trackSerialNumber"
+//       )
+//       .populate("createdBy", "_id fullName email")
+//       .populate("updatedBy", "_id fullName email")
+//       .populate("approvalInfo.approvedBy", "_id fullName email")
+//       .populate("approvalInfo.warehouseChallanApprovedBy","_id fullName email" )
+//       .populate("approvalInfo.centerChallanApprovedBy","_id fullName email" )
+//       .populate("shippingInfo.shippedBy", "_id fullName email")
+//       .populate("receivingInfo.receivedBy", "_id fullName email")
+//       .populate("completionInfo.completedBy", "_id fullName email")
+//       .populate("completionInfo.incompleteBy", "_id fullName email")
+//       .lean();
+
+//     if (!stockRequest) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Stock request not found",
+//       });
+//     }
+
+//     if (!checkCenterAccess(stockRequest, userCenter, permissions)) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. You can only view stock requests from your own center.",
+//       });
+//     }
+
+//     const productIds = stockRequest.products.map((p) => p.product._id);
+
+//     const centerStock = await StockPurchase.aggregate([
+//       {
+//         $match: {
+//           center: stockRequest.center._id,
+//           product: { $in: productIds },
+//         },
+//       },
+//       {
+//         $group: {
+//           _id: "$product",
+//           totalQuantity: { $sum: "$quantity" },
+//         },
+//       },
+//     ]);
+
+//     const centerStockMap = {};
+//     centerStock.forEach((stock) => {
+//       centerStockMap[stock._id.toString()] = stock.totalQuantity;
+//     });
+
+//     const productsWithEnhancedData = stockRequest.products.map((product) => ({
+//       ...product,
+//       centerStockQuantity: centerStockMap[product.product._id.toString()] || 0,
+
+//       approvedSerials: product.approvedSerials || [],
+//       serialNumbers: product.serialNumbers || [],
+//       transferredSerials: product.transferredSerials || [],
+
+//       serialSummary: {
+//         approvedCount: product.approvedSerials?.length || 0,
+//         transferredCount: product.transferredSerials?.length || 0,
+//         requiresSerialNumbers: product.product.trackSerialNumber === "Yes",
+//       },
+//     }));
+
+//     const stockRequestWithEnhancedData = {
+//       ...stockRequest,
+//       products: productsWithEnhancedData,
+//     };
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Stock request retrieved successfully",
+//       data: stockRequestWithEnhancedData,
+//     });
+//   } catch (error) {
+//     if (error.name === "CastError") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid stock request ID",
+//       });
+//     }
+
+//     console.error("Error retrieving stock request:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Error retrieving stock request",
+//       error: error.message,
+//     });
+//   }
+// };
+
+
+//fetch stock quantity
+
+
 export const getStockRequestById = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
@@ -826,7 +990,6 @@ export const getStockRequestById = async (req, res) => {
 
     const stockRequest = await StockRequest.findById(id)
       .populate("warehouse", "_id centerName centerCode centerType")
-      // .populate("center", "_id centerName centerCode centerType")
       .populate({
         path: "center",
         select: "_id centerName centerCode centerType",
@@ -893,20 +1056,36 @@ export const getStockRequestById = async (req, res) => {
       centerStockMap[stock._id.toString()] = stock.totalQuantity;
     });
 
-    const productsWithEnhancedData = stockRequest.products.map((product) => ({
-      ...product,
-      centerStockQuantity: centerStockMap[product.product._id.toString()] || 0,
+    const outletStockMap = await getOutletStockForRequests(
+      stockRequest.warehouse._id,
+      productIds
+    );
 
-      approvedSerials: product.approvedSerials || [],
-      serialNumbers: product.serialNumbers || [],
-      transferredSerials: product.transferredSerials || [],
+    const productsWithEnhancedData = stockRequest.products.map((product) => {
+      const outletStock = outletStockMap.get(product.product._id.toString()) || {
+        totalQuantity: 0,
+        availableQuantity: 0,
+        inTransitQuantity: 0,
+      };
 
-      serialSummary: {
-        approvedCount: product.approvedSerials?.length || 0,
-        transferredCount: product.transferredSerials?.length || 0,
-        requiresSerialNumbers: product.product.trackSerialNumber === "Yes",
-      },
-    }));
+      return {
+        ...product,
+        centerStockQuantity: centerStockMap[product.product._id.toString()] || 0,
+        outletStock: {
+          totalQuantity: outletStock.totalQuantity,
+          availableQuantity: outletStock.availableQuantity,
+          inTransitQuantity: outletStock.inTransitQuantity,
+        },
+        approvedSerials: product.approvedSerials || [],
+        serialNumbers: product.serialNumbers || [],
+        transferredSerials: product.transferredSerials || [],
+        serialSummary: {
+          approvedCount: product.approvedSerials?.length || 0,
+          transferredCount: product.transferredSerials?.length || 0,
+          requiresSerialNumbers: product.product.trackSerialNumber === "Yes",
+        },
+      };
+    });
 
     const stockRequestWithEnhancedData = {
       ...stockRequest,
