@@ -803,21 +803,83 @@ export const logout = (req, res) => {
   });
 };
 
+// export const getLoginHistory = async (req, res) => {
+//   try {
+//     const filter = {};
+  
+//     if (req.user) {
+//       filter.user = req.user.id;
+//     }
+//     const loginHistory = await LoginHistory.find(filter)
+//       .populate("user", "fullName username email mobile status")
+//       .sort({ date: -1 })
+//       .lean();
+
+//     const formattedHistory = loginHistory.map(record => ({
+//       name: record.name,
+//       email: record.email,
+//       browser: record.browser,
+//       ip: record.ip,
+//       date: record.date
+//     }));
+
+//     res.status(200).json({
+//       success: true,
+//       data: {
+//         loginHistory: formattedHistory
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Get login history error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Error fetching login history",
+//       error: process.env.NODE_ENV === "development" ? error.message : undefined,
+//     });
+//   }
+// };
+
+
 export const getLoginHistory = async (req, res) => {
   try {
+    const { page = 1, limit = 50, userId } = req.query;
+    
     const filter = {};
   
-    if (req.user) {
-      filter.user = req.user.id;
+    // If specific userId is provided in query, filter by that user
+    if (userId) {
+      filter.user = userId;
     }
+    // Remove the automatic filtering by current user
+    // This will now return login history for all users
+    
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+    
     const loginHistory = await LoginHistory.find(filter)
       .populate("user", "fullName username email mobile status")
       .sort({ date: -1 })
+      .skip(skip)
+      .limit(limitNum)
       .lean();
 
+    const totalRecords = await LoginHistory.countDocuments(filter);
+
     const formattedHistory = loginHistory.map(record => ({
-      name: record.name,
-      email: record.email,
+      _id: record._id,
+      user: record.user ? {
+        _id: record.user._id,
+        fullName: record.user.fullName,
+        username: record.user.username,
+        email: record.user.email,
+        mobile: record.user.mobile,
+        status: record.user.status
+      } : {
+        // Fallback in case user data is missing
+        fullName: record.name,
+        email: record.email
+      },
       browser: record.browser,
       ip: record.ip,
       date: record.date
@@ -826,7 +888,14 @@ export const getLoginHistory = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        loginHistory: formattedHistory
+        loginHistory: formattedHistory,
+        pagination: {
+          currentPage: pageNum,
+          totalPages: Math.ceil(totalRecords / limitNum),
+          totalRecords: totalRecords,
+          hasNextPage: pageNum < Math.ceil(totalRecords / limitNum),
+          hasPrevPage: pageNum > 1,
+        }
       },
     });
   } catch (error) {

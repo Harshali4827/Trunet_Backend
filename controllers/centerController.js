@@ -438,3 +438,34 @@ export const getCentersByArea = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+export const getAllCentersBasic = async (req, res) => {
+  try {
+    const { centerType } = req.query;
+    
+    const filter = {};
+    if (centerType) {
+      filter.centerType = centerType;
+    }
+
+    const centers = await Center.find(filter)
+      .populate("reseller", "businessName")
+      .populate("area", "areaName")
+      .select("_id centerName centerCode centerType status reseller area")
+      .sort({ centerName: 1 });
+
+    res.status(200).json({
+      success: true,
+      message: "All centers retrieved successfully",
+      data: centers,
+      total: centers.length
+    });
+  } catch (error) {
+    console.error("Error retrieving all centers:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving all centers",
+      error: error.message
+    });
+  }
+};

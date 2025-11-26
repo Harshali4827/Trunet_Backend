@@ -7,6 +7,7 @@ import {
   updateCenter,
   deleteCenter,
   getCentersByReseller,
+  getAllCentersBasic,
 } from "../controllers/centerController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
@@ -27,7 +28,11 @@ router.get(
   authorizeAccess(MODULE, "view_own_center", "view_all_center"),
   getCenters
 );
-
+router.get(
+  "/main-warehouse",
+  protect,
+  getAllCentersBasic
+);
 router.get(
   "/:id",
   authorizeAccess(MODULE, "view_own_center", "view_all_center"),
