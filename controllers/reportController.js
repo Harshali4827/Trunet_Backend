@@ -7,7 +7,7 @@ import StockUsage from "../models/StockUsage.js";
 import CenterStock from "../models/CenterStock.js";
 import ReplacementRecord from "../models/ReplacementRecord.js";
 import FilledStock from "../models/FilledStock.js";
-
+import Center from '../models/Center.js';
 const checkReportPermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
 
@@ -4500,7 +4500,6 @@ export const getONUTrackReport = async (req, res) => {
 
     const filter = {};
 
-    // 🔹 Status filter logic
     if (status === "Own Product") {
       // Show data only for the logged-in user's center/outlet
       if (req.user && req.user.center) {
@@ -4532,9 +4531,25 @@ export const getONUTrackReport = async (req, res) => {
     }
 
     // 🔹 Reseller filter
-    if (reseller) {
-      filter["center.reseller"] = reseller;
+    // if (reseller) {
+    //   filter["center.reseller"] = reseller;
+    // }
+
+    // 🔹 Reseller filter
+if (reseller) {
+  const centers = await Center.find({ reseller: reseller }).select('_id');
+  const centerIds = centers.map(c => c._id);
+  
+  if (centerIds.length > 0) {
+    if (filter.center) {
+      filter.center = { $in: centerIds, $eq: filter.center };
+    } else {
+      filter.center = { $in: centerIds };
     }
+  } else {
+    filter.center = null;
+  }
+}
 
     // 🔹 Product filter
     if (product) {
