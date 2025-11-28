@@ -1140,6 +1140,7 @@ export const updateStockRequest = async (req, res) => {
       receivingInfo,
       completionInfo,
       orderNumber,
+      rejectionReason, 
     } = req.body;
 
     const existingRequest = await StockRequest.findById(id);
@@ -1190,8 +1191,26 @@ export const updateStockRequest = async (req, res) => {
       }),
     };
 
+    // if (status === "Rejected" && existingRequest.status !== "Rejected") {
+    //   await revertStockForRejectedRequest(existingRequest);
+    // }
+
+    // Handle rejection with reason separately
     if (status === "Rejected" && existingRequest.status !== "Rejected") {
+      if (!rejectionReason || rejectionReason.trim() === '') {
+        return res.status(400).json({
+          success: false,
+          message: "Rejection reason is required when rejecting a stock request",
+        });
+      }
+
       await revertStockForRejectedRequest(existingRequest);
+      // Add rejection info separately (not in completionInfo)
+      updateData.rejectionInfo = {
+        rejectedAt: new Date(),
+        rejectedBy: userId,
+        rejectionReason: rejectionReason.trim(),
+      };
     }
 
     if (products) {
@@ -1279,12 +1298,12 @@ export const updateStockRequest = async (req, res) => {
           };
           break;
         case "Rejected":
-          updateData.completionInfo = {
-            ...existingRequest.completionInfo,
-            incompleteOn: currentDate,
-            incompleteBy: userId,
-            ...completionInfo,
-          };
+          // updateData.completionInfo = {
+          //   ...existingRequest.completionInfo,
+          //   incompleteOn: currentDate,
+          //   incompleteBy: userId,
+          //   ...completionInfo,
+          // };
           break;
       }
     }
@@ -1302,8 +1321,8 @@ export const updateStockRequest = async (req, res) => {
       .populate("approvalInfo.approvedBy", "_id fullName email")
       .populate("shippingInfo.shippedBy", "_id fullName email")
       .populate("receivingInfo.receivedBy", "_id fullName email")
-      .populate("completionInfo.incompleteBy", "_id fullName email");
-
+      .populate("completionInfo.incompleteBy", "_id fullName email")
+      .populate("rejectionInfo.rejectedBy", "_id fullName email"); 
     res.status(200).json({
       success: true,
       message: "Stock request updated successfully",

@@ -7,6 +7,7 @@ import {
   deleteProduct,
   bulkImportProducts,
   downloadCSVTemplate,
+  getAllProductsWithoutPagination,
 } from "../controllers/productController.js";
 import {
   createProductValidator,
@@ -37,6 +38,7 @@ router.put(
 );
 
 router.get("/", protect, getAllProducts);
+router.get("/all", protect, getAllProductsWithoutPagination);
 router.get("/:id", protect, getProductById);
 router.delete("/:id", protect, deleteProduct);
 

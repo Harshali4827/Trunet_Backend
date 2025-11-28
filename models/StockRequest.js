@@ -228,7 +228,19 @@ const stockRequestSchema = new mongoose.Schema(
       },
       incompleteRemark: String,
     },
-
+    rejectionInfo: {
+      rejectedAt: {
+        type: Date,
+      },
+      rejectedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      rejectionReason: {
+        type: String,
+        trim: true,
+      },
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

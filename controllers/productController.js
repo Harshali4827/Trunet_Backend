@@ -264,6 +264,43 @@ export const getAllProducts = async (req, res) => {
   }
 };
 
+
+export const getAllProductsWithoutPagination = async (req, res) => {
+  try {
+    const { sortBy = "createdAt", sortOrder = "desc" } = req.query;
+
+    const validSortFields = [
+      "createdAt",
+      "updatedAt",
+      "productTitle",
+      "productCode",
+      "productPrice",
+      "status",
+    ];
+    const actualSortBy = validSortFields.includes(sortBy)
+      ? sortBy
+      : "createdAt";
+    const sort = { [actualSortBy]: sortOrder === "desc" ? -1 : 1 };
+
+    const products = await Product.find({})
+      .populate("productCategory", "productCategory categoryCode description")
+      .sort(sort)
+      .select("-__v");
+
+    res.status(200).json({
+      success: true,
+      data: products,
+    });
+  } catch (error) {
+    console.error("Error fetching products:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching products",
+      error: error.message,
+    });
+  }
+};
+
 export const getProductById = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id).populate(
