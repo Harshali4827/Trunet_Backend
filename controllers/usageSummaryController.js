@@ -570,46 +570,149 @@ const getStockClosingData = async (centerId, dateRange, productId) => {
   ]);
 };
 
-const getOpeningStockData = async (centerId, startDate, productId) => {
-  const openingDate = new Date(startDate);
-  openingDate.setDate(openingDate.getDate() - 1);
+// const getOpeningStockData = async (centerId, startDate, productId) => {
+//   const openingDate = new Date(startDate);
+//   openingDate.setDate(openingDate.getDate() - 1);
   
-  const centerStockQuery = { center: centerId };
-  if (productId) {
-    centerStockQuery.product = productId;
-  }
+//   const centerStockQuery = { center: centerId };
+//   if (productId) {
+//     centerStockQuery.product = productId;
+//   }
  
-  const outletStockQuery = { outlet: centerId };
-  if (productId) {
-    outletStockQuery.product = productId;
+//   const outletStockQuery = { outlet: centerId };
+//   if (productId) {
+//     outletStockQuery.product = productId;
+//   }
+
+//   const [centerStock, outletStock] = await Promise.all([
+//     CenterStock.find(centerStockQuery).populate("product", "productTitle productCode"),
+//     OutletStock.find(outletStockQuery).populate("product", "productTitle productCode")
+//   ]);
+
+//   const openingData = [];
+
+//   centerStock.forEach(stock => {
+//     openingData.push({
+//       product: stock.product._id,
+//       productName: stock.product.productTitle,
+//       quantity: stock.availableQuantity,
+//       stockType: "Center"
+//     });
+//   });
+//   outletStock.forEach(stock => {
+//     openingData.push({
+//       product: stock.product._id,
+//       productName: stock.product.productTitle,
+//       quantity: stock.availableQuantity,
+//       stockType: "Outlet"
+//     });
+//   });
+
+//   return openingData;
+// };
+
+
+
+const getOpeningStockData = async (centerId, startDate, productId) => {
+  try {
+    // Calculate previous month's date range
+    const currentStartDate = new Date(startDate);
+    const previousMonthEnd = new Date(currentStartDate);
+    previousMonthEnd.setDate(0); // Last day of previous month
+    previousMonthEnd.setHours(23, 59, 59, 999);
+    
+    const previousMonthStart = new Date(previousMonthEnd);
+    previousMonthStart.setDate(1); // First day of previous month
+    previousMonthStart.setHours(0, 0, 0, 0);
+
+    console.log(`Looking for previous month closing stock from ${previousMonthStart} to ${previousMonthEnd} for center ${centerId}`);
+
+    const matchStage = {
+      $or: [
+        { center: new mongoose.Types.ObjectId(centerId) },
+        { closingCenter: new mongoose.Types.ObjectId(centerId) }
+      ],
+      status: { $in: ["Submitted", "Verified"] },
+      date: {
+        $gte: previousMonthStart,
+        $lte: previousMonthEnd
+      }
+    };
+
+    if (productId) {
+      matchStage['products.product'] = new mongoose.Types.ObjectId(productId);
+    }
+
+    // Get previous month's closing stock
+    const previousMonthClosings = await StockClosing.aggregate([
+      { $match: matchStage },
+      { $unwind: "$products" },
+      {
+        $lookup: {
+          from: "products",
+          localField: "products.product",
+          foreignField: "_id",
+          as: "productInfo"
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          date: 1,
+          product: "$products.product",
+          productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
+          productQty: "$products.productQty",
+          damageQty: "$products.damageQty",
+          totalQty: { $add: ["$products.productQty", "$products.damageQty"] },
+          status: 1
+        }
+      },
+      { $sort: { date: -1 } } // Get most recent closing first
+    ]);
+
+    const openingDataMap = {};
+    previousMonthClosings.forEach(closing => {
+      const productId = closing.product.toString();
+      
+      // If we haven't seen this product yet, or this is a more recent closing
+      if (!openingDataMap[productId] || new Date(closing.date) > new Date(openingDataMap[productId].date)) {
+        openingDataMap[productId] = {
+          product: closing.product,
+          productName: closing.productName,
+          quantity: closing.totalQty, // productQty + damageQty
+          date: closing.date,
+          stockType: "Previous Month Closing"
+        };
+      }
+    });
+
+    const openingData = Object.values(openingDataMap);
+
+    console.log(`Found ${openingData.length} products with previous month closing stock`);
+
+    // If no previous month closing found and we're filtering by specific product,
+    // return zero opening for that product
+    if (productId && openingData.length === 0) {
+      const product = await mongoose.model("Product").findById(productId).select("productTitle");
+      if (product) {
+        openingData.push({
+          product: productId,
+          productName: product.productTitle,
+          quantity: 0,
+          stockType: "Previous Month Closing",
+          date: previousMonthEnd
+        });
+      }
+    }
+
+    return openingData;
+
+  } catch (error) {
+    console.error("Error in getOpeningStockData:", error);
+    return [];
   }
-
-  const [centerStock, outletStock] = await Promise.all([
-    CenterStock.find(centerStockQuery).populate("product", "productTitle productCode"),
-    OutletStock.find(outletStockQuery).populate("product", "productTitle productCode")
-  ]);
-
-  const openingData = [];
-
-  centerStock.forEach(stock => {
-    openingData.push({
-      product: stock.product._id,
-      productName: stock.product.productTitle,
-      quantity: stock.availableQuantity,
-      stockType: "Center"
-    });
-  });
-  outletStock.forEach(stock => {
-    openingData.push({
-      product: stock.product._id,
-      productName: stock.product.productTitle,
-      quantity: stock.availableQuantity,
-      stockType: "Outlet"
-    });
-  });
-
-  return openingData;
 };
+
 
 const processUsageSummary = (data, centerId, centerDetails, productId) => {
   const allData = [
@@ -733,7 +836,7 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
 };
 
 // const createEmptyProductSummary = (productName) => {
-//   return {
+//   const summary = {
 //     productName,
 //     opening: 0,
 //     purchase: 0,
@@ -757,6 +860,32 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
 //     closing: 0,
 //     center: null
 //   };
+//   summary.calculateUsageAndClosing = function() {
+//     this.usage = 
+//       this.nc +
+//       this.convert +
+//       this.shifting +
+//       this.buildingUsage +
+//       this.buildingDamage +
+//       this.other +
+//       this.return +
+//       this.repair +
+//       this.replaceDamage +
+//       this.stolenCenter +
+//       this.stolenField;
+  
+//       this.closing = 
+//       this.opening +
+//       this.purchase +
+//       this.transferReceive -
+//       this.usage -          
+//       this.transferGiven -
+//       this.damage;     
+  
+//     return this.closing;
+//   };
+
+//   return summary;
 // };
 
 
@@ -785,7 +914,9 @@ const createEmptyProductSummary = (productName) => {
     closing: 0,
     center: null
   };
+  
   summary.calculateUsageAndClosing = function() {
+    // Calculate total usage
     this.usage = 
       this.nc +
       this.convert +
@@ -799,23 +930,21 @@ const createEmptyProductSummary = (productName) => {
       this.stolenCenter +
       this.stolenField;
   
-      // this.closing = 
-      // this.opening +
-      // this.purchase +
-      // this.transferReceive -
-      // this.usage -          
-      // this.transferGiven -
-      // this.damage;   
-      
-      this.closing = 
-      this.opening +
-      this.transferReceive;    
+    // Calculate closing stock using previous month's closing as opening
+    this.closing = 
+      this.opening + 
+      this.purchase +
+      this.transferReceive -
+      // this.replaceReturn -
+      this.usage -
+      this.transferGiven;
   
     return this.closing;
   };
 
   return summary;
 };
+
 const generateSummaryStats = (usageSummary) => {
   const stats = {
     totalProducts: usageSummary.length,
