@@ -1017,6 +1017,7 @@ export const getStockRequestById = async (req, res) => {
       .populate("receivingInfo.receivedBy", "_id fullName email")
       .populate("completionInfo.completedBy", "_id fullName email")
       .populate("completionInfo.incompleteBy", "_id fullName email")
+      .populate("rejectionInfo.rejectedBy", "_id fullName email")
       .lean();
 
     if (!stockRequest) {

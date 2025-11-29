@@ -187,6 +187,8 @@ centerStockSchema.statics.updateStock = async function (
   );
 };
 
+
+
 centerStockSchema.methods.validateAndGetSerials = function (
   requestedSerials,
   currentLocation

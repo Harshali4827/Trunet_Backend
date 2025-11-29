@@ -623,7 +623,7 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
 
   const groupedData = {};
 
-  data.openingStock.forEach(item => {
+   data.openingStock.forEach(item => {
     if (productId && item.product.toString() !== productId) {
       return; 
     }
@@ -722,14 +722,46 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
         type: centerDetails.centerType
       };
     }
+    if (item.calculateUsageAndClosing) {
+    item.calculateUsageAndClosing();
+  }
+  
     return item;
   });
 
   return result;
 };
 
+// const createEmptyProductSummary = (productName) => {
+//   return {
+//     productName,
+//     opening: 0,
+//     purchase: 0,
+//     distributed: 0,
+//     transferReceive: 0,
+//     replaceReturn: 0,
+//     usage: 0,
+//     transferGiven: 0,
+//     nc: 0,
+//     convert: 0,
+//     shifting: 0,
+//     buildingUsage: 0,
+//     buildingDamage: 0,
+//     other: 0,
+//     return: 0,
+//     repair: 0,
+//     damage: 0,
+//     replaceDamage: 0,
+//     stolenCenter: 0,
+//     stolenField: 0,
+//     closing: 0,
+//     center: null
+//   };
+// };
+
+
 const createEmptyProductSummary = (productName) => {
-  return {
+  const summary = {
     productName,
     opening: 0,
     purchase: 0,
@@ -753,8 +785,37 @@ const createEmptyProductSummary = (productName) => {
     closing: 0,
     center: null
   };
-};
+  summary.calculateUsageAndClosing = function() {
+    this.usage = 
+      this.nc +
+      this.convert +
+      this.shifting +
+      this.buildingUsage +
+      this.buildingDamage +
+      this.other +
+      this.return +
+      this.repair +
+      this.replaceDamage +
+      this.stolenCenter +
+      this.stolenField;
+  
+      // this.closing = 
+      // this.opening +
+      // this.purchase +
+      // this.transferReceive -
+      // this.usage -          
+      // this.transferGiven -
+      // this.damage;   
+      
+      this.closing = 
+      this.opening +
+      this.transferReceive;    
+  
+    return this.closing;
+  };
 
+  return summary;
+};
 const generateSummaryStats = (usageSummary) => {
   const stats = {
     totalProducts: usageSummary.length,
