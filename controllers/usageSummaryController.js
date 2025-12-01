@@ -1221,9 +1221,10 @@ const getStockRequestData = async (centerId, dateRange, productId) => {
         type: "Purchase",
         center: { $arrayElemAt: ["$centerInfo", 0] },
         warehouse: { $arrayElemAt: ["$warehouseInfo", 0] },
-        product: "$products.product",
+        product: "$products.receivedQuantity",
         productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        quantity: "$products.quantity",
+        // quantity: "$products.quantity",
+        quantity: "$products.receivedQuantity",
         approvedQuantity: "$products.approvedQuantity",
         receivedQuantity: "$products.receivedQuantity",
         status: 1
@@ -1292,7 +1293,8 @@ const getStockTransferData = async (centerId, dateRange, productId) => {
         toCenter: { $arrayElemAt: ["$toCenterInfo", 0] },
         product: "$products.product",
         productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        quantity: "$products.quantity",
+        // quantity: "$products.quantity",
+        quantity: "$products.receivedQuantity",
         approvedQuantity: "$products.approvedQuantity",
         receivedQuantity: "$products.receivedQuantity",
         status: 1
@@ -1890,8 +1892,7 @@ const createEmptyProductSummary = (productName) => {
       this.replaceDamage +
       this.stolenCenter +
       this.stolenField;
-  
-    // Calculate closing stock
+
     this.closing = 
       this.opening +               
       this.purchase +               
