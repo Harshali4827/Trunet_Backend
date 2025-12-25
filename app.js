@@ -9,7 +9,7 @@ import errorHandler from "./middlewares/errorHandler.js";
 import authRoutes from "./routes/authRoutes.js";
 import partnerRoutes from "./routes/partnerRoutes.js";
 import areaRoutes from "./routes/areaRoutes.js";
-import centerRooutes from "./routes/centerRoutes.js";
+import centerRoutes from "./routes/centerRoutes.js";
 import customerRoutes from "./routes/customerRoutes.js";
 import buildingRoutes from "./routes/buildingRoutes.js";
 import controlRoomRoutes from "./routes/controlRoomRoutes.js";
@@ -33,6 +33,8 @@ import allDataRoutes from './routes/allDataRoutes.js';
 import resellerRoutes from './routes/resellerRoutes.js';
 import raisePORoutes from './routes/raisePORoutes.js';
 import faultyStockRoutes from './routes/faultyStockRoutes.js';
+import centerReturnRoutes from './routes/centerReturnRoutes.js';
+import repairedCostRoutes from './routes/repairedCostRoutes.js';
 import "./models/EntityStockUsage.js";
 dotenv.config();
 connectDB();
@@ -50,13 +52,13 @@ app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 app.use(helmet());
 
-const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 });
+const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 6000 });
 app.use(limiter);
 
 app.use("/api/auth", authRoutes);
 app.use("/api/partners", partnerRoutes);
 app.use("/api/areas", areaRoutes);
-app.use("/api/centers", centerRooutes);
+app.use("/api/centers", centerRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/buildings", buildingRoutes);
 app.use("/api/controlRooms", controlRoomRoutes);
@@ -79,7 +81,9 @@ app.use("/api", indentUsageSummaryRoutes);
 app.use("/api", allDataRoutes)
 app.use("/api/resellers", resellerRoutes);
 app.use("/api/raisePO", raisePORoutes);
-app.use("/api/faulty-stock", faultyStockRoutes)
+app.use("/api/faulty-stock", faultyStockRoutes);
+app.use("/api/center-return", centerReturnRoutes);
+app.use("/api/repaired-cost", repairedCostRoutes);
 app.use(errorHandler);
 
 export default app;

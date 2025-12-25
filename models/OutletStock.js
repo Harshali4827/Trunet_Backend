@@ -52,6 +52,11 @@ const outletStockSchema = new mongoose.Schema(
           enum: ["available", "in_transit", "transferred", "sold", "returned"],
           default: "available",
         },
+        sourceType: {
+          type: String,
+          enum: ["purchase", "repair_return", "transfer"],
+          default: "purchase"
+        },
         currentLocation: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "Center",
@@ -66,10 +71,14 @@ const outletStockSchema = new mongoose.Schema(
               type: mongoose.Schema.Types.ObjectId,
               ref: "Center",
             },
+            toReseller: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: "Reseller",
+            },
             transferDate: Date,
             transferType: {
               type: String,
-              enum: ["outlet_to_center", "center_to_center", "field_usage"],
+              enum: ["outlet_to_center", "center_to_center", "field_usage","outlet_to_reseller"],
             },
           },
         ],
@@ -174,10 +183,93 @@ outletStockSchema.methods.getFIFOStock = function (quantity) {
   };
 };
 
+// outletStockSchema.methods.transferStock = async function (
+//   toCenter,
+//   quantity,
+//   serialNumbers = []
+// ) {
+//   try {
+//     if (this.availableQuantity < quantity) {
+//       throw new Error("Insufficient stock available");
+//     }
+
+//     let transferredSerials = [];
+
+//     if (serialNumbers.length > 0) {
+//       for (const serialNumber of serialNumbers) {
+//         const serial = this.serialNumbers.find(
+//           (sn) => sn.serialNumber === serialNumber && sn.status === "available"
+//         );
+
+//         if (!serial) {
+//           throw new Error(`Serial number ${serialNumber} not available`);
+//         }
+
+//         serial.status = "transferred";
+//         serial.currentLocation = toCenter;
+//         serial.transferHistory.push({
+//           fromCenter: this.outlet,
+//           toCenter: toCenter,
+//           transferDate: new Date(),
+//           transferType: "outlet_to_center",
+//         });
+
+//         transferredSerials.push(serialNumber);
+//       }
+//     } else {
+//       const availableSerials = this.serialNumbers
+//         .filter((sn) => sn.status === "available")
+//         .sort((a, b) => a.createdAt - b.createdAt)
+//         .slice(0, quantity);
+
+//       if (availableSerials.length > 0) {
+//         for (const serial of availableSerials) {
+//           serial.status = "transferred";
+//           serial.currentLocation = toCenter;
+//           serial.transferHistory.push({
+//             fromCenter: this.outlet,
+//             toCenter: toCenter,
+//             transferDate: new Date(),
+//             transferType: "outlet_to_center",
+//           });
+//           transferredSerials.push(serial.serialNumber);
+//         }
+//       } else {
+//         console.log(
+//           `Non-serialized transfer: ${quantity} units of product ${this.product}`
+//         );
+//       }
+//     }
+
+//     this.availableQuantity -= quantity;
+//     this.totalQuantity -= quantity;
+
+//     await this.save();
+
+//     const CenterStock = mongoose.model("CenterStock");
+
+//     await CenterStock.updateStock(
+//       toCenter,
+//       this.product,
+//       quantity,
+//       transferredSerials,
+//       this.outlet,
+//       "inbound_transfer"
+//     );
+
+//     return transferredSerials;
+//   } catch (error) {
+//     throw error;
+//   }
+// };
+
+
+
 outletStockSchema.methods.transferStock = async function (
   toCenter,
   quantity,
-  serialNumbers = []
+  serialNumbers = [],
+  transferType = "outlet_to_center"
 ) {
   try {
     if (this.availableQuantity < quantity) {
@@ -198,13 +290,21 @@ outletStockSchema.methods.transferStock = async function (
 
         serial.status = "transferred";
         serial.currentLocation = toCenter;
-        serial.transferHistory.push({
+        
+        const transferRecord = {
           fromCenter: this.outlet,
-          toCenter: toCenter,
           transferDate: new Date(),
-          transferType: "outlet_to_center",
-        });
-
+          transferType: transferType,
+        };
+        
+        // Add toCenter for center transfers, toReseller for reseller transfers
+        if (transferType === "outlet_to_reseller") {
+          transferRecord.toReseller = toCenter; // In this case, toCenter is actually resellerId
+        } else {
+          transferRecord.toCenter = toCenter;
+        }
+        
+        serial.transferHistory.push(transferRecord);
         transferredSerials.push(serialNumber);
       }
     } else {
@@ -217,12 +317,20 @@ outletStockSchema.methods.transferStock = async function (
         for (const serial of availableSerials) {
           serial.status = "transferred";
           serial.currentLocation = toCenter;
-          serial.transferHistory.push({
+          
+          const transferRecord = {
             fromCenter: this.outlet,
-            toCenter: toCenter,
             transferDate: new Date(),
-            transferType: "outlet_to_center",
-          });
+            transferType: transferType,
+          };
+          
+          if (transferType === "outlet_to_reseller") {
+            transferRecord.toReseller = toCenter;
+          } else {
+            transferRecord.toCenter = toCenter;
+          }
+          
+          serial.transferHistory.push(transferRecord);
           transferredSerials.push(serial.serialNumber);
         }
       } else {
@@ -237,21 +345,9 @@ outletStockSchema.methods.transferStock = async function (
 
     await this.save();
 
-    const CenterStock = mongoose.model("CenterStock");
-
-    await CenterStock.updateStock(
-      toCenter,
-      this.product,
-      quantity,
-      transferredSerials,
-      this.outlet,
-      "inbound_transfer"
-    );
-
     return transferredSerials;
   } catch (error) {
     throw error;
   }
 };
-
 export default mongoose.model("OutletStock", outletStockSchema);

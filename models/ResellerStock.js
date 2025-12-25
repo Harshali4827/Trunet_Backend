@@ -1,15 +1,9 @@
-
 import mongoose from "mongoose";
 
 const resellerStockSchema = new mongoose.Schema({
   reseller: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Reseller",
-    required: true
-  },
-  center: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Center",
     required: true
   },
   product: {
@@ -22,6 +16,11 @@ const resellerStockSchema = new mongoose.Schema({
   consumedQuantity: { type: Number, default: 0 },
   damagedQuantity: { type: Number, default: 0 },
   repairQuantity: { type: Number, default: 0 },
+  
+  sourceBreakdown: {
+    damageRepairQuantity: { type: Number, default: 0 },
+    centerReturnQuantity: { type: Number, default: 0 }, 
+  },
 
   serialNumbers: [{
     serialNumber: { type: String, required: true },
@@ -35,11 +34,13 @@ const resellerStockSchema = new mongoose.Schema({
     transferHistory: [{
       fromCenter: { type: mongoose.Schema.Types.ObjectId, ref: "Center" },
       toCenter: { type: mongoose.Schema.Types.ObjectId, ref: "Center" },
+      toReseller: { type: mongoose.Schema.Types.ObjectId, ref: "Reseller" },
       transferDate: { type: Date, default: Date.now },
       transferType: {
         type: String,
-        enum: ["inbound_transfer", "outbound_transfer", "field_usage", "return_from_field", "repair_transfer", "return_from_repair"]
+        enum: ["inbound_transfer", "outbound_transfer", "field_usage", "return_from_field", "repair_transfer", "return_from_repair","outlet_to_reseller","center_to_reseller_return"]
       },
+      sourceType: { type: String, enum: ["damage_repair", "center_return", "direct_purchase"] },
       referenceId: mongoose.Schema.Types.ObjectId,
       remark: String,
       transferredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }
@@ -59,9 +60,9 @@ const resellerStockSchema = new mongoose.Schema({
   lastUpdated: { type: Date, default: Date.now }
 }, { timestamps: true });
 
+// Remove the updateStock static method or update it to not use center
 resellerStockSchema.statics.updateStock = async function(
   resellerId, 
-  centerId, 
   productId, 
   quantity, 
   serialNumbers = [], 
@@ -70,21 +71,19 @@ resellerStockSchema.statics.updateStock = async function(
 ) {
   let resellerStock = await this.findOne({
     reseller: resellerId,
-    center: centerId,
     product: productId
+    // Remove center from query
   });
 
   if (!resellerStock) {
     resellerStock = new this({
       reseller: resellerId,
-      center: centerId,
-      product: productId,
+      product: productId, // Remove center
       availableQuantity: 0,
       totalQuantity: 0,
       serialNumbers: []
     });
   }
-
 
   if (serialNumbers && serialNumbers.length > 0) {
     for (const serialNumber of serialNumbers) {
@@ -96,14 +95,14 @@ resellerStockSchema.statics.updateStock = async function(
         resellerStock.serialNumbers.push({
           serialNumber: serialNumber,
           status: "available",
-          currentLocation: centerId,
+          currentLocation: null, // No center needed
           transferHistory: [{
             fromCenter: null,
-            toCenter: centerId,
+            toCenter: null, // No center
             transferDate: new Date(),
             transferType: "inbound_transfer",
             referenceId: referenceId,
-            remark: `Added to reseller repair stock - ${usageType || 'manual'}`
+            remark: `Added to reseller stock - ${usageType || 'manual'}`
           }]
         });
       }
@@ -116,5 +115,8 @@ resellerStockSchema.statics.updateStock = async function(
 
   return await resellerStock.save();
 };
+
+resellerStockSchema.index({ reseller: 1, product: 1 }, { unique: true });
+resellerStockSchema.index({ "serialNumbers.serialNumber": 1 });
 
 export default mongoose.model("ResellerStock", resellerStockSchema);

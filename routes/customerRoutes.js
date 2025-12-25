@@ -1,10 +1,13 @@
 import express from "express";
+import upload from '../middlewares/upload.js';
 import {
   createCustomer,
   getCustomers,
   getCustomerById,
   updateCustomer,
   deleteCustomer,
+  importCustomers,
+  
 } from "../controllers/customerController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
@@ -20,7 +23,11 @@ router.post(
   ),
   createCustomer
 );
-
+router.post(
+  '/import',
+  upload.single('file'),
+  importCustomers
+);
 router.get(
   "/",
   protect,

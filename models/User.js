@@ -11,8 +11,13 @@ const userSchema = new mongoose.Schema(
     center: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Center",
-      required: [true, "Center is required"],
+      // Make it optional during registration, will be set after login
     },
+    accessibleCenters: [{ 
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Center",
+      required: [true, "At least one center is required"],
+    }],
     fullName: {
       type: String,
       required: [true, "Full name is required"],
@@ -63,16 +68,6 @@ const userSchema = new mongoose.Schema(
     lockUntil: {
       type: Date,
     },
-    // passwordHistory: [{
-    //   password: {
-    //     type: String,
-    //     required: true
-    //   },
-    //   changedAt: {
-    //     type: Date,
-    //     default: Date.now
-    //   }
-    // }],
   },
   {
     timestamps: true,
@@ -137,7 +132,6 @@ userSchema.methods.incrementLoginAttempts = async function () {
   return await this.updateOne(updates);
 };
 
-
 userSchema.statics.findByCredentials = async function (username, password) {
   const isUsername = /^[a-zA-Z0-9_]+$/.test(username);
 
@@ -148,7 +142,7 @@ userSchema.statics.findByCredentials = async function (username, password) {
   const user = await this.findOne({ username: username.toLowerCase() })
     .select("+password +loginAttempts +lockUntil")
     .populate("role", "roleTitle")
-    .populate("center", "centerName centerCode centerType");
+    .populate("accessibleCenters", "centerName centerCode centerType");
 
   if (!user) {
     throw new Error("Invalid login credentials");

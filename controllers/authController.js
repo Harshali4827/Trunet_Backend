@@ -75,20 +75,119 @@ const getBrowserInfo = (userAgent) => {
   return browser;
 };
 
-const signToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN,
+// const signToken = (payload) => {
+//   return jwt.sign(payload, process.env.JWT_SECRET, {
+//     expiresIn: process.env.JWT_EXPIRES_IN,
+//   });
+// };
+
+const signToken = (payload) => {
+  return jwt.sign(payload, process.env.JWT_SECRET, {
+    expiresIn: '12h', 
   });
 };
 
-const createSendToken = (user, statusCode, res) => {
-  const token = signToken(user._id);
+const signRefreshToken = (payload) => {
+  return jwt.sign(payload, process.env.JWT_REFRESH_SECRET, {
+    expiresIn: '7d',
+  });
+};
 
-  user.password = undefined;
+// const createCenterSelectionToken = (user, res) => {
+//   const token = signToken({
+//     id: user._id,
+//     step: 'center_selection'
+//   });
 
-  res.status(statusCode).json({
+//   res.status(200).json({
+//     success: true,
+//     token,
+//     requiresCenterSelection: true,
+//     data: {
+//       user: {
+//         _id: user._id,
+//         fullName: user.fullName,
+//         username: user.username,
+//         email: user.email,
+//         accessibleCenters: user.accessibleCenters,
+//       },
+//       message: "Please select a center to continue"
+//     },
+//   });
+// };
+
+
+const createCenterSelectionToken = (user, res) => {
+  const token = signToken({
+    id: user._id,
+    step: 'center_selection'
+  });
+
+  // Also create a refresh token
+  const refreshToken = signRefreshToken({
+    id: user._id
+  });
+
+  res.status(200).json({
     success: true,
     token,
+    refreshToken, // Add refresh token
+    requiresCenterSelection: true,
+    data: {
+      user: {
+        _id: user._id,
+        fullName: user.fullName,
+        username: user.username,
+        email: user.email,
+        accessibleCenters: user.accessibleCenters,
+      },
+      message: "Please select a center to continue"
+    },
+  });
+};
+// const createFinalToken = (user, center, res) => {
+//   const token = signToken({
+//     id: user._id,
+//     centerId: center._id,
+//     step: 'complete'
+//   });
+
+//   res.status(200).json({
+//     success: true,
+//     token,
+//     data: {
+//       user: {
+//         _id: user._id,
+//         fullName: user.fullName,
+//         username: user.username,
+//         email: user.email,
+//         mobile: user.mobile,
+//         status: user.status,
+//         role: user.role,
+//         center: center, // Set the selected center to 'center' field for compatibility
+//         lastLogin: user.lastLogin,
+//         permissions: user.permissions || [],
+//       },
+//     },
+//   });
+// };
+
+const createFinalToken = (user, center, res) => {
+  const token = signToken({
+    id: user._id,
+    centerId: center._id,
+    step: 'complete'
+  });
+
+  const refreshToken = signRefreshToken({
+    id: user._id,
+    centerId: center._id
+  });
+
+  res.status(200).json({
+    success: true,
+    token,
+    refreshToken, // Add refresh token
     data: {
       user: {
         _id: user._id,
@@ -98,7 +197,7 @@ const createSendToken = (user, statusCode, res) => {
         mobile: user.mobile,
         status: user.status,
         role: user.role,
-        center: user.center,
+        center: center,
         lastLogin: user.lastLogin,
         permissions: user.permissions || [],
       },
@@ -106,6 +205,7 @@ const createSendToken = (user, statusCode, res) => {
   });
 };
 
+// Step 1: Initial login (returns centers list)
 export const login = async (req, res) => {
   try {
     console.log("Login request body:", req.body);
@@ -139,21 +239,51 @@ export const login = async (req, res) => {
     user.lastLogin = new Date();
     await user.save();
 
-    await user.populate("center", "centerName centerCode centerType");
+    // Populate accessible centers
+    await user.populate({
+      path: "accessibleCenters",
+      select: "centerName centerCode centerType addressLine1 city state",
+      populate: [
+        { path: "reseller", select: "businessName" },
+        { path: "area", select: "areaName" }
+      ],
+    });
+
     await user.populate({
       path: "role",
       select: "roleTitle permissions",
     });
-    if (user.role && user.role.permissions) {
-      user.permissions = user.role.permissions;
-    } else {
-      user.permissions = [];
+
+    // Check if user has only one center - auto-select it
+    if (user.accessibleCenters && user.accessibleCenters.length === 1) {
+      const selectedCenter = user.accessibleCenters[0];
+      
+      // Update user's center field for backward compatibility
+      user.center = selectedCenter._id;
+      await user.save();
+      
+      // Get full center details
+      const centerDetails = await Center.findById(selectedCenter._id)
+        .populate([
+          { path: "reseller", select: "businessName" },
+          { path: "area", select: "areaName" }
+        ]);
+
+      user.center = centerDetails;
+      
+      if (user.role && user.role.permissions) {
+        user.permissions = user.role.permissions;
+      } else {
+        user.permissions = [];
+      }
+      
+      return createFinalToken(user, centerDetails, res);
     }
 
-    createSendToken(user, 200, res);
+    // Multiple centers - require selection
+    createCenterSelectionToken(user, res);
   } catch (error) {
     console.error("Login error:", error);
-
     res.status(401).json({
       success: false,
       message: error.message,
@@ -161,13 +291,366 @@ export const login = async (req, res) => {
   }
 };
 
+// export const selectCenter = async (req, res) => {
+//   try {
+//     const { centerId } = req.body;
+//     const userId = req.user.id;
+
+//     if (!centerId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Center selection is required",
+//       });
+//     }
+
+//     // Get user with accessible centers
+//     const user = await User.findById(userId);
+
+//     if (!user) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "User not found",
+//       });
+//     }
+
+//     // Verify user has access to this center
+//     const hasAccess = user.accessibleCenters.some(
+//       center => center.toString() === centerId
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "You don't have access to this center",
+//       });
+//     }
+
+//     // Update user's center field
+//     user.center = centerId;
+//     await user.save();
+
+//     // Get populated user data for response
+//     const populatedUser = await User.findById(userId)
+//       .populate({
+//         path: "role",
+//         select: "roleTitle permissions",
+//       })
+//       .populate({
+//         path: "center",
+//         select: "centerName centerCode centerType addressLine1 city state",
+//         populate: [
+//           { path: "reseller", select: "businessName" },
+//           { path: "area", select: "areaName" }
+//         ],
+//       })
+//       .populate({
+//         path: "accessibleCenters",
+//         select: "centerName centerCode",
+//       });
+
+//     const permissions = populatedUser.role?.permissions || [];
+
+//     // Create final token with center info
+//     const token = signToken({
+//       id: user._id,
+//       centerId: centerId,
+//       step: 'complete'
+//     });
+
+//     res.status(200).json({
+//       success: true,
+//       token,
+//       data: {
+//         user: {
+//           _id: populatedUser._id,
+//           fullName: populatedUser.fullName,
+//           username: populatedUser.username,
+//           email: populatedUser.email,
+//           mobile: populatedUser.mobile,
+//           status: populatedUser.status,
+//           role: populatedUser.role,
+//           center: populatedUser.center,
+//           accessibleCenters: populatedUser.accessibleCenters,
+//           lastLogin: populatedUser.lastLogin,
+//           permissions: permissions,
+//         },
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Center selection error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Error selecting center",
+//     });
+//   }
+// };
+
+
+
+export const selectCenter = async (req, res) => {
+  try {
+    const { centerId } = req.body;
+    const userId = req.user.id;
+
+    if (!centerId) {
+      return res.status(400).json({
+        success: false,
+        message: "Center selection is required",
+      });
+    }
+
+    // Get user with accessible centers
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Verify user has access to this center
+    const hasAccess = user.accessibleCenters.some(
+      center => center.toString() === centerId
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have access to this center",
+      });
+    }
+
+    // Update user's center field
+    user.center = centerId;
+    await user.save();
+
+    // Get populated user data for response
+    const populatedUser = await User.findById(userId)
+      .populate({
+        path: "role",
+        select: "roleTitle permissions",
+      })
+      .populate({
+        path: "center",
+        select: "centerName centerCode centerType addressLine1 city state",
+        populate: [
+          { path: "reseller", select: "businessName" },
+          { path: "area", select: "areaName" }
+        ],
+      })
+      .populate({
+        path: "accessibleCenters",
+        select: "centerName centerCode",
+      });
+
+    const permissions = populatedUser.role?.permissions || [];
+
+    // Create both tokens with center info
+    const token = signToken({
+      id: user._id,
+      centerId: centerId,
+      step: 'complete'
+    });
+
+    const refreshToken = signRefreshToken({
+      id: user._id,
+      centerId: centerId
+    });
+
+    res.status(200).json({
+      success: true,
+      token,
+      refreshToken, // Add refresh token
+      data: {
+        user: {
+          _id: populatedUser._id,
+          fullName: populatedUser.fullName,
+          username: populatedUser.username,
+          email: populatedUser.email,
+          mobile: populatedUser.mobile,
+          status: populatedUser.status,
+          role: populatedUser.role,
+          center: populatedUser.center,
+          accessibleCenters: populatedUser.accessibleCenters,
+          lastLogin: populatedUser.lastLogin,
+          permissions: permissions,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Center selection error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error selecting center",
+    });
+  }
+};
+
+// export const register = async (req, res) => {
+//   try {
+//     console.log("Registration request body:", req.body);
+
+//     const {
+//       role,
+//       centers,
+//       fullName,
+//       username,
+//       email,
+//       mobile,
+//       password,
+//       confirmPassword,
+//       status,
+//     } = req.body;
+
+//     if (!fullName || !username || !email || !password) {
+//       return res.status(400).json({
+//         success: false,
+//         message:
+//           "Please provide all required fields: fullName, username, email, password",
+//       });
+//     }
+
+//     if (password !== confirmPassword) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Passwords do not match",
+//       });
+//     }
+
+//     // Check if centers array is provided and not empty
+//     if (!centers || !Array.isArray(centers) || centers.length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "At least one center is required",
+//       });
+//     }
+
+//     // Validate all centers exist
+//     const centersExists = await Center.find({ _id: { $in: centers } });
+//     if (centersExists.length !== centers.length) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "One or more centers not found",
+//       });
+//     }
+
+//     if (role) {
+//       const roleExists = await Role.findById(role);
+//       if (!roleExists) {
+//         return res.status(404).json({
+//           success: false,
+//           message: "Role not found",
+//         });
+//       }
+//     }
+
+//     const existingUser = await User.findOne({
+//       $or: [
+//         { email: email.toLowerCase() }, 
+//         { mobile },
+//         { username: username.toLowerCase() }
+//       ],
+//     });
+
+//     if (existingUser) {
+//       let message = "User with this ";
+//       if (existingUser.email === email.toLowerCase()) {
+//         message += "email";
+//       } else if (existingUser.mobile === mobile) {
+//         message += "mobile number";
+//       } else {
+//         message += "username";
+//       }
+//       message += " already exists";
+      
+//       return res.status(409).json({
+//         success: false,
+//         message,
+//       });
+//     }
+
+//     // Create user without setting center initially
+//     const user = new User({
+//       role,
+//       accessibleCenters: centers,
+//       // Don't set center field yet - will be set after login
+//       fullName,
+//       username: username.toLowerCase(),
+//       email: email.toLowerCase(),
+//       mobile,
+//       password,
+//       confirmPassword,
+//       status: status || "Enable",
+//     });
+
+//     await user.save();
+
+//     await user.populate("role", "roleTitle");
+//     // No need to populate center on registration
+
+//     // For registration, if only one center, set it immediately
+//     if (centers.length === 1) {
+//       user.center = centers[0];
+//       await user.save();
+//       await user.populate("center", "centerName centerCode centerType");
+//     }
+
+//     // Create token based on number of centers
+//     if (centers.length === 1) {
+//       const selectedCenter = await Center.findById(centers[0])
+//         .populate([
+//           { path: "reseller", select: "businessName" },
+//           { path: "area", select: "areaName" }
+//         ]);
+
+//       createFinalToken(user, selectedCenter, res);
+//     } else {
+//       await user.populate({
+//         path: "accessibleCenters",
+//         select: "centerName centerCode centerType",
+//       });
+//       createCenterSelectionToken(user, res);
+//     }
+//   } catch (error) {
+//     console.error("Registration error:", error);
+
+//     if (error.name === "ValidationError") {
+//       const errors = Object.values(error.errors).map((err) => err.message);
+//       return res.status(400).json({
+//         success: false,
+//         message: "Validation error",
+//         errors,
+//       });
+//     }
+
+//     if (error.code === 11000) {
+//       return res.status(409).json({
+//         success: false,
+//         message: "User with this email, mobile or username already exists",
+//       });
+//     }
+
+//     res.status(500).json({
+//       success: false,
+//       message: "Internal server error",
+//       error:
+//         process.env.NODE_ENV === "development"
+//           ? error.message
+//           : "Internal server error",
+//     });
+//   }
+// };
+
+
+
 export const register = async (req, res) => {
   try {
     console.log("Registration request body:", req.body);
 
     const {
       role,
-      center,
+      centers,
       fullName,
       username,
       email,
@@ -192,14 +675,21 @@ export const register = async (req, res) => {
       });
     }
 
-    if (center) {
-      const centerExists = await Center.findById(center);
-      if (!centerExists) {
-        return res.status(404).json({
-          success: false,
-          message: "Center not found",
-        });
-      }
+    // Check if centers array is provided and not empty
+    if (!centers || !Array.isArray(centers) || centers.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one center is required",
+      });
+    }
+
+    // Validate all centers exist
+    const centersExists = await Center.find({ _id: { $in: centers } });
+    if (centersExists.length !== centers.length) {
+      return res.status(404).json({
+        success: false,
+        message: "One or more centers not found",
+      });
     }
 
     if (role) {
@@ -237,9 +727,11 @@ export const register = async (req, res) => {
       });
     }
 
+    // Create user without setting center initially
     const user = new User({
       role,
-      center,
+      accessibleCenters: centers,
+      // Don't set center field yet - will be set after login
       fullName,
       username: username.toLowerCase(),
       email: email.toLowerCase(),
@@ -252,9 +744,31 @@ export const register = async (req, res) => {
     await user.save();
 
     await user.populate("role", "roleTitle");
-    await user.populate("center", "centerName centerCode centerType");
+    // No need to populate center on registration
 
-    createSendToken(user, 201, res);
+    // For registration, if only one center, set it immediately
+    if (centers.length === 1) {
+      user.center = centers[0];
+      await user.save();
+      await user.populate("center", "centerName centerCode centerType");
+    }
+
+    // Create token based on number of centers
+    if (centers.length === 1) {
+      const selectedCenter = await Center.findById(centers[0])
+        .populate([
+          { path: "reseller", select: "businessName" },
+          { path: "area", select: "areaName" }
+        ]);
+
+      createFinalToken(user, selectedCenter, res);
+    } else {
+      await user.populate({
+        path: "accessibleCenters",
+        select: "centerName centerCode centerType",
+      });
+      createCenterSelectionToken(user, res);
+    }
   } catch (error) {
     console.error("Registration error:", error);
 
@@ -287,18 +801,23 @@ export const register = async (req, res) => {
 
 export const getMe = async (req, res) => {
   try {
+    // Get user with selected center populated
     const user = await User.findById(req.user.id)
       .populate({
         path: "role",
         select: "roleTitle permissions",
       })
       .populate({
-        path: "center",
+        path: "center", // Still using 'center' field for compatibility
         select: "centerName centerCode centerType addressLine1 city state",
         populate: [
           { path: "reseller", select:"businessName"},
           { path: "area", select: "areaName" }
         ],
+      })
+      .populate({
+        path: "accessibleCenters",
+        select: "centerName centerCode centerType",
       });
 
     const permissions =
@@ -315,7 +834,8 @@ export const getMe = async (req, res) => {
           mobile: user.mobile,
           status: user.status,
           role: user.role,
-          center: user.center,
+          center: user.center, // For backward compatibility
+          accessibleCenters: user.accessibleCenters,
           lastLogin: user.lastLogin,
           createdAt: user.createdAt,
           permissions: permissions,
@@ -327,6 +847,186 @@ export const getMe = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Internal server error",
+    });
+  }
+};
+
+// export const switchCenter = async (req, res) => {
+//   try {
+//     const { centerId } = req.body;
+//     const userId = req.user.id;
+
+//     if (!centerId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Center ID is required",
+//       });
+//     }
+
+//     // Get user with accessible centers
+//     const user = await User.findById(userId)
+//       .populate({
+//         path: "accessibleCenters",
+//         select: "_id centerName centerCode",
+//       })
+//       .populate({
+//         path: "role",
+//         select: "roleTitle permissions",
+//       });
+
+//     // Verify user has access to this center
+//     const hasAccess = user.accessibleCenters.some(
+//       center => center._id.toString() === centerId
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "You don't have access to this center",
+//       });
+//     }
+
+//     // Update user's center field
+//     user.center = centerId;
+//     await user.save();
+
+//     // Get full center details
+//     const selectedCenter = await Center.findById(centerId)
+//       .populate([
+//         { path: "reseller", select: "businessName" },
+//         { path: "area", select: "areaName" }
+//       ]);
+
+//     if (user.role && user.role.permissions) {
+//       user.permissions = user.role.permissions;
+//     } else {
+//       user.permissions = [];
+//     }
+
+//     // Create new token with new center
+//     const token = signToken({
+//       id: user._id,
+//       centerId: centerId,
+//       step: 'complete'
+//     });
+
+//     res.status(200).json({
+//       success: true,
+//       token,
+//       data: {
+//         user: {
+//           _id: user._id,
+//           fullName: user.fullName,
+//           username: user.username,
+//           email: user.email,
+//           mobile: user.mobile,
+//           status: user.status,
+//           role: user.role,
+//           center: selectedCenter, // Set the selected center
+//           lastLogin: user.lastLogin,
+//           permissions: user.permissions,
+//         },
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Switch center error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Error switching center",
+//     });
+//   }
+// };
+
+
+
+export const switchCenter = async (req, res) => {
+  try {
+    const { centerId } = req.body;
+    const userId = req.user.id;
+
+    if (!centerId) {
+      return res.status(400).json({
+        success: false,
+        message: "Center ID is required",
+      });
+    }
+
+    // Get user with accessible centers
+    const user = await User.findById(userId)
+      .populate({
+        path: "accessibleCenters",
+        select: "_id centerName centerCode",
+      })
+      .populate({
+        path: "role",
+        select: "roleTitle permissions",
+      });
+
+    // Verify user has access to this center
+    const hasAccess = user.accessibleCenters.some(
+      center => center._id.toString() === centerId
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have access to this center",
+      });
+    }
+
+    // Update user's center field
+    user.center = centerId;
+    await user.save();
+
+    // Get full center details
+    const selectedCenter = await Center.findById(centerId)
+      .populate([
+        { path: "reseller", select: "businessName" },
+        { path: "area", select: "areaName" }
+      ]);
+
+    if (user.role && user.role.permissions) {
+      user.permissions = user.role.permissions;
+    } else {
+      user.permissions = [];
+    }
+
+    // Create new tokens with new center
+    const token = signToken({
+      id: user._id,
+      centerId: centerId,
+      step: 'complete'
+    });
+
+    const refreshToken = signRefreshToken({
+      id: user._id,
+      centerId: centerId
+    });
+
+    res.status(200).json({
+      success: true,
+      token,
+      refreshToken, // Return new refresh token
+      data: {
+        user: {
+          _id: user._id,
+          fullName: user.fullName,
+          username: user.username,
+          email: user.email,
+          mobile: user.mobile,
+          status: user.status,
+          role: user.role,
+          center: selectedCenter,
+          lastLogin: user.lastLogin,
+          permissions: user.permissions,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Switch center error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error switching center",
     });
   }
 };
@@ -367,58 +1067,6 @@ export const updatePassword = async (req, res) => {
     });
   }
 };
-
-
-
-// export const updatePassword = async (req, res) => {
-//   try {
-//     const { currentPassword, newPassword, confirmNewPassword } = req.body;
-
-//     if (newPassword !== confirmNewPassword) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "New passwords do not match",
-//       });
-//     }
-
-//     const user = await User.findById(req.user.id).select("+password +passwordHistory");
-
-//     if (!(await user.correctPassword(currentPassword, user.password))) {
-//       return res.status(401).json({
-//         success: false,
-//         message: "Current password is incorrect",
-//       });
-//     }
-  
-//     user.passwordHistory.unshift({
-//       password: user.password, 
-//       changedAt: new Date()
-//     });
-
-//     // Keep only last 5 passwords (optional)
-//     if (user.passwordHistory.length > 5) {
-//       user.passwordHistory = user.passwordHistory.slice(0, 5);
-//     }
-    
-//     user.password = newPassword;
-//     user.confirmPassword = confirmNewPassword;
-//     await user.save();
-
-//     res.status(200).json({
-//       success: true,
-//       message: "Password updated successfully",
-//     });
-    
-//   } catch (error) {
-//     console.error("Update password error:", error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Internal server error",
-//     });
-//   }
-// };
-
-
 
 export const getAllUsers = async (req, res) => {
   try {
@@ -484,6 +1132,10 @@ export const getAllUsers = async (req, res) => {
           { path: "reseller", select: "businessName" }
         ],
       })
+      .populate({
+        path: "accessibleCenters",
+        select: "centerName centerCode",
+      })
       .select("-password")
       .sort(sort)
       .skip(skip)
@@ -502,6 +1154,7 @@ export const getAllUsers = async (req, res) => {
       status: user.status,
       role: user.role,
       center: user.center,
+      accessibleCenters: user.accessibleCenters,
       lastLogin: user.lastLogin,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
@@ -540,6 +1193,7 @@ export const getAllUsers = async (req, res) => {
   }
 };
 
+
 export const getUserById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -553,6 +1207,10 @@ export const getUserById = async (req, res) => {
           { path: "reseller", select: "businessName" },
           { path: "area", select: "areaName" },
         ],
+      })
+      .populate({
+        path: "accessibleCenters",
+        select: "centerName centerCode",
       })
       .select("-password");
 
@@ -575,6 +1233,7 @@ export const getUserById = async (req, res) => {
           status: user.status,
           role: user.role,
           center: user.center,
+          accessibleCenters: user.accessibleCenters,
           lastLogin: user.lastLogin,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
@@ -591,72 +1250,6 @@ export const getUserById = async (req, res) => {
   }
 };
 
-
-
-// export const getUserById = async (req, res) => {
-//   try {
-//     const { id } = req.params;
-
-//     const user = await User.findById(id)
-//       .populate("role", "roleTitle")
-//       .populate({
-//         path: "center",
-//         select: "centerName centerCode centerType addressLine1 city state",
-//         populate: [
-//           { path: "reseller", select: "businessName" },
-//           { path: "area", select: "areaName" },
-//         ],
-//       })
-//       .select("-password");
-
-//     if (!user) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "User not found",
-//       });
-//     }
-
-//     // Fetch password history (using the separate model approach)
-//     const passwordHistory = await PasswordHistory.find({ user: id })
-//       .sort({ changedAt: -1 })
-//       .select("changedAt")
-//       .lean();
-
-//     const formattedHistory = passwordHistory.map(record => ({
-//       changedAt: record.changedAt,
-//       // Don't return actual passwords, just show masked version
-//       password: '••••••••'
-//     }));
-
-//     res.status(200).json({
-//       success: true,
-//       data: {
-//         user: {
-//           _id: user._id,
-//           fullName: user.fullName,
-//           username: user.username,
-//           email: user.email,
-//           mobile: user.mobile,
-//           status: user.status,
-//           role: user.role,
-//           center: user.center,
-//           lastLogin: user.lastLogin,
-//           createdAt: user.createdAt,
-//           updatedAt: user.updatedAt,
-//         },
-//         passwordHistory: formattedHistory
-//       },
-//     });
-//   } catch (error) {
-//     console.error("Get user by ID error:", error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Error fetching user",
-//       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-//     });
-//   }
-// };
-
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -667,10 +1260,11 @@ export const updateUser = async (req, res) => {
       mobile,
       status,
       role,
-      center,
+      centers,
       password,
       confirmPassword,
     } = req.body;
+    
     const user = await User.findById(id).select("+password");
     if (!user) {
       return res.status(404).json({
@@ -716,13 +1310,27 @@ export const updateUser = async (req, res) => {
       }
     }
 
-    if (center) {
-      const centerExists = await Center.findById(center);
-      if (!centerExists) {
+    if (centers) {
+      if (!Array.isArray(centers) || centers.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "At least one center is required",
+        });
+      }
+      
+      const centersExists = await Center.find({ _id: { $in: centers } });
+      if (centersExists.length !== centers.length) {
         return res.status(404).json({
           success: false,
-          message: "Center not found",
+          message: "One or more centers not found",
         });
+      }
+      
+      user.accessibleCenters = centers;
+      
+      // If current center is not in new centers, set to first center
+      if (!centers.includes(user.center?.toString())) {
+        user.center = centers[0];
       }
     }
 
@@ -754,7 +1362,6 @@ export const updateUser = async (req, res) => {
     if (mobile) user.mobile = mobile;
     if (status) user.status = status;
     if (role) user.role = role;
-    if (center) user.center = center;
 
     await user.save();
     await user.populate("role", "roleTitle");
@@ -765,6 +1372,10 @@ export const updateUser = async (req, res) => {
         { path: "reseller", select: "businessName" },
         { path: "area", select: "areaName" },
       ],
+    });
+    await user.populate({
+      path: "accessibleCenters",
+      select: "centerName centerCode",
     });
 
     res.status(200).json({
@@ -780,6 +1391,7 @@ export const updateUser = async (req, res) => {
           status: user.status,
           role: user.role,
           center: user.center,
+          accessibleCenters: user.accessibleCenters,
           lastLogin: user.lastLogin,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
@@ -803,55 +1415,14 @@ export const logout = (req, res) => {
   });
 };
 
-// export const getLoginHistory = async (req, res) => {
-//   try {
-//     const filter = {};
-  
-//     if (req.user) {
-//       filter.user = req.user.id;
-//     }
-//     const loginHistory = await LoginHistory.find(filter)
-//       .populate("user", "fullName username email mobile status")
-//       .sort({ date: -1 })
-//       .lean();
-
-//     const formattedHistory = loginHistory.map(record => ({
-//       name: record.name,
-//       email: record.email,
-//       browser: record.browser,
-//       ip: record.ip,
-//       date: record.date
-//     }));
-
-//     res.status(200).json({
-//       success: true,
-//       data: {
-//         loginHistory: formattedHistory
-//       },
-//     });
-//   } catch (error) {
-//     console.error("Get login history error:", error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Error fetching login history",
-//       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-//     });
-//   }
-// };
-
-
 export const getLoginHistory = async (req, res) => {
   try {
     const { page = 1, limit = 50, userId } = req.query;
     
     const filter = {};
-  
-    // If specific userId is provided in query, filter by that user
     if (userId) {
       filter.user = userId;
     }
-    // Remove the automatic filtering by current user
-    // This will now return login history for all users
     
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
@@ -876,7 +1447,6 @@ export const getLoginHistory = async (req, res) => {
         mobile: record.user.mobile,
         status: record.user.status
       } : {
-        // Fallback in case user data is missing
         fullName: record.name,
         email: record.email
       },
@@ -946,6 +1516,78 @@ export const deleteUser = async (req, res) => {
       success: false,
       message: "Error deleting user",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+
+export const refreshToken = async (req, res) => {
+  try {
+    const refreshToken = req.headers.authorization?.split(' ')[1];
+    
+    if (!refreshToken) {
+      return res.status(401).json({
+        success: false,
+        message: 'No refresh token provided'
+      });
+    }
+    
+    // Verify refresh token
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    
+    // Get user
+    const user = await User.findById(decoded.id)
+      .populate({
+        path: "center",
+        select: "centerName centerCode",
+      });
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    // Create new access token
+    const token = signToken({
+      id: user._id,
+      centerId: decoded.centerId || user.center?._id,
+      step: 'complete'
+    });
+    
+    // Optional: Create new refresh token (rotate refresh tokens)
+    const newRefreshToken = signRefreshToken({
+      id: user._id,
+      centerId: decoded.centerId || user.center?._id
+    });
+    
+    res.status(200).json({
+      success: true,
+      token,
+      refreshToken: newRefreshToken // Return new refresh token
+    });
+    
+  } catch (error) {
+    console.error('Refresh token error:', error);
+    
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Refresh token expired'
+      });
+    }
+    
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid refresh token'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };

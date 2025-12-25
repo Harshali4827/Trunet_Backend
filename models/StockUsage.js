@@ -27,7 +27,10 @@ const stockUsageSchema = new mongoose.Schema(
       ref: "Center",
       required: true,
     },
-
+    toCenter: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Center",
+    },
     remark: {
       type: String,
       trim: true,
@@ -165,6 +168,7 @@ const stockUsageSchema = new mongoose.Schema(
 );
 
 stockUsageSchema.index({ center: 1, date: -1 });
+stockUsageSchema.index({ toCenter: 1 }); 
 stockUsageSchema.index({ usageType: 1 });
 stockUsageSchema.index({ customer: 1 });
 stockUsageSchema.index({ fromBuilding: 1 });
@@ -208,6 +212,11 @@ stockUsageSchema.pre("save", function (next) {
       break;
 
     case "Damage":
+      if (!this.toCenter) {
+        return next(
+          new Error("To Center is required for damage usage type")
+        );
+      }
       break;
 
     case "Stolen from Center":
@@ -317,6 +326,7 @@ stockUsageSchema.methods.processStockDeduction = async function () {
               serial.consumedBy = this.createdBy;
               serial.transferHistory.push({
                 fromCenter: this.center,
+                toCenter: this.toCenter, // Added toCenter to transfer history
                 transferDate: new Date(),
                 transferType:
                   this.usageType === "Damage"
@@ -383,6 +393,7 @@ stockUsageSchema.methods.reserveStockForDamage = async function () {
             serial.consumedBy = this.createdBy;
             serial.transferHistory.push({
               fromCenter: this.center,
+              toCenter: this.toCenter, 
               transferDate: new Date(),
               transferType: "damage_reserved",
               usageType: this.usageType,

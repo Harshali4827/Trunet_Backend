@@ -5,6 +5,7 @@ import {
   getStockUsageByCenter
 } from "../controllers/availableReportController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
+import { getResellerAvailableStock, getResellerProductsWithStock } from "../controllers/resellerStockController.js";
 
 const router = express.Router();
 const MODULE = "Available Stock";
@@ -30,6 +31,12 @@ router.get(
   getStockUsageByCenter
 );
 
-
+router.get(
+  "/reseller",
+  protect,
+  authorizeAccess(MODULE, "available_stock_own_center", "available_stock_all_center"),
+  // getResellerProductsWithStock
+  getResellerAvailableStock
+);
 
 export default router;

@@ -73,6 +73,14 @@ const centerStockSchema = new mongoose.Schema(
           type: mongoose.Schema.Types.ObjectId,
           ref: "Center",
         },
+        transferredDate: {
+          type: Date,
+          default: null,
+        },
+        transferredBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
         transferHistory: [
           {
             fromCenter: {
@@ -99,7 +107,8 @@ const centerStockSchema = new mongoose.Schema(
                 "replacement_issue",
                 "damage_return_request",
                 "return_from_field",
-                "damage_reported"
+                "damage_reported",
+                "center_to_reseller_return"
               ],
             },
           },

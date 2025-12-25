@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import Center from "../models/Center.js";
 
 export const protect = async (req, res, next) => {
   try {
@@ -21,12 +22,37 @@ export const protect = async (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
+    // Check if center selection is completed
+    if (decoded.step === 'center_selection') {
+      return res.status(403).json({
+        success: false,
+        message: "Please select a center first",
+        requiresCenterSelection: true
+      });
+    }
+
+    // Check if token has centerId (it should for complete tokens)
+    if (!decoded.centerId) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid token. Center information missing.",
+      });
+    }
+
+    // Get user with populated data
     const currentUser = await User.findById(decoded.id)
       .populate({
         path: "role",
         select: "roleTitle permissions",
       })
-      .populate("center", "centerName centerCode");
+      .populate({
+        path: "center",
+        select: "centerName centerCode centerType",
+      })
+      .populate({
+        path: "accessibleCenters",
+        select: "centerName centerCode",
+      });
 
     if (!currentUser) {
       return res.status(401).json({
@@ -43,7 +69,34 @@ export const protect = async (req, res, next) => {
       });
     }
 
+    // Check if user has access to the center in token
+    const hasAccessToCenter = currentUser.accessibleCenters?.some(
+      center => center._id.toString() === decoded.centerId
+    );
+
+    if (!hasAccessToCenter) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have access to this center anymore.",
+      });
+    }
+
+    // Instead of strict match, update user's center field if it doesn't match
+    if (currentUser.center?._id?.toString() !== decoded.centerId) {
+      // Update user's center field to match the token
+      currentUser.center = decoded.centerId;
+      await currentUser.save();
+      
+      // Repopulate center after update
+      await currentUser.populate({
+        path: "center",
+        select: "centerName centerCode centerType",
+      });
+    }
+
     req.user = currentUser;
+    req.selectedCenterId = decoded.centerId;
+    
     next();
   } catch (error) {
     console.error("Auth middleware error:", error);
@@ -68,7 +121,7 @@ export const protect = async (req, res, next) => {
     });
   }
 };
-
+// Keep other middleware functions as they are...
 export const restrictTo = (...roles) => {
   return (req, res, next) => {
     if (!roles.includes(req.user.role.roleTitle)) {

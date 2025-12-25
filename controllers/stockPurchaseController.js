@@ -1783,6 +1783,102 @@ export const getCenterStockSummary = async (req, res) => {
 };
 
 
+// export const getOutletSerialNumbers = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } =
+//       checkStockPurchasePermissions(req, [
+//         "view_own_purchase_stock",
+//         "view_all_purchase_stock",
+//       ]);
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. view_own_purchase_stock or view_all_purchase_stock permission required.",
+//       });
+//     }
+
+//     const { productId, outletId } = req.params;
+
+//     if (
+//       permissions.view_own_purchase_stock &&
+//       !permissions.view_all_purchase_stock &&
+//       userCenter
+//     ) {
+//       const userCenterId = userCenter._id || userCenter;
+//       if (outletId !== userCenterId.toString()) {
+//         return res.status(403).json({
+//           success: false,
+//           message:
+//             "Access denied. You can only view serial numbers from your own outlet.",
+//         });
+//       }
+//     }
+
+//     if (!outletId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Outlet ID is required",
+//       });
+//     }
+
+//     const outletStock = await OutletStock.findOne({
+//       outlet: outletId,
+//       product: productId,
+//     })
+//       .populate("outlet", "centerName centerCode centerType")
+//       .populate("product", "productTitle productCode trackSerialNumber");
+
+//     if (!outletStock) {
+//       return res.status(200).json({
+//         success: true,
+//         message: "No stock found for the specified product",
+//         data: {
+//           outlet: await Center.findById(outletId).select(
+//             "centerName centerCode centerType"
+//           ),
+//           product: await Product.findById(productId).select(
+//             "productTitle productCode trackSerialNumber"
+//           ),
+//           availableSerials: [],
+//           totalAvailable: 0,
+//         },
+//       });
+//     }
+
+//     const availableSerials = outletStock.serialNumbers
+//       .filter((sn) => sn.status === "available")
+//       .map((sn) => ({
+//         serialNumber: sn.serialNumber,
+//         purchaseId: sn.purchaseId,
+//         currentLocation: sn.currentLocation,
+//         status: sn.status,
+//       }));
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Available serial numbers retrieved successfully",
+//       data: {
+//         outletStock: {
+//           _id: outletStock._id,
+//           outlet: outletStock.outlet,
+//           product: outletStock.product,
+//           totalQuantity: outletStock.totalQuantity,
+//           availableQuantity: outletStock.availableQuantity,
+//         },
+//         availableSerials,
+//         totalAvailable: availableSerials.length,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error retrieving outlet serial numbers:", error);
+//     handleControllerError(error, res);
+//   }
+// };
+
+
+
 export const getOutletSerialNumbers = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } =
@@ -1800,6 +1896,7 @@ export const getOutletSerialNumbers = async (req, res) => {
     }
 
     const { productId, outletId } = req.params;
+    const { resellerId } = req.query; // Get resellerId from query params (NOT centerId)
 
     if (
       permissions.view_own_purchase_stock &&
@@ -1823,6 +1920,41 @@ export const getOutletSerialNumbers = async (req, res) => {
       });
     }
 
+    // Fetch reseller stock if resellerId is provided
+    let resellerStockData = [];
+    let resellerAvailableCount = 0;
+    let resellerInfo = null;
+    
+    if (resellerId) {
+      // Optionally get reseller info
+      const Reseller = mongoose.model("Reseller");
+      resellerInfo = await Reseller.findById(resellerId).select("businessName name contactNumber");
+      
+      const ResellerStock = mongoose.model("ResellerStock");
+      const resellerStock = await ResellerStock.findOne({
+        reseller: resellerId,
+        product: productId,
+      });
+      
+      if (resellerStock) {
+        resellerStockData = resellerStock.serialNumbers
+          .filter((sn) => sn.status === "available")
+          .map((sn) => ({
+            serialNumber: sn.serialNumber,
+            source: 'reseller',
+            resellerId: resellerId,
+            resellerName: resellerInfo?.businessName || resellerInfo?.name || 'Reseller',
+            status: sn.status,
+            location: 'reseller_stock',
+            purchaseId: sn.purchaseId || null,
+            currentLocation: sn.currentLocation || null
+          }));
+        
+        resellerAvailableCount = resellerStockData.length;
+      }
+    }
+
+    // Fetch outlet stock
     const outletStock = await OutletStock.findOne({
       outlet: outletId,
       product: productId,
@@ -1830,47 +1962,97 @@ export const getOutletSerialNumbers = async (req, res) => {
       .populate("outlet", "centerName centerCode centerType")
       .populate("product", "productTitle productCode trackSerialNumber");
 
-    if (!outletStock) {
-      return res.status(200).json({
-        success: true,
-        message: "No stock found for the specified product",
-        data: {
-          outlet: await Center.findById(outletId).select(
-            "centerName centerCode centerType"
-          ),
-          product: await Product.findById(productId).select(
-            "productTitle productCode trackSerialNumber"
-          ),
-          availableSerials: [],
-          totalAvailable: 0,
-        },
-      });
+    let outletStockData = {
+      outlet: null,
+      product: null,
+      availableSerials: [],
+      totalAvailable: 0,
+    };
+
+    let outletAvailableSerials = [];
+    let outletAvailableCount = 0;
+
+    if (outletStock) {
+      outletAvailableSerials = outletStock.serialNumbers
+        .filter((sn) => sn.status === "available")
+        .map((sn) => ({
+          serialNumber: sn.serialNumber,
+          source: 'outlet',
+          outletId: outletId,
+          outletName: outletStock.outlet?.centerName,
+          purchaseId: sn.purchaseId,
+          status: sn.status,
+          location: 'outlet_stock',
+          currentLocation: sn.currentLocation || null
+        }));
+      
+      outletAvailableCount = outletAvailableSerials.length;
+      
+      outletStockData = {
+        outlet: outletStock.outlet,
+        product: outletStock.product,
+        totalQuantity: outletStock.totalQuantity,
+        availableQuantity: outletStock.availableQuantity,
+        inTransitQuantity: outletStock.inTransitQuantity || 0,
+      };
+    } else {
+      // If no outlet stock, get basic info
+      outletStockData.outlet = await Center.findById(outletId).select(
+        "centerName centerCode centerType"
+      );
+      outletStockData.product = await Product.findById(productId).select(
+        "productTitle productCode trackSerialNumber"
+      );
     }
 
-    const availableSerials = outletStock.serialNumbers
-      .filter((sn) => sn.status === "available")
-      .map((sn) => ({
-        serialNumber: sn.serialNumber,
-        purchaseId: sn.purchaseId,
-        currentLocation: sn.currentLocation,
-        status: sn.status,
-      }));
+    // Combine both sources
+    const allAvailableSerials = [...resellerStockData, ...outletAvailableSerials];
+    const totalAvailable = resellerAvailableCount + outletAvailableCount;
 
-    res.status(200).json({
+    // Prepare response
+    const responseData = {
       success: true,
       message: "Available serial numbers retrieved successfully",
       data: {
-        outletStock: {
-          _id: outletStock._id,
-          outlet: outletStock.outlet,
-          product: outletStock.product,
-          totalQuantity: outletStock.totalQuantity,
-          availableQuantity: outletStock.availableQuantity,
+        // Source information
+        sources: {
+          outlet: {
+            id: outletId,
+            name: outletStockData.outlet?.centerName,
+            availableCount: outletAvailableCount,
+            hasStock: outletStock !== null,
+            totalQuantity: outletStockData.totalQuantity,
+            availableQuantity: outletStockData.availableQuantity
+          },
+          reseller: resellerId ? {
+            id: resellerId,
+            name: resellerInfo?.businessName || resellerInfo?.name || 'Reseller',
+            availableCount: resellerAvailableCount,
+            hasStock: resellerAvailableCount > 0
+          } : null
         },
-        availableSerials,
-        totalAvailable: availableSerials.length,
-      },
-    });
+        
+        // Stock information
+        outletStock: outletStockData,
+        
+        // Combined serial numbers
+        availableSerials: allAvailableSerials,
+        totalAvailable: totalAvailable,
+        
+        // Separated counts for UI display
+        counts: {
+          reseller: resellerAvailableCount,
+          outlet: outletAvailableCount,
+          total: totalAvailable
+        },
+        
+        // Product information
+        product: outletStockData.product || await Product.findById(productId).select("productTitle productCode trackSerialNumber")
+      }
+    };
+
+    res.status(200).json(responseData);
+    
   } catch (error) {
     console.error("Error retrieving outlet serial numbers:", error);
     handleControllerError(error, res);

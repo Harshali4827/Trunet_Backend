@@ -1,6 +1,7 @@
 import StockUsage from "../models/StockUsage.js";
 import CenterStock from "../models/CenterStock.js";
 import Product from "../models/Product.js";
+import Center from "../models/Center.js";
 import Customer from "../models/Customer.js";
 import Building from "../models/Building.js";
 import ControlRoom from "../models/ControlRoomModel.js";
@@ -8,7 +9,7 @@ import mongoose from "mongoose";
 import User from "../models/User.js";
 import EntityStockUsage from "../models/EntityStockUsage.js";
 import ReturnRecord from "../models/ReturnRecord.js";
-import FaultyStock from "../models/FaultyStock.js";
+// import FaultyStock from "../models/FaultyStock.js";
 
 const checkStockUsagePermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
@@ -146,6 +147,7 @@ export const createStockUsage = async (req, res) => {
       fromBuilding,
       toBuilding,
       fromControlRoom,
+      toCenter,
       items,
     } = req.body;
 
@@ -176,12 +178,40 @@ export const createStockUsage = async (req, res) => {
         message: "User must be associated with a center",
       });
     }
+    
+
+    // Validate toCenter for Damage usage type
+    if (usageType === "Damage" && !toCenter) {
+      return res.status(400).json({
+        success: false,
+        message: "To Center is required for damage usage type",
+      });
+    }
+
+    // Validate toCenter exists if provided
+    if (toCenter && !mongoose.Types.ObjectId.isValid(toCenter)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid toCenter ID format",
+      });
+    }
+
+    if (toCenter) {
+      const toCenterExists = await Center.findById(toCenter);
+      if (!toCenterExists) {
+        return res.status(400).json({
+          success: false,
+          message: "To Center not found",
+        });
+      }
+    }
 
     const validationError = await validateUsageTypeFields(usageType, {
       customer,
       fromBuilding,
       toBuilding,
       fromControlRoom,
+      toCenter
     });
 
     if (validationError) {
@@ -215,6 +245,11 @@ export const createStockUsage = async (req, res) => {
       status: initialStatus,
     };
 
+    // Add toCenter to stock usage data if it exists
+    if (toCenter) {
+      stockUsageData.toCenter = toCenter;
+    }
+
     addUsageTypeSpecificFields(stockUsageData, {
       customer,
       connectionType,
@@ -228,6 +263,7 @@ export const createStockUsage = async (req, res) => {
       fromBuilding,
       toBuilding,
       fromControlRoom,
+      toCenter
     });
 
     const stockUsage = new StockUsage(stockUsageData);
@@ -236,14 +272,6 @@ export const createStockUsage = async (req, res) => {
     if (usageType === "Damage") {
       await addToFaultyStockCollection(stockUsage);
     }
-
-    // if (usageType !== "Damage") {
-    //   await processStockDeduction(stockUsage);
-    //   await addStockToUsageEntity(stockUsage);
-    // } else {
-    //   await reserveStockForDamage(stockUsage);
-    // }
-     
     if (usageType !== "Damage" && usageType !== "Damage Return") {
       await processStockDeduction(stockUsage);
       await addStockToUsageEntity(stockUsage);
@@ -253,6 +281,7 @@ export const createStockUsage = async (req, res) => {
 
     const populatedStockUsage = await StockUsage.findById(stockUsage._id)
       .populate("center", "name centerType")
+      .populate("toCenter", "name centerType") 
       .populate("customer", "username name mobile")
       .populate("fromBuilding", "buildingName displayName")
       .populate("toBuilding", "buildingName displayName")
@@ -686,19 +715,30 @@ const getEntityConfig = (usageType, stockUsage) => {
   return config[usageType];
 };
 
-
 // const addToFaultyStockCollection = async (stockUsage) => {
 //   try {
 //     const FaultyStock = mongoose.model("FaultyStock");
 //     const Product = mongoose.model("Product");
+//     const Center = mongoose.model("Center");
 
 //     console.log("=== ADDING DAMAGE ITEMS TO FAULTY STOCK COLLECTION ===");
 
 //     for (let item of stockUsage.items) {
 //       const product = await Product.findById(item.product);
-      
+//       const center = await Center.findById(stockUsage.center).populate('reseller');
+//       const toCenter = stockUsage.toCenter ? await Center.findById(stockUsage.toCenter) : null;
 //       if (!product) {
 //         console.log(`Product not found: ${item.product}`);
+//         continue;
+//       }
+
+//       if (!center) {
+//         console.log(`Center not found: ${stockUsage.center}`);
+//         continue;
+//       }
+//       const reseller = center.reseller;
+//       if (!reseller) {
+//         console.log(`No reseller found for center: ${center.centerName}`);
 //         continue;
 //       }
 
@@ -706,13 +746,15 @@ const getEntityConfig = (usageType, stockUsage) => {
 //         date: stockUsage.date || new Date(),
 //         usageReference: stockUsage._id,
 //         center: stockUsage.center,
+//         toCenter: stockUsage.toCenter,
+//         reseller: reseller._id,
 //         product: item.product,
 //         quantity: item.quantity,
-//         serialNumbers: item.serialNumbers || [],
+//         serialNumbers: [],
 //         usageType: stockUsage.usageType,
 //         remark: stockUsage.remark || "Damage reported",
 //         reportedBy: stockUsage.createdBy,
-//         status: "damaged",
+//         overallStatus: "damaged",
 //         damageDate: new Date(),
 //         productDetails: {
 //           productTitle: product.productTitle,
@@ -721,6 +763,31 @@ const getEntityConfig = (usageType, stockUsage) => {
 //           trackSerialNumber: product.trackSerialNumber
 //         }
 //       };
+//       if (item.serialNumbers && item.serialNumbers.length > 0) {
+//         faultyStockData.serialNumbers = item.serialNumbers.map(serialNumber => ({
+//           serialNumber: serialNumber,
+//           status: "damaged",
+//           repairHistory: [{
+//             date: new Date(),
+//             status: "damaged",
+//             remark: "Initial damage report",
+//             updatedBy: stockUsage.createdBy
+//           }]
+//         }));
+//       } else {
+//         for (let i = 0; i < item.quantity; i++) {
+//           faultyStockData.serialNumbers.push({
+//             serialNumber: `NON-SERIAL-${Date.now()}-${i}`,
+//             status: "damaged",
+//             repairHistory: [{
+//               date: new Date(),
+//               status: "damaged",
+//               remark: "Initial damage report",
+//               updatedBy: stockUsage.createdBy
+//             }]
+//           });
+//         }
+//       }
 
 //       const existingFaultyStock = await FaultyStock.findOne({
 //         usageReference: stockUsage._id,
@@ -743,8 +810,6 @@ const getEntityConfig = (usageType, stockUsage) => {
 //         await faultyStock.save();
 //         console.log(`✓ Added to faulty stock: ${product.productTitle} - ${item.quantity} units`);
 //       }
-
-//       // Also update center stock to mark items as damaged
 //       await updateCenterStockForDamage(stockUsage.center, item, product);
 //     }
 
@@ -763,10 +828,14 @@ const addToFaultyStockCollection = async (stockUsage) => {
     const Center = mongoose.model("Center");
 
     console.log("=== ADDING DAMAGE ITEMS TO FAULTY STOCK COLLECTION ===");
+    console.log("Stock Usage ID:", stockUsage._id);
+    console.log("Center:", stockUsage.center);
+    console.log("To Center:", stockUsage.toCenter);
 
     for (let item of stockUsage.items) {
       const product = await Product.findById(item.product);
       const center = await Center.findById(stockUsage.center).populate('reseller');
+      const toCenter = stockUsage.toCenter ? await Center.findById(stockUsage.toCenter) : null;
       
       if (!product) {
         console.log(`Product not found: ${item.product}`);
@@ -777,79 +846,148 @@ const addToFaultyStockCollection = async (stockUsage) => {
         console.log(`Center not found: ${stockUsage.center}`);
         continue;
       }
+      
       const reseller = center.reseller;
       if (!reseller) {
         console.log(`No reseller found for center: ${center.centerName}`);
         continue;
       }
 
-      const faultyStockData = {
-        date: stockUsage.date || new Date(),
-        usageReference: stockUsage._id,
-        center: stockUsage.center,
-        reseller: reseller._id,
-        product: item.product,
-        quantity: item.quantity,
-        serialNumbers: [],
-        usageType: stockUsage.usageType,
-        remark: stockUsage.remark || "Damage reported",
-        reportedBy: stockUsage.createdBy,
-        overallStatus: "damaged",
-        damageDate: new Date(),
-        productDetails: {
-          productTitle: product.productTitle,
-          productCode: product.productCode,
-          productPrice: product.productPrice,
-          trackSerialNumber: product.trackSerialNumber
-        }
-      };
-      if (item.serialNumbers && item.serialNumbers.length > 0) {
-        faultyStockData.serialNumbers = item.serialNumbers.map(serialNumber => ({
-          serialNumber: serialNumber,
-          status: "damaged",
-          repairHistory: [{
-            date: new Date(),
-            status: "damaged",
-            remark: "Initial damage report",
-            updatedBy: stockUsage.createdBy
-          }]
-        }));
-      } else {
-        for (let i = 0; i < item.quantity; i++) {
-          faultyStockData.serialNumbers.push({
-            serialNumber: `NON-SERIAL-${Date.now()}-${i}`,
-            status: "damaged",
-            repairHistory: [{
-              date: new Date(),
-              status: "damaged",
-              remark: "Initial damage report",
-              updatedBy: stockUsage.createdBy
-            }]
-          });
-        }
-      }
-
+      console.log(`Processing product: ${product.productTitle}, Quantity: ${item.quantity}`);
+      console.log(`Product tracks serial: ${product.trackSerialNumber}`);
+      
       const existingFaultyStock = await FaultyStock.findOne({
-        usageReference: stockUsage._id,
-        product: item.product
-      });
+        product: item.product,
+        center: stockUsage.center,
+        toCenter: stockUsage.toCenter,
+        usageType: "Damage",
+        overallStatus: { $in: ["damaged", "under_repair", "partially_repaired","repaired"] }
+      }).populate("product", "productTitle productCode trackSerialNumber");
 
       if (existingFaultyStock) {
-        await FaultyStock.findByIdAndUpdate(
-          existingFaultyStock._id,
-          {
-            $set: faultyStockData,
-            $inc: {
-              quantity: item.quantity - (existingFaultyStock.quantity || 0)
-            }
+        console.log(`Found existing faulty stock for product: ${product.productTitle}`);
+        console.log(`Existing quantity: ${existingFaultyStock.quantity}, New quantity: ${item.quantity}`);
+  
+        existingFaultyStock.quantity += item.quantity;
+        
+        if (product.trackSerialNumber === "Yes") {
+          if (item.serialNumbers && item.serialNumbers.length > 0) {
+            const existingSerials = existingFaultyStock.serialNumbers.map(sn => sn.serialNumber);
+            const newSerials = item.serialNumbers.filter(sn => !existingSerials.includes(sn));
+            
+            console.log(`Adding ${newSerials.length} new serials to existing faulty stock`);
+            
+            newSerials.forEach(serialNumber => {
+              existingFaultyStock.serialNumbers.push({
+                serialNumber: serialNumber,
+                status: "damaged",
+                quantity: 1,
+                repairedQty: 0,
+                irrepairedQty: 0,
+                underRepairQty: 1,
+                repairHistory: [{
+                  date: new Date(),
+                  status: "damaged",
+                  remark: "Damage reported",
+                  quantity: 1,
+                  repairedQty: 0,
+                  irrepairedQty: 0,
+                  updatedBy: stockUsage.createdBy
+                }]
+              });
+            });
           }
-        );
-        console.log(`✓ Updated faulty stock for product: ${product.productTitle}`);
+        } else {
+          // NON-SERIALIZED PRODUCTS: NO SERIAL NUMBERS NEEDED
+          console.log(`Non-serialized product - updating quantity only, no serials`);
+          
+          // If there are any serial entries from previous implementation, remove them
+          if (existingFaultyStock.serialNumbers && existingFaultyStock.serialNumbers.length > 0) {
+            console.log(`Clearing old serial entries for non-serialized product`);
+            existingFaultyStock.serialNumbers = [];
+          }
+        }
+        
+        // Update quantity tracking fields
+        existingFaultyStock.repairedQty = existingFaultyStock.repairedQty || 0;
+        existingFaultyStock.irrepairedQty = existingFaultyStock.irrepairedQty || 0;
+        existingFaultyStock.underRepairQty = existingFaultyStock.quantity - 
+          (existingFaultyStock.repairedQty + existingFaultyStock.irrepairedQty);
+        
+        // Update overall status
+        existingFaultyStock.updateQuantitiesAndStatus();
+        
+        // Add usage reference if not already there
+        if (!existingFaultyStock.usageReference) {
+          existingFaultyStock.usageReference = stockUsage._id;
+        }
+        
+        await existingFaultyStock.save();
+        console.log(`✓ Updated existing faulty stock for product: ${product.productTitle}`);
+        
       } else {
+        // Create new faulty stock entry
+        console.log(`Creating new faulty stock entry for product: ${product.productTitle}`);
+        
+        const faultyStockData = {
+          date: stockUsage.date || new Date(),
+          usageReference: stockUsage._id,
+          center: stockUsage.center,
+          toCenter: stockUsage.toCenter,
+          reseller: reseller._id,
+          product: item.product,
+          quantity: item.quantity,
+          serialNumbers: [], // Start with empty array
+          usageType: stockUsage.usageType,
+          remark: stockUsage.remark || "Damage reported",
+          reportedBy: stockUsage.createdBy,
+          overallStatus: "damaged",
+          damageDate: new Date(),
+          productDetails: {
+            productTitle: product.productTitle,
+            productCode: product.productCode,
+            productPrice: product.productPrice,
+            trackSerialNumber: product.trackSerialNumber
+          },
+          repairedQty: 0,
+          irrepairedQty: 0,
+          underRepairQty: 0,
+          isSerialized: product.trackSerialNumber === "Yes"
+        };
+
+        if (product.trackSerialNumber === "Yes") {
+          // SERIALIZED PRODUCTS: Add serial numbers
+          if (item.serialNumbers && item.serialNumbers.length > 0) {
+            faultyStockData.serialNumbers = item.serialNumbers.map(serialNumber => ({
+              serialNumber: serialNumber,
+              status: "damaged",
+              quantity: 1,
+              repairedQty: 0,
+              irrepairedQty: 0,
+              underRepairQty: 1,
+              repairHistory: [{
+                date: new Date(),
+                status: "damaged",
+                remark: "Initial damage report",
+                quantity: 1,
+                repairedQty: 0,
+                irrepairedQty: 0,
+                updatedBy: stockUsage.createdBy
+              }]
+            }));
+          }
+        } else {
+          // NON-SERIALIZED PRODUCTS: NO SERIAL NUMBERS
+          console.log(`Non-serialized product - creating entry WITHOUT serial numbers`);
+          // serialNumbers array remains empty for non-serialized products
+        }
+
         const faultyStock = new FaultyStock(faultyStockData);
         await faultyStock.save();
-        console.log(`✓ Added to faulty stock: ${product.productTitle} - ${item.quantity} units`);
+        console.log(`✓ Created new faulty stock: ${product.productTitle} - ${item.quantity} units`);
       }
+      
+      // Update center stock for damaged items
       await updateCenterStockForDamage(stockUsage.center, item, product);
     }
 
@@ -859,8 +997,6 @@ const addToFaultyStockCollection = async (stockUsage) => {
     throw error;
   }
 };
-
-
 export const getAllStockUsage = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
@@ -926,6 +1062,7 @@ export const getAllStockUsage = async (req, res) => {
 
     const stockUsage = await StockUsage.find(filter)
       .populate("center", "name centerType centerName")
+      .populate("toCenter", "name centerType centerName")
       .populate("customer", "username name mobile")
       .populate("fromBuilding", "buildingName displayName")
       .populate("toBuilding", "buildingName displayName")
@@ -1012,6 +1149,7 @@ export const getStockUsageById = async (req, res) => {
 
     const stockUsage = await StockUsage.findById(id)
       .populate("center", "name centerType address1 address2 city state")
+      .populate("toCenter", "name centerType centerName") 
       .populate(
         "customer",
         "username name mobile email address1 address2 city state"
@@ -1110,6 +1248,32 @@ export const updateStockUsage = async (req, res) => {
       });
     }
 
+      // Validate toCenter for Damage usage type
+      if (updateData.usageType === "Damage" && !updateData.toCenter) {
+        return res.status(400).json({
+          success: false,
+          message: "To Center is required for damage usage type",
+        });
+      }
+  
+      // Validate toCenter exists if provided
+      if (updateData.toCenter && !mongoose.Types.ObjectId.isValid(updateData.toCenter)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid toCenter ID format",
+        });
+      }
+  
+      if (updateData.toCenter) {
+        const toCenterExists = await Center.findById(updateData.toCenter);
+        if (!toCenterExists) {
+          return res.status(400).json({
+            success: false,
+            message: "To Center not found",
+          });
+        }
+      }  
+
     if (updateData.usageType) {
       const validationError = await validateUsageTypeFields(
         updateData.usageType,
@@ -1162,6 +1326,7 @@ export const updateStockUsage = async (req, res) => {
       { new: true, runValidators: true }
     )
       .populate("center", "name centerType")
+      .populate("toCenter", "name centerType")
       .populate("customer", "username name mobile")
       .populate("fromBuilding", "buildingName displayName")
       .populate("toBuilding", "buildingName displayName")
@@ -1692,6 +1857,8 @@ const getEntityId = (stockUsage) => {
       return stockUsage.toBuilding;
     case "Control Room":
       return stockUsage.fromControlRoom;
+    case "Damage":
+      return stockUsage.toCenter;
     default:
       return null;
   }
@@ -1759,7 +1926,7 @@ export const deleteStockUsage = async (req, res) => {
 };
 
 const validateUsageTypeFields = async (usageType, fields) => {
-  const { customer, fromBuilding, toBuilding, fromControlRoom } = fields;
+  const { customer, fromBuilding, toBuilding, fromControlRoom, toCenter } = fields;
 
   switch (usageType) {
     case "Customer":
@@ -1801,6 +1968,15 @@ const validateUsageTypeFields = async (usageType, fields) => {
       const controlRoomExists = await ControlRoom.findById(fromControlRoom);
       if (!controlRoomExists) return "Control room not found";
       break;
+
+    case "Damage":
+      if (!toCenter)
+        return "To Center is required for damage usage type";
+      if (!mongoose.Types.ObjectId.isValid(toCenter))
+        return "Invalid toCenter ID";
+      const toCenterExists = await Center.findById(toCenter);
+      if (!toCenterExists) return "To Center not found";
+      break;
   }
 
   return null;
@@ -1820,6 +1996,7 @@ const addUsageTypeSpecificFields = (stockUsageData, fields) => {
     fromBuilding,
     toBuilding,
     fromControlRoom,
+    toCenter
   } = fields;
 
   switch (stockUsageData.usageType) {
@@ -1846,6 +2023,10 @@ const addUsageTypeSpecificFields = (stockUsageData, fields) => {
 
     case "Control Room":
       stockUsageData.fromControlRoom = fromControlRoom;
+      break;
+
+    case "Damage":
+      stockUsageData.toCenter = toCenter;
       break;
   }
 };
@@ -2163,7 +2344,7 @@ const processDamageApproval = async (
   const Product = mongoose.model("Product");
 
   console.log("=== PROCESSING DAMAGE APPROVAL ===");
-
+  console.log(`From Center: ${stockUsage.center}, To Center: ${stockUsage.toCenter}`);
   for (let item of stockUsage.items) {
     const product = await Product.findById(item.product);
     const centerStock = await CenterStock.findOne({
@@ -2192,8 +2373,10 @@ const processDamageApproval = async (
           serial.status = "damaged";
           serial.consumedDate = new Date();
           serial.consumedBy = approvedBy;
+          serial.currentLocation = stockUsage.toCenter; 
           serial.transferHistory.push({
             fromCenter: stockUsage.center,
+            toCenter: stockUsage.toCenter, 
             transferDate: new Date(),
             transferType: "damage_approved",
             referenceId: stockUsage._id,
@@ -2209,6 +2392,34 @@ const processDamageApproval = async (
     } else {
       console.log("Processing non-serialized product damage approval");
       console.log(`Damage approved for ${item.quantity} units`);
+      
+       // For non-serialized products, update toCenter's stock
+       if (stockUsage.toCenter) {
+        const toCenterStock = await CenterStock.findOne({
+          center: stockUsage.toCenter,
+          product: item.product,
+        });
+
+        if (toCenterStock) {
+          toCenterStock.damagedQuantity = (toCenterStock.damagedQuantity || 0) + item.quantity;
+          await toCenterStock.save();
+          console.log(`✓ Added ${item.quantity} damaged items to ${stockUsage.toCenter}`);
+        } else {
+          // Create new center stock record for toCenter
+          const newCenterStock = new CenterStock({
+            center: stockUsage.toCenter,
+            product: item.product,
+            totalQuantity: 0,
+            availableQuantity: 0,
+            consumedQuantity: 0,
+            damagedQuantity: item.quantity,
+            reservedQuantity: 0,
+          });
+          await newCenterStock.save();
+          console.log(`✓ Created new center stock record for ${stockUsage.toCenter} with ${item.quantity} damaged items`);
+        }
+      }
+
     }
 
     await centerStock.save();
@@ -2364,6 +2575,7 @@ export const getDamageRequestsByStatus = async (req, res) => {
 
     const damageRequests = await StockUsage.find(filter)
       .populate("center", "name centerType")
+      .populate("toCenter", "name centerType") 
       .populate({
         path: "items.product",
         select: "productTitle productCode trackSerialNumber",
@@ -3052,6 +3264,7 @@ export const getStockUsageByCenter = async (req, res) => {
 
     const stockUsages = await StockUsage.find(query)
       .populate("customer", "name username mobile")
+      .populate("toCenter", "name centerType centerName") 
       .populate("fromBuilding", "buildingName displayName")
       .populate("toBuilding", "buildingName displayName")
       .populate("fromControlRoom", "buildingName displayName")
@@ -3090,6 +3303,9 @@ export const getStockUsageByCenter = async (req, res) => {
             entityName =
               usage.fromControlRoom?.buildingName || "Unknown Control Room";
             break;
+          case "Damage":
+            entityName = usage.toCenter?.centerName || "Damage Center";
+            break;
           default:
             entityName = usage.usageType;
         }
@@ -3099,6 +3315,7 @@ export const getStockUsageByCenter = async (req, res) => {
           Date: usage.date.toLocaleDateString(),
           Type: usage.usageType,
           Center: usage.center?.centerName || "Unknown Center",
+          ToCenter: usage.toCenter?.centerName || "N/A",
           Product: item.product?.productTitle || "Unknown Product",
           "Old Stock": item.oldStock || 0,
           Qty: item.quantity,
@@ -4835,10 +5052,6 @@ if (!centerStockUpdate) {
   }
 };
 
-
-/**
- * Get all faulty stock records with filtering and pagination
- */
 export const getAllFaultyStock = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
@@ -4869,28 +5082,74 @@ export const getAllFaultyStock = async (req, res) => {
     } = req.query;
 
     const filter = {};
+    
+    // Apply center filter based on permissions
     if (
       permissions.view_usage_own_center &&
       !permissions.view_usage_all_center &&
       userCenter
     ) {
+      // For users with only own center access, show only records where THEIR CENTER reported the damage
+      // This is the 'center' field, not 'toCenter'
       filter.center = userCenter._id || userCenter;
-    } else if (center) {
-      filter.center = center;
+    } else if (permissions.view_usage_all_center) {
+      // Users with all center access can see all records
+      if (center) {
+        // If user specifies a center, show records where that center reported the damage
+        filter.center = center;
+      }
+      // If no center specified, show all records
     }
+    
+    // Additional filters
     if (startDate || endDate) {
       filter.date = {};
       if (startDate) filter.date.$gte = new Date(startDate);
       if (endDate) filter.date.$lte = new Date(endDate);
     }
+    
     if (status && status !== "all") {
-      filter.status = status;
+      if (status === "damaged") {
+        // For damaged status, find records where overallStatus is "damaged" or serials have damaged status
+        filter.$or = [
+          { overallStatus: "damaged" },
+          { "serialNumbers.status": "damaged" }
+        ];
+      } else if (status === "under_repair") {
+        filter.overallStatus = "under_repair";
+      } else if (status === "repaired") {
+        filter.overallStatus = "repaired";
+      } else if (status === "irreparable") {
+        filter.overallStatus = "irreparable";
+      } else if (status === "partially_repaired") {
+        filter.overallStatus = "partially_repaired";
+      } else {
+        filter.overallStatus = status;
+      }
+    } else {
+      // DEFAULT: Only show records that have DAMAGED items available for transfer
+      // This excludes fully repaired or fully irreparable records
+      filter.$or = [
+        { overallStatus: "damaged" },
+        { overallStatus: "partially_repaired" },
+        { "serialNumbers.status": "damaged" }
+      ];
     }
+    
     if (product) {
       filter.product = product;
     }
+    
     if (usageType && usageType !== "all") {
       filter.usageType = usageType;
+    }
+
+    // Add search functionality for serial numbers if search query provided
+    if (search) {
+      filter.$or = [
+        { "serialNumbers.serialNumber": { $regex: search, $options: "i" } },
+        { remark: { $regex: search, $options: "i" } }
+      ];
     }
 
     const pageNum = parseInt(page);
@@ -4899,6 +5158,7 @@ export const getAllFaultyStock = async (req, res) => {
 
     const sort = {};
     sort[sortBy] = sortOrder === "desc" ? -1 : 1;
+    
     let FaultyStock;
     try {
       FaultyStock = mongoose.model("FaultyStock");
@@ -4909,75 +5169,164 @@ export const getAllFaultyStock = async (req, res) => {
       });
     }
 
+    // Fetch faulty stock records with necessary population
     const faultyStockRecords = await FaultyStock.find(filter)
-      .populate("center", "centerName centerType")
-      .populate("product", "productTitle  productPrice salePrice")
+      .populate("center", "centerName centerCode centerType")
+      .populate("toCenter", "centerName centerCode centerType")
+      .populate("product", "productTitle productCode productPrice salePrice trackSerialNumber")
       .populate("usageReference", "usageType")
       .populate("reportedBy", "name email")
       .sort(sort)
       .skip(skip)
       .limit(limitNum);
 
+    // Process each record to calculate damaged quantities
+    const processedRecords = faultyStockRecords.map(record => {
+      // Calculate damaged quantity based on product type
+      let damagedQuantity = 0;
+      let availableForTransfer = false;
+      
+      if (record.product?.trackSerialNumber === "Yes") {
+        // SERIALIZED PRODUCTS
+        // Count serials with "damaged" status
+        const damagedSerials = record.serialNumbers?.filter(sn => sn.status === "damaged") || [];
+        damagedQuantity = damagedSerials.length;
+        
+        // Get damaged serial numbers
+        const damagedSerialNumbers = damagedSerials.map(sn => sn.serialNumber);
+        
+        // Check if available for transfer (has damaged items)
+        availableForTransfer = damagedQuantity > 0;
+        
+        // Return enhanced record with damaged info
+        return {
+          ...record.toObject(),
+          damagedQty: damagedQuantity,
+          availableForTransfer: availableForTransfer,
+          damagedSerialNumbers: damagedSerialNumbers,
+          // For serialized products, also include total counts
+          totalDamagedSerials: damagedQuantity,
+          // Status breakdown
+          statusBreakdown: {
+            damaged: damagedQuantity,
+            underRepair: record.serialNumbers?.filter(sn => sn.status === "under_repair").length || 0,
+            repaired: record.serialNumbers?.filter(sn => sn.status === "repaired").length || 0,
+            irreparable: record.serialNumbers?.filter(sn => sn.status === "irreparable").length || 0
+          }
+        };
+      } else {
+        // NON-SERIALIZED PRODUCTS
+        // Calculate damaged quantity based on overall status and quantities
+        if (record.overallStatus === "damaged") {
+          damagedQuantity = record.quantity;
+        } else if (record.overallStatus === "partially_repaired") {
+          // For partially repaired, damaged quantity = total - (repaired + irreparable + underRepair)
+          damagedQuantity = record.quantity - 
+            (record.repairedQty || 0) - 
+            (record.irrepairedQty || 0) - 
+            (record.underRepairQty || 0);
+        } else {
+          damagedQuantity = 0;
+        }
+        
+        availableForTransfer = damagedQuantity > 0;
+        
+        return {
+          ...record.toObject(),
+          damagedQty: damagedQuantity,
+          availableForTransfer: availableForTransfer,
+          // For non-serialized, we don't have serial numbers
+          damagedSerialNumbers: [],
+          // Status breakdown for non-serialized
+          statusBreakdown: {
+            damaged: damagedQuantity,
+            underRepair: record.underRepairQty || 0,
+            repaired: record.repairedQty || 0,
+            irreparable: record.irrepairedQty || 0
+          }
+        };
+      }
+    });
+
+    // Filter out records with no damaged items
+    const filteredRecords = processedRecords.filter(record => record.availableForTransfer);
+
     const total = await FaultyStock.countDocuments(filter);
-    const totalPages = Math.ceil(total / limitNum);
-    const stats = await FaultyStock.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: null,
-          totalItems: { $sum: "$quantity" },
-          totalValue: { 
-            $sum: { 
-              $multiply: ["$quantity", "$productDetails.productPrice"] 
-            } 
-          },
-          uniqueProducts: { $addToSet: "$product" }
-        }
-      },
-      {
-        $project: {
-          totalItems: 1,
-          totalValue: 1,
-          uniqueProductCount: { $size: "$uniqueProducts" }
-        }
+    const totalFiltered = filteredRecords.length;
+    const totalPages = Math.ceil(totalFiltered / limitNum);
+    
+    // Calculate statistics
+    let totalDamagedItems = 0;
+    let totalUnderRepairItems = 0;
+    let totalRepairedItems = 0;
+    let totalIrreparableItems = 0;
+    let totalValue = 0;
+    
+    filteredRecords.forEach(record => {
+      totalDamagedItems += record.damagedQty || 0;
+      totalUnderRepairItems += record.statusBreakdown?.underRepair || 0;
+      totalRepairedItems += record.statusBreakdown?.repaired || 0;
+      totalIrreparableItems += record.statusBreakdown?.irreparable || 0;
+      
+      // Calculate value if product price is available
+      if (record.product?.productPrice && record.damagedQty) {
+        totalValue += record.product.productPrice * record.damagedQty;
       }
-    ]);
-    const statusStats = await FaultyStock.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: "$status",
-          count: { $sum: 1 },
-          totalQuantity: { $sum: "$quantity" }
-        }
-      }
-    ]);
-    const usageTypeStats = await FaultyStock.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: "$usageType",
-          count: { $sum: 1 },
-          totalQuantity: { $sum: "$quantity" }
-        }
-      }
-    ]);
+    });
+    
+    // Get unique products
+    const uniqueProducts = [...new Set(filteredRecords.map(r => r.product?._id?.toString()).filter(Boolean))];
+    
+    // Status distribution
+    const statusStats = {
+      damaged: filteredRecords.filter(r => r.overallStatus === "damaged").length,
+      partially_repaired: filteredRecords.filter(r => r.overallStatus === "partially_repaired").length,
+      under_repair: filteredRecords.filter(r => r.overallStatus === "under_repair").length,
+      repaired: filteredRecords.filter(r => r.overallStatus === "repaired").length,
+      irreparable: filteredRecords.filter(r => r.overallStatus === "irreparable").length
+    };
+    
+    // Usage type distribution
+    const usageTypeCounts = {};
+    filteredRecords.forEach(record => {
+      const usageType = record.usageType || "Damage";
+      usageTypeCounts[usageType] = (usageTypeCounts[usageType] || 0) + 1;
+    });
+    
+    const usageTypeStats = Object.entries(usageTypeCounts).map(([type, count]) => ({
+      _id: type,
+      count: count,
+      totalQuantity: filteredRecords
+        .filter(r => r.usageType === type)
+        .reduce((sum, r) => sum + (r.damagedQty || 0), 0)
+    }));
 
     res.json({
       success: true,
-      data: faultyStockRecords,
+      data: filteredRecords,
       statistics: {
         totalRecords: total,
-        totalItems: stats[0]?.totalItems || 0,
-        totalValue: stats[0]?.totalValue || 0,
-        uniqueProducts: stats[0]?.uniqueProductCount || 0,
-        statusDistribution: statusStats,
+        totalFilteredRecords: totalFiltered,
+        totalDamagedItems: totalDamagedItems,
+        totalUnderRepairItems: totalUnderRepairItems,
+        totalRepairedItems: totalRepairedItems,
+        totalIrreparableItems: totalIrreparableItems,
+        totalValue: totalValue,
+        uniqueProducts: uniqueProducts.length,
+        statusDistribution: Object.entries(statusStats).map(([status, count]) => ({
+          _id: status,
+          count: count,
+          totalQuantity: filteredRecords
+            .filter(r => r.overallStatus === status)
+            .reduce((sum, r) => sum + (r.damagedQty || 0), 0)
+        })),
         usageTypeDistribution: usageTypeStats
       },
       pagination: {
         currentPage: pageNum,
         totalPages,
         totalRecords: total,
+        totalFiltered: totalFiltered,
         hasNext: pageNum < totalPages,
         hasPrev: pageNum > 1,
         limit: limitNum
@@ -4986,7 +5335,7 @@ export const getAllFaultyStock = async (req, res) => {
         center: center || "all",
         startDate: startDate || null,
         endDate: endDate || null,
-        status: status || "all",
+        status: status || "damaged_only",
         product: product || "all",
         usageType: usageType || "all",
         search: search || ""
@@ -4997,6 +5346,7 @@ export const getAllFaultyStock = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch faulty stock records",
+      error: process.env.NODE_ENV === "development" ? error.message : "Internal server error"
     });
   }
 };

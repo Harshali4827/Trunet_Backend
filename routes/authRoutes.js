@@ -10,8 +10,12 @@ import {
   updateUser,
   getLoginHistory,
   deleteUser,
+  selectCenter,
+  switchCenter,
+  refreshToken,
 } from "../controllers/authController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
+import { verifyCenterSelectToken } from "../middlewares/centerSelectionMiddleware.js";
 
 const router = express.Router();
 const MODULE = "Settings";
@@ -19,11 +23,13 @@ const MODULE = "Settings";
 router.post("/login", login);
 
 router.post("/register", register);
+router.post('/select-center',verifyCenterSelectToken, selectCenter);
+
 router.get("/me", protect, getMe);
 
 router.get("/", protect, getAllUsers);
 router.get("/login-history", protect, getLoginHistory);
-
+router.get("/refresh-token",refreshToken);
 router.put(
   "/update-password",
   protect,
@@ -45,6 +51,7 @@ router.put(
   authorizeAccess(MODULE, "manage_user"),
   updateUser
 );
+router.post('/switch-center', protect, switchCenter);
 router.delete(
   "/user/:id",
   protect,
