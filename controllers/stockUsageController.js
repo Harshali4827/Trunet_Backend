@@ -820,6 +820,184 @@ const getEntityConfig = (usageType, stockUsage) => {
 //   }
 // };
 
+//override repaired qty
+
+// const addToFaultyStockCollection = async (stockUsage) => {
+//   try {
+//     const FaultyStock = mongoose.model("FaultyStock");
+//     const Product = mongoose.model("Product");
+//     const Center = mongoose.model("Center");
+
+//     console.log("=== ADDING DAMAGE ITEMS TO FAULTY STOCK COLLECTION ===");
+//     console.log("Stock Usage ID:", stockUsage._id);
+//     console.log("Center:", stockUsage.center);
+//     console.log("To Center:", stockUsage.toCenter);
+
+//     for (let item of stockUsage.items) {
+//       const product = await Product.findById(item.product);
+//       const center = await Center.findById(stockUsage.center).populate('reseller');
+//       const toCenter = stockUsage.toCenter ? await Center.findById(stockUsage.toCenter) : null;
+      
+//       if (!product) {
+//         console.log(`Product not found: ${item.product}`);
+//         continue;
+//       }
+
+//       if (!center) {
+//         console.log(`Center not found: ${stockUsage.center}`);
+//         continue;
+//       }
+      
+//       const reseller = center.reseller;
+//       if (!reseller) {
+//         console.log(`No reseller found for center: ${center.centerName}`);
+//         continue;
+//       }
+
+//       console.log(`Processing product: ${product.productTitle}, Quantity: ${item.quantity}`);
+//       console.log(`Product tracks serial: ${product.trackSerialNumber}`);
+      
+//       const existingFaultyStock = await FaultyStock.findOne({
+//         product: item.product,
+//         center: stockUsage.center,
+//         toCenter: stockUsage.toCenter,
+//         usageType: "Damage",
+//         overallStatus: { $in: ["damaged", "under_repair", "partially_repaired","repaired"] }
+//       }).populate("product", "productTitle productCode trackSerialNumber");
+
+//       if (existingFaultyStock) {
+//         console.log(`Found existing faulty stock for product: ${product.productTitle}`);
+//         console.log(`Existing quantity: ${existingFaultyStock.quantity}, New quantity: ${item.quantity}`);
+  
+//         existingFaultyStock.quantity += item.quantity;
+        
+//         if (product.trackSerialNumber === "Yes") {
+//           if (item.serialNumbers && item.serialNumbers.length > 0) {
+//             const existingSerials = existingFaultyStock.serialNumbers.map(sn => sn.serialNumber);
+//             const newSerials = item.serialNumbers.filter(sn => !existingSerials.includes(sn));
+            
+//             console.log(`Adding ${newSerials.length} new serials to existing faulty stock`);
+            
+//             newSerials.forEach(serialNumber => {
+//               existingFaultyStock.serialNumbers.push({
+//                 serialNumber: serialNumber,
+//                 status: "damaged",
+//                 quantity: 1,
+//                 repairedQty: 0,
+//                 irrepairedQty: 0,
+//                 underRepairQty: 1,
+//                 repairHistory: [{
+//                   date: new Date(),
+//                   status: "damaged",
+//                   remark: "Damage reported",
+//                   quantity: 1,
+//                   repairedQty: 0,
+//                   irrepairedQty: 0,
+//                   updatedBy: stockUsage.createdBy
+//                 }]
+//               });
+//             });
+//           }
+//         } else {
+//           // NON-SERIALIZED PRODUCTS: NO SERIAL NUMBERS NEEDED
+//           console.log(`Non-serialized product - updating quantity only, no serials`);
+          
+//           // If there are any serial entries from previous implementation, remove them
+//           if (existingFaultyStock.serialNumbers && existingFaultyStock.serialNumbers.length > 0) {
+//             console.log(`Clearing old serial entries for non-serialized product`);
+//             existingFaultyStock.serialNumbers = [];
+//           }
+//         }
+        
+//         // Update quantity tracking fields
+//         existingFaultyStock.repairedQty = existingFaultyStock.repairedQty || 0;
+//         existingFaultyStock.irrepairedQty = existingFaultyStock.irrepairedQty || 0;
+//         existingFaultyStock.underRepairQty = existingFaultyStock.quantity - 
+//           (existingFaultyStock.repairedQty + existingFaultyStock.irrepairedQty);
+        
+//         // Update overall status
+//         existingFaultyStock.updateQuantitiesAndStatus();
+        
+//         // Add usage reference if not already there
+//         if (!existingFaultyStock.usageReference) {
+//           existingFaultyStock.usageReference = stockUsage._id;
+//         }
+        
+//         await existingFaultyStock.save();
+//         console.log(`✓ Updated existing faulty stock for product: ${product.productTitle}`);
+        
+//       } else {
+//         // Create new faulty stock entry
+//         console.log(`Creating new faulty stock entry for product: ${product.productTitle}`);
+        
+//         const faultyStockData = {
+//           date: stockUsage.date || new Date(),
+//           usageReference: stockUsage._id,
+//           center: stockUsage.center,
+//           toCenter: stockUsage.toCenter,
+//           reseller: reseller._id,
+//           product: item.product,
+//           quantity: item.quantity,
+//           serialNumbers: [], // Start with empty array
+//           usageType: stockUsage.usageType,
+//           remark: stockUsage.remark || "Damage reported",
+//           reportedBy: stockUsage.createdBy,
+//           overallStatus: "damaged",
+//           damageDate: new Date(),
+//           productDetails: {
+//             productTitle: product.productTitle,
+//             productCode: product.productCode,
+//             productPrice: product.productPrice,
+//             trackSerialNumber: product.trackSerialNumber
+//           },
+//           repairedQty: 0,
+//           irrepairedQty: 0,
+//           underRepairQty: 0,
+//           isSerialized: product.trackSerialNumber === "Yes"
+//         };
+
+//         if (product.trackSerialNumber === "Yes") {
+//           // SERIALIZED PRODUCTS: Add serial numbers
+//           if (item.serialNumbers && item.serialNumbers.length > 0) {
+//             faultyStockData.serialNumbers = item.serialNumbers.map(serialNumber => ({
+//               serialNumber: serialNumber,
+//               status: "damaged",
+//               quantity: 1,
+//               repairedQty: 0,
+//               irrepairedQty: 0,
+//               underRepairQty: 1,
+//               repairHistory: [{
+//                 date: new Date(),
+//                 status: "damaged",
+//                 remark: "Initial damage report",
+//                 quantity: 1,
+//                 repairedQty: 0,
+//                 irrepairedQty: 0,
+//                 updatedBy: stockUsage.createdBy
+//               }]
+//             }));
+//           }
+//         } else {
+//           // NON-SERIALIZED PRODUCTS: NO SERIAL NUMBERS
+//           console.log(`Non-serialized product - creating entry WITHOUT serial numbers`);
+//           // serialNumbers array remains empty for non-serialized products
+//         }
+
+//         const faultyStock = new FaultyStock(faultyStockData);
+//         await faultyStock.save();
+//         console.log(`✓ Created new faulty stock: ${product.productTitle} - ${item.quantity} units`);
+//       }
+      
+//       // Update center stock for damaged items
+//       await updateCenterStockForDamage(stockUsage.center, item, product);
+//     }
+
+//     console.log("=== DAMAGE ITEMS ADDED TO FAULTY STOCK COLLECTION ===");
+//   } catch (error) {
+//     console.error("Error adding to faulty stock collection:", error);
+//     throw error;
+//   }
+// };
 
 const addToFaultyStockCollection = async (stockUsage) => {
   try {
@@ -861,13 +1039,24 @@ const addToFaultyStockCollection = async (stockUsage) => {
         center: stockUsage.center,
         toCenter: stockUsage.toCenter,
         usageType: "Damage",
-        overallStatus: { $in: ["damaged", "under_repair", "partially_repaired","repaired"] }
+        overallStatus: { $in: ["damaged", "under_repair", "partially_repaired", "repaired"] }
       }).populate("product", "productTitle productCode trackSerialNumber");
 
       if (existingFaultyStock) {
         console.log(`Found existing faulty stock for product: ${product.productTitle}`);
         console.log(`Existing quantity: ${existingFaultyStock.quantity}, New quantity: ${item.quantity}`);
-  
+        
+        // Preserve existing repair quantities
+        const existingRepairedQty = existingFaultyStock.repairedQty || 0;
+        const existingIrrepairedQty = existingFaultyStock.irrepairedQty || 0;
+        const existingTransferredQty = existingFaultyStock.transferredQty || 0;
+        
+        // CRITICAL FIX: DO NOT ADD to underRepairQty for new damage reports
+        // New damage items should remain as damaged, not under repair
+        // Only existing underRepairQty stays (for items already sent to repair)
+        const existingUnderRepairQty = existingFaultyStock.underRepairQty || 0;
+        
+        // Update total quantity
         existingFaultyStock.quantity += item.quantity;
         
         if (product.trackSerialNumber === "Yes") {
@@ -880,14 +1069,14 @@ const addToFaultyStockCollection = async (stockUsage) => {
             newSerials.forEach(serialNumber => {
               existingFaultyStock.serialNumbers.push({
                 serialNumber: serialNumber,
-                status: "damaged",
+                status: "damaged", // NEW ITEMS ARE DAMAGED, NOT UNDER REPAIR
                 quantity: 1,
                 repairedQty: 0,
                 irrepairedQty: 0,
-                underRepairQty: 1,
+                underRepairQty: 0, // NEW DAMAGED ITEMS: underRepairQty = 0
                 repairHistory: [{
                   date: new Date(),
-                  status: "damaged",
+                  status: "damaged", // STATUS IS DAMAGED
                   remark: "Damage reported",
                   quantity: 1,
                   repairedQty: 0,
@@ -908,11 +1097,14 @@ const addToFaultyStockCollection = async (stockUsage) => {
           }
         }
         
-        // Update quantity tracking fields
-        existingFaultyStock.repairedQty = existingFaultyStock.repairedQty || 0;
-        existingFaultyStock.irrepairedQty = existingFaultyStock.irrepairedQty || 0;
-        existingFaultyStock.underRepairQty = existingFaultyStock.quantity - 
-          (existingFaultyStock.repairedQty + existingFaultyStock.irrepairedQty);
+        // Restore preserved repair quantities
+        existingFaultyStock.repairedQty = existingRepairedQty;
+        existingFaultyStock.irrepairedQty = existingIrrepairedQty;
+        existingFaultyStock.transferredQty = existingTransferredQty;
+        existingFaultyStock.underRepairQty = existingUnderRepairQty; // KEEP existing under repair items
+        
+        // For new damage items, they remain as damaged (not under repair)
+        // So we don't increase underRepairQty
         
         // Update overall status
         existingFaultyStock.updateQuantitiesAndStatus();
@@ -924,6 +1116,10 @@ const addToFaultyStockCollection = async (stockUsage) => {
         
         await existingFaultyStock.save();
         console.log(`✓ Updated existing faulty stock for product: ${product.productTitle}`);
+        console.log(`Repaired Qty: ${existingFaultyStock.repairedQty}`);
+        console.log(`Irrepaired Qty: ${existingFaultyStock.irrepairedQty}`);
+        console.log(`Under Repair Qty: ${existingFaultyStock.underRepairQty} (should only include items sent to repair)`);
+        console.log(`Damaged Qty (virtual): ${existingFaultyStock.damagedQty} (should include new damage items)`);
         
       } else {
         // Create new faulty stock entry
@@ -941,7 +1137,7 @@ const addToFaultyStockCollection = async (stockUsage) => {
           usageType: stockUsage.usageType,
           remark: stockUsage.remark || "Damage reported",
           reportedBy: stockUsage.createdBy,
-          overallStatus: "damaged",
+          overallStatus: "damaged", // INITIAL STATUS IS DAMAGED
           damageDate: new Date(),
           productDetails: {
             productTitle: product.productTitle,
@@ -949,9 +1145,11 @@ const addToFaultyStockCollection = async (stockUsage) => {
             productPrice: product.productPrice,
             trackSerialNumber: product.trackSerialNumber
           },
+          // CRITICAL: NEW DAMAGE ITEMS - NOT UNDER REPAIR YET
           repairedQty: 0,
           irrepairedQty: 0,
-          underRepairQty: 0,
+          underRepairQty: 0, // ZERO INITIALLY - will increase when sent to repair
+          transferredQty: 0,
           isSerialized: product.trackSerialNumber === "Yes"
         };
 
@@ -960,14 +1158,14 @@ const addToFaultyStockCollection = async (stockUsage) => {
           if (item.serialNumbers && item.serialNumbers.length > 0) {
             faultyStockData.serialNumbers = item.serialNumbers.map(serialNumber => ({
               serialNumber: serialNumber,
-              status: "damaged",
+              status: "damaged", // INITIAL STATUS: DAMAGED
               quantity: 1,
               repairedQty: 0,
               irrepairedQty: 0,
-              underRepairQty: 1,
+              underRepairQty: 0, // ZERO - not under repair yet
               repairHistory: [{
                 date: new Date(),
-                status: "damaged",
+                status: "damaged", // STATUS: DAMAGED
                 remark: "Initial damage report",
                 quantity: 1,
                 repairedQty: 0,
@@ -985,6 +1183,7 @@ const addToFaultyStockCollection = async (stockUsage) => {
         const faultyStock = new FaultyStock(faultyStockData);
         await faultyStock.save();
         console.log(`✓ Created new faulty stock: ${product.productTitle} - ${item.quantity} units`);
+        console.log(`Initial status: damaged, UnderRepairQty: 0`);
       }
       
       // Update center stock for damaged items
@@ -997,6 +1196,7 @@ const addToFaultyStockCollection = async (stockUsage) => {
     throw error;
   }
 };
+
 export const getAllStockUsage = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
@@ -5052,6 +5252,306 @@ if (!centerStockUpdate) {
   }
 };
 
+// export const getAllFaultyStock = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+//       req,
+//       ["view_usage_own_center", "view_usage_all_center"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. view_usage_own_center or view_usage_all_center permission required.",
+//       });
+//     }
+
+//     const {
+//       center,
+//       startDate,
+//       endDate,
+//       status,
+//       product,
+//       usageType,
+//       page = 1,
+//       limit = 100,
+//       sortBy = "date",
+//       sortOrder = "desc",
+//       search,
+//     } = req.query;
+
+//     const filter = {};
+    
+//     // Apply center filter based on permissions
+//     if (
+//       permissions.view_usage_own_center &&
+//       !permissions.view_usage_all_center &&
+//       userCenter
+//     ) {
+//       // For users with only own center access, show only records where THEIR CENTER reported the damage
+//       // This is the 'center' field, not 'toCenter'
+//       filter.center = userCenter._id || userCenter;
+//     } else if (permissions.view_usage_all_center) {
+//       // Users with all center access can see all records
+//       if (center) {
+//         // If user specifies a center, show records where that center reported the damage
+//         filter.center = center;
+//       }
+//       // If no center specified, show all records
+//     }
+    
+//     // Additional filters
+//     if (startDate || endDate) {
+//       filter.date = {};
+//       if (startDate) filter.date.$gte = new Date(startDate);
+//       if (endDate) filter.date.$lte = new Date(endDate);
+//     }
+    
+//     if (status && status !== "all") {
+//       if (status === "damaged") {
+//         // For damaged status, find records where overallStatus is "damaged" or serials have damaged status
+//         filter.$or = [
+//           { overallStatus: "damaged" },
+//           { "serialNumbers.status": "damaged" }
+//         ];
+//       } else if (status === "under_repair") {
+//         filter.overallStatus = "under_repair";
+//       } else if (status === "repaired") {
+//         filter.overallStatus = "repaired";
+//       } else if (status === "irreparable") {
+//         filter.overallStatus = "irreparable";
+//       } else if (status === "partially_repaired") {
+//         filter.overallStatus = "partially_repaired";
+//       } else {
+//         filter.overallStatus = status;
+//       }
+//     } else {
+//       // DEFAULT: Only show records that have DAMAGED items available for transfer
+//       // This excludes fully repaired or fully irreparable records
+//       filter.$or = [
+//         { overallStatus: "damaged" },
+//         { overallStatus: "partially_repaired" },
+//         { "serialNumbers.status": "damaged" }
+//       ];
+//     }
+    
+//     if (product) {
+//       filter.product = product;
+//     }
+    
+//     if (usageType && usageType !== "all") {
+//       filter.usageType = usageType;
+//     }
+
+//     // Add search functionality for serial numbers if search query provided
+//     if (search) {
+//       filter.$or = [
+//         { "serialNumbers.serialNumber": { $regex: search, $options: "i" } },
+//         { remark: { $regex: search, $options: "i" } }
+//       ];
+//     }
+
+//     const pageNum = parseInt(page);
+//     const limitNum = parseInt(limit);
+//     const skip = (pageNum - 1) * limitNum;
+
+//     const sort = {};
+//     sort[sortBy] = sortOrder === "desc" ? -1 : 1;
+    
+//     let FaultyStock;
+//     try {
+//       FaultyStock = mongoose.model("FaultyStock");
+//     } catch (error) {
+//       return res.status(500).json({
+//         success: false,
+//         message: "FaultyStock model not available",
+//       });
+//     }
+
+//     // Fetch faulty stock records with necessary population
+//     const faultyStockRecords = await FaultyStock.find(filter)
+//       .populate("center", "centerName centerCode centerType")
+//       .populate("toCenter", "centerName centerCode centerType")
+//       .populate("product", "productTitle productCode productPrice salePrice trackSerialNumber")
+//       .populate("usageReference", "usageType")
+//       .populate("reportedBy", "name email")
+//       .sort(sort)
+//       .skip(skip)
+//       .limit(limitNum);
+
+//     // Process each record to calculate damaged quantities
+//     const processedRecords = faultyStockRecords.map(record => {
+//       // Calculate damaged quantity based on product type
+//       let damagedQuantity = 0;
+//       let availableForTransfer = false;
+      
+//       if (record.product?.trackSerialNumber === "Yes") {
+//         // SERIALIZED PRODUCTS
+//         // Count serials with "damaged" status
+//         const damagedSerials = record.serialNumbers?.filter(sn => sn.status === "damaged") || [];
+//         damagedQuantity = damagedSerials.length;
+        
+//         // Get damaged serial numbers
+//         const damagedSerialNumbers = damagedSerials.map(sn => sn.serialNumber);
+        
+//         // Check if available for transfer (has damaged items)
+//         availableForTransfer = damagedQuantity > 0;
+        
+//         // Return enhanced record with damaged info
+//         return {
+//           ...record.toObject(),
+//           damagedQty: damagedQuantity,
+//           availableForTransfer: availableForTransfer,
+//           damagedSerialNumbers: damagedSerialNumbers,
+//           // For serialized products, also include total counts
+//           totalDamagedSerials: damagedQuantity,
+//           // Status breakdown
+//           statusBreakdown: {
+//             damaged: damagedQuantity,
+//             underRepair: record.serialNumbers?.filter(sn => sn.status === "under_repair").length || 0,
+//             repaired: record.serialNumbers?.filter(sn => sn.status === "repaired").length || 0,
+//             irreparable: record.serialNumbers?.filter(sn => sn.status === "irreparable").length || 0
+//           }
+//         };
+//       } else {
+//         // NON-SERIALIZED PRODUCTS
+//         // Calculate damaged quantity based on overall status and quantities
+//         if (record.overallStatus === "damaged") {
+//           damagedQuantity = record.quantity;
+//         } else if (record.overallStatus === "partially_repaired") {
+//           // For partially repaired, damaged quantity = total - (repaired + irreparable + underRepair)
+//           damagedQuantity = record.quantity - 
+//             (record.repairedQty || 0) - 
+//             (record.irrepairedQty || 0) - 
+//             (record.underRepairQty || 0);
+//         } else {
+//           damagedQuantity = 0;
+//         }
+        
+//         availableForTransfer = damagedQuantity > 0;
+        
+//         return {
+//           ...record.toObject(),
+//           damagedQty: damagedQuantity,
+//           availableForTransfer: availableForTransfer,
+//           // For non-serialized, we don't have serial numbers
+//           damagedSerialNumbers: [],
+//           // Status breakdown for non-serialized
+//           statusBreakdown: {
+//             damaged: damagedQuantity,
+//             underRepair: record.underRepairQty || 0,
+//             repaired: record.repairedQty || 0,
+//             irreparable: record.irrepairedQty || 0
+//           }
+//         };
+//       }
+//     });
+
+//     // Filter out records with no damaged items
+//     const filteredRecords = processedRecords.filter(record => record.availableForTransfer);
+
+//     const total = await FaultyStock.countDocuments(filter);
+//     const totalFiltered = filteredRecords.length;
+//     const totalPages = Math.ceil(totalFiltered / limitNum);
+    
+//     // Calculate statistics
+//     let totalDamagedItems = 0;
+//     let totalUnderRepairItems = 0;
+//     let totalRepairedItems = 0;
+//     let totalIrreparableItems = 0;
+//     let totalValue = 0;
+    
+//     filteredRecords.forEach(record => {
+//       totalDamagedItems += record.damagedQty || 0;
+//       totalUnderRepairItems += record.statusBreakdown?.underRepair || 0;
+//       totalRepairedItems += record.statusBreakdown?.repaired || 0;
+//       totalIrreparableItems += record.statusBreakdown?.irreparable || 0;
+      
+//       // Calculate value if product price is available
+//       if (record.product?.productPrice && record.damagedQty) {
+//         totalValue += record.product.productPrice * record.damagedQty;
+//       }
+//     });
+    
+//     // Get unique products
+//     const uniqueProducts = [...new Set(filteredRecords.map(r => r.product?._id?.toString()).filter(Boolean))];
+    
+//     // Status distribution
+//     const statusStats = {
+//       damaged: filteredRecords.filter(r => r.overallStatus === "damaged").length,
+//       partially_repaired: filteredRecords.filter(r => r.overallStatus === "partially_repaired").length,
+//       under_repair: filteredRecords.filter(r => r.overallStatus === "under_repair").length,
+//       repaired: filteredRecords.filter(r => r.overallStatus === "repaired").length,
+//       irreparable: filteredRecords.filter(r => r.overallStatus === "irreparable").length
+//     };
+    
+//     // Usage type distribution
+//     const usageTypeCounts = {};
+//     filteredRecords.forEach(record => {
+//       const usageType = record.usageType || "Damage";
+//       usageTypeCounts[usageType] = (usageTypeCounts[usageType] || 0) + 1;
+//     });
+    
+//     const usageTypeStats = Object.entries(usageTypeCounts).map(([type, count]) => ({
+//       _id: type,
+//       count: count,
+//       totalQuantity: filteredRecords
+//         .filter(r => r.usageType === type)
+//         .reduce((sum, r) => sum + (r.damagedQty || 0), 0)
+//     }));
+
+//     res.json({
+//       success: true,
+//       data: filteredRecords,
+//       statistics: {
+//         totalRecords: total,
+//         totalFilteredRecords: totalFiltered,
+//         totalDamagedItems: totalDamagedItems,
+//         totalUnderRepairItems: totalUnderRepairItems,
+//         totalRepairedItems: totalRepairedItems,
+//         totalIrreparableItems: totalIrreparableItems,
+//         totalValue: totalValue,
+//         uniqueProducts: uniqueProducts.length,
+//         statusDistribution: Object.entries(statusStats).map(([status, count]) => ({
+//           _id: status,
+//           count: count,
+//           totalQuantity: filteredRecords
+//             .filter(r => r.overallStatus === status)
+//             .reduce((sum, r) => sum + (r.damagedQty || 0), 0)
+//         })),
+//         usageTypeDistribution: usageTypeStats
+//       },
+//       pagination: {
+//         currentPage: pageNum,
+//         totalPages,
+//         totalRecords: total,
+//         totalFiltered: totalFiltered,
+//         hasNext: pageNum < totalPages,
+//         hasPrev: pageNum > 1,
+//         limit: limitNum
+//       },
+//       filters: {
+//         center: center || "all",
+//         startDate: startDate || null,
+//         endDate: endDate || null,
+//         status: status || "damaged_only",
+//         product: product || "all",
+//         usageType: usageType || "all",
+//         search: search || ""
+//       }
+//     });
+//   } catch (error) {
+//     console.error("Get all faulty stock error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Failed to fetch faulty stock records",
+//       error: process.env.NODE_ENV === "development" ? error.message : "Internal server error"
+//     });
+//   }
+// };
+
+
 export const getAllFaultyStock = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
@@ -5089,16 +5589,11 @@ export const getAllFaultyStock = async (req, res) => {
       !permissions.view_usage_all_center &&
       userCenter
     ) {
-      // For users with only own center access, show only records where THEIR CENTER reported the damage
-      // This is the 'center' field, not 'toCenter'
       filter.center = userCenter._id || userCenter;
     } else if (permissions.view_usage_all_center) {
-      // Users with all center access can see all records
       if (center) {
-        // If user specifies a center, show records where that center reported the damage
         filter.center = center;
       }
-      // If no center specified, show all records
     }
     
     // Additional filters
@@ -5110,11 +5605,7 @@ export const getAllFaultyStock = async (req, res) => {
     
     if (status && status !== "all") {
       if (status === "damaged") {
-        // For damaged status, find records where overallStatus is "damaged" or serials have damaged status
-        filter.$or = [
-          { overallStatus: "damaged" },
-          { "serialNumbers.status": "damaged" }
-        ];
+        filter.overallStatus = "damaged";
       } else if (status === "under_repair") {
         filter.overallStatus = "under_repair";
       } else if (status === "repaired") {
@@ -5127,12 +5618,17 @@ export const getAllFaultyStock = async (req, res) => {
         filter.overallStatus = status;
       }
     } else {
-      // DEFAULT: Only show records that have DAMAGED items available for transfer
-      // This excludes fully repaired or fully irreparable records
+      // DEFAULT: Show records with damaged items available for transfer
+      // This excludes fully repaired, fully irreparable, or fully under repair
       filter.$or = [
         { overallStatus: "damaged" },
         { overallStatus: "partially_repaired" },
-        { "serialNumbers.status": "damaged" }
+        { 
+          $and: [
+            { isSerialized: true },
+            { "serialNumbers.status": "damaged" }
+          ]
+        }
       ];
     }
     
@@ -5182,70 +5678,48 @@ export const getAllFaultyStock = async (req, res) => {
 
     // Process each record to calculate damaged quantities
     const processedRecords = faultyStockRecords.map(record => {
-      // Calculate damaged quantity based on product type
-      let damagedQuantity = 0;
-      let availableForTransfer = false;
+      // Use the virtual field damagedQty from the model (which should be calculated correctly)
+      const damagedQuantity = record.damagedQty || 0;
+      
+      // Check if available for transfer (has damaged items)
+      const availableForTransfer = damagedQuantity > 0;
+      
+      // Get damaged serial numbers for serialized products
+      let damagedSerialNumbers = [];
+      if (record.product?.trackSerialNumber === "Yes") {
+        const damagedSerials = record.serialNumbers?.filter(sn => sn.status === "damaged") || [];
+        damagedSerialNumbers = damagedSerials.map(sn => sn.serialNumber);
+      }
+      
+      // Calculate status breakdown
+      let statusBreakdown = {
+        damaged: damagedQuantity,
+        underRepair: 0,
+        repaired: 0,
+        irreparable: 0
+      };
       
       if (record.product?.trackSerialNumber === "Yes") {
-        // SERIALIZED PRODUCTS
-        // Count serials with "damaged" status
-        const damagedSerials = record.serialNumbers?.filter(sn => sn.status === "damaged") || [];
-        damagedQuantity = damagedSerials.length;
-        
-        // Get damaged serial numbers
-        const damagedSerialNumbers = damagedSerials.map(sn => sn.serialNumber);
-        
-        // Check if available for transfer (has damaged items)
-        availableForTransfer = damagedQuantity > 0;
-        
-        // Return enhanced record with damaged info
-        return {
-          ...record.toObject(),
-          damagedQty: damagedQuantity,
-          availableForTransfer: availableForTransfer,
-          damagedSerialNumbers: damagedSerialNumbers,
-          // For serialized products, also include total counts
-          totalDamagedSerials: damagedQuantity,
-          // Status breakdown
-          statusBreakdown: {
-            damaged: damagedQuantity,
-            underRepair: record.serialNumbers?.filter(sn => sn.status === "under_repair").length || 0,
-            repaired: record.serialNumbers?.filter(sn => sn.status === "repaired").length || 0,
-            irreparable: record.serialNumbers?.filter(sn => sn.status === "irreparable").length || 0
-          }
-        };
+        // For serialized products
+        statusBreakdown.underRepair = record.serialNumbers?.filter(sn => sn.status === "under_repair").length || 0;
+        statusBreakdown.repaired = record.serialNumbers?.filter(sn => sn.status === "repaired").length || 0;
+        statusBreakdown.irreparable = record.serialNumbers?.filter(sn => sn.status === "irreparable").length || 0;
       } else {
-        // NON-SERIALIZED PRODUCTS
-        // Calculate damaged quantity based on overall status and quantities
-        if (record.overallStatus === "damaged") {
-          damagedQuantity = record.quantity;
-        } else if (record.overallStatus === "partially_repaired") {
-          // For partially repaired, damaged quantity = total - (repaired + irreparable + underRepair)
-          damagedQuantity = record.quantity - 
-            (record.repairedQty || 0) - 
-            (record.irrepairedQty || 0) - 
-            (record.underRepairQty || 0);
-        } else {
-          damagedQuantity = 0;
-        }
-        
-        availableForTransfer = damagedQuantity > 0;
-        
-        return {
-          ...record.toObject(),
-          damagedQty: damagedQuantity,
-          availableForTransfer: availableForTransfer,
-          // For non-serialized, we don't have serial numbers
-          damagedSerialNumbers: [],
-          // Status breakdown for non-serialized
-          statusBreakdown: {
-            damaged: damagedQuantity,
-            underRepair: record.underRepairQty || 0,
-            repaired: record.repairedQty || 0,
-            irreparable: record.irrepairedQty || 0
-          }
-        };
+        // For non-serialized products
+        statusBreakdown.underRepair = record.underRepairQty || 0;
+        statusBreakdown.repaired = record.repairedQty || 0;
+        statusBreakdown.irreparable = record.irrepairedQty || 0;
       }
+      
+      // Return enhanced record with damaged info
+      return {
+        ...record.toObject(),
+        damagedQty: damagedQuantity,
+        availableForTransfer: availableForTransfer,
+        damagedSerialNumbers: damagedSerialNumbers,
+        totalDamagedSerials: damagedSerialNumbers.length,
+        statusBreakdown: statusBreakdown
+      };
     });
 
     // Filter out records with no damaged items
