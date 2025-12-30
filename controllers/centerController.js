@@ -469,3 +469,81 @@ export const getAllCentersBasic = async (req, res) => {
     });
   }
 };
+
+
+// Basic version without extra filters
+export const getCentersByResellerId = async (req, res) => {
+  try {
+    const { resellerId } = req.params;
+
+    // Validate resellerId
+    if (!resellerId) {
+      return res.status(400).json({
+        success: false,
+        message: "Reseller ID is required",
+      });
+    }
+
+    // Check if reseller exists
+    const reseller = await Reseller.findById(resellerId);
+    if (!reseller) {
+      return res.status(404).json({
+        success: false,
+        message: "Reseller not found",
+      });
+    }
+
+    // Check user permissions
+    const userPermissions = req.user.role?.permissions || [];
+    const centerModule = userPermissions.find(
+      (perm) => perm.module === "Center"
+    );
+
+    const canViewAll = centerModule && centerModule.permissions.includes("view_all_center");
+    const canViewOwn = centerModule && centerModule.permissions.includes("view_own_center");
+
+    if (!canViewAll && !canViewOwn) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. view_own_center or view_all_center permission required.",
+      });
+    }
+
+    // Build filter
+    const filter = { reseller: resellerId };
+
+    // Apply user-specific filters
+    if (canViewOwn && !canViewAll && req.user.center) {
+      // Users with view_own_center can only see their own center
+      filter._id = req.user.center._id || req.user.center;
+    }
+
+    // Execute query - Get all centers for this reseller
+    const centers = await Center.find(filter)
+      .populate("reseller", "businessName contactPerson mobile email")
+      .populate("area", "areaName")
+      .sort({ centerName: 1 }); // Sort by centerName ascending
+
+    // Response
+    res.status(200).json({
+      success: true,
+      message: `Found ${centers.length} centers for reseller: ${reseller.businessName}`,
+      data: centers,
+      resellerInfo: {
+        id: reseller._id,
+        businessName: reseller.businessName,
+        totalCenters: centers.length,
+      }
+    });
+  } catch (error) {
+    console.error("Error fetching centers by reseller ID:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching centers",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : "Internal server error",
+    });
+  }
+};

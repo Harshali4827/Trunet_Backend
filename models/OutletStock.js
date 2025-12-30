@@ -35,6 +35,16 @@ const outletStockSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    repairedQuantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    transferredRepairedQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     serialNumbers: [
       {
         serialNumber: {

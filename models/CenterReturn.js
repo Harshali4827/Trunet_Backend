@@ -1,4 +1,3 @@
-// models/CenterReturn.js
 import mongoose from "mongoose";
 
 const centerReturnSchema = new mongoose.Schema({
@@ -36,22 +35,16 @@ const centerReturnSchema = new mongoose.Schema({
       type: String,
       trim: true
     }],
-    
-    // Stock information before return
     centerStockBefore: {
       totalQuantity: Number,
       availableQuantity: Number,
       consumedQuantity: Number
     },
-    
-    // Stock information after return
     centerStockAfter: {
       totalQuantity: Number,
       availableQuantity: Number,
       consumedQuantity: Number
     },
-    
-    // Reseller stock information after return
     resellerStockAfter: {
       totalQuantity: Number,
       availableQuantity: Number,
@@ -78,7 +71,6 @@ const centerReturnSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-// Indexes
 centerReturnSchema.index({ center: 1, date: -1 });
 centerReturnSchema.index({ reseller: 1 });
 centerReturnSchema.index({ "processedBy": 1 });

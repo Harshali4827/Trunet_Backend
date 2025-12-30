@@ -2,6 +2,7 @@ import express from "express";
 import { protect } from "../middlewares/authMiddleware.js";
 
 import { getAllFaultyStockForWarehouse, getDamageAndUnderRepairProduct, getDamagedAndUnderRepairSerials, getRepairedProducts, getRepairedProductsInOutletStock, getRepairTransfersForCenter, markAsRepairedOrIrreparable, returnFromRepairCenter,transferRepairedToMainWarehouse,transferRepairedToResellerStock,transferToRepairCenter} from "../controllers/faultyStockController.js";
+import { acceptDamageItems, rejectDamageItems } from "../controllers/acceptDamageController.js";
 
 const router = express.Router();
 
@@ -25,5 +26,7 @@ router.get('/repaired-products',protect, getRepairedProducts)
 router.get('/outlet-repaired-stock',protect,getRepairedProductsInOutletStock)
 router.post('/transfer-repaired-to-warehouse', protect, transferRepairedToMainWarehouse);
 router.post('/transfer-to-reseller-center', protect, transferRepairedToResellerStock);
+router.post('/accept-damage',protect,acceptDamageItems);
+router.post('/reject-damage',protect,rejectDamageItems);
 
 export default router;

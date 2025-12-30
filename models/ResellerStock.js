@@ -60,7 +60,6 @@ const resellerStockSchema = new mongoose.Schema({
   lastUpdated: { type: Date, default: Date.now }
 }, { timestamps: true });
 
-// Remove the updateStock static method or update it to not use center
 resellerStockSchema.statics.updateStock = async function(
   resellerId, 
   productId, 
@@ -72,13 +71,12 @@ resellerStockSchema.statics.updateStock = async function(
   let resellerStock = await this.findOne({
     reseller: resellerId,
     product: productId
-    // Remove center from query
   });
 
   if (!resellerStock) {
     resellerStock = new this({
       reseller: resellerId,
-      product: productId, // Remove center
+      product: productId,
       availableQuantity: 0,
       totalQuantity: 0,
       serialNumbers: []
@@ -95,10 +93,10 @@ resellerStockSchema.statics.updateStock = async function(
         resellerStock.serialNumbers.push({
           serialNumber: serialNumber,
           status: "available",
-          currentLocation: null, // No center needed
+          currentLocation: null,
           transferHistory: [{
             fromCenter: null,
-            toCenter: null, // No center
+            toCenter: null,
             transferDate: new Date(),
             transferType: "inbound_transfer",
             referenceId: referenceId,
@@ -120,3 +118,4 @@ resellerStockSchema.index({ reseller: 1, product: 1 }, { unique: true });
 resellerStockSchema.index({ "serialNumbers.serialNumber": 1 });
 
 export default mongoose.model("ResellerStock", resellerStockSchema);
+

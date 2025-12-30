@@ -1152,6 +1152,223 @@ export const getAllStockRequests = async (req, res) => {
     });
   }
 };
+// export const getStockRequestById = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
+//       req,
+//       ["indent_all_center", "indent_own_center"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. indent_own_center or indent_all_center permission required.",
+//       });
+//     }
+
+//     const { id } = req.params;
+
+//     const stockRequest = await StockRequest.findById(id)
+//       .populate("warehouse", "_id centerName centerCode centerType")
+//       .populate({
+//         path: "center",
+//         select: "_id centerName centerCode centerType",
+//         populate: [
+//           {
+//             path: "reseller",
+//             select: "_id businessName contactNumber name mobile email gstNumber panNumber address1 address2 city state"
+//           },
+//           {
+//             path: "area",
+//             select: "_id areaName"
+//           }
+//         ]
+//       })
+//       .populate(
+//         "products.product",
+//         "_id productTitle productCode productImage trackSerialNumber"
+//       )
+//       .populate("createdBy", "_id fullName email")
+//       .populate("updatedBy", "_id fullName email")
+//       .populate("approvalInfo.approvedBy", "_id fullName email")
+//       .populate("approvalInfo.warehouseChallanApprovedBy","_id fullName email" )
+//       .populate("approvalInfo.centerChallanApprovedBy","_id fullName email" )
+//       .populate("shippingInfo.shippedBy", "_id fullName email")
+//       .populate("receivingInfo.receivedBy", "_id fullName email")
+//       .populate("completionInfo.completedBy", "_id fullName email")
+//       .populate("completionInfo.incompleteBy", "_id fullName email")
+//       .populate("rejectionInfo.rejectedBy", "_id fullName email")
+//       .lean();
+
+//     if (!stockRequest) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Stock request not found",
+//       });
+//     }
+
+//     if (!checkCenterAccess(stockRequest, userCenter, permissions)) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. You can only view stock requests from your own center.",
+//       });
+//     }
+
+//     const productIds = stockRequest.products.map((p) => p.product._id);
+
+//     const centerStock = await CenterStock.aggregate([
+//       {
+//         $match: {
+//           center: stockRequest.center._id,
+//           product: { $in: productIds },
+//         },
+//       },
+//       {
+//         $group: {
+//           _id: "$product",
+//           totalQuantity: { $sum: "$quantity" },
+//         },
+//       },
+//     ]);
+
+//     const centerStockMap = {};
+//     centerStock.forEach((stock) => {
+//       centerStockMap[stock._id.toString()] = stock.totalQuantity;
+//     });
+
+//     // Get outlet stock
+//     const outletStockMap = await getOutletStockForRequests(
+//       stockRequest.warehouse._id,
+//       productIds
+//     );
+
+//     // NEW: Get reseller stock for the center's reseller
+//     const ResellerStock = mongoose.model("ResellerStock");
+//     const resellerId = stockRequest.center?.reseller?._id;
+    
+//     let resellerStockMap = new Map();
+    
+//     if (resellerId) {
+//       // Get reseller stock for all products in the request
+//       const resellerStocks = await ResellerStock.find({
+//         reseller: resellerId,
+//         product: { $in: productIds }
+//       }).select("product availableQuantity totalQuantity consumedQuantity serialNumbers");
+      
+//       // Create a map for easy lookup
+//       resellerStocks.forEach((stock) => {
+//         const availableSerials = stock.serialNumbers
+//           .filter(sn => sn.status === "available")
+//           .map(sn => sn.serialNumber);
+        
+//         resellerStockMap.set(stock.product.toString(), {
+//           totalQuantity: stock.totalQuantity,
+//           availableQuantity: stock.availableQuantity,
+//           consumedQuantity: stock.consumedQuantity,
+//           damagedQuantity: stock.damagedQuantity,
+//           repairQuantity: stock.repairQuantity,
+//           hasSerialNumbers: stock.serialNumbers.length > 0,
+//           availableSerials: availableSerials,
+//           availableSerialsCount: availableSerials.length
+//         });
+//       });
+//     }
+
+//     const productsWithEnhancedData = stockRequest.products.map((product) => {
+//       const outletStock = outletStockMap.get(product.product._id.toString()) || {
+//         totalQuantity: 0,
+//         availableQuantity: 0,
+//         inTransitQuantity: 0,
+//       };
+
+//       const resellerStock = resellerStockMap.get(product.product._id.toString()) || {
+//         totalQuantity: 0,
+//         availableQuantity: 0,
+//         consumedQuantity: 0,
+//         damagedQuantity: 0,
+//         repairQuantity: 0,
+//         availableSerials: [],
+//         availableSerialsCount: 0
+//       };
+
+//       return {
+//         ...product,
+//         centerStockQuantity: centerStockMap[product.product._id.toString()] || 0,
+//         outletStock: {
+//           totalQuantity: outletStock.totalQuantity,
+//           availableQuantity: outletStock.availableQuantity,
+//           inTransitQuantity: outletStock.inTransitQuantity,
+//           hasSerialNumbers: outletStock.hasSerialNumbers,
+//           availableSerials: outletStock.availableSerials || []
+//         },
+//         resellerStock: { // NEW: Added reseller stock information
+//           totalQuantity: resellerStock.totalQuantity,
+//           availableQuantity: resellerStock.availableQuantity,
+//           consumedQuantity: resellerStock.consumedQuantity,
+//           damagedQuantity: resellerStock.damagedQuantity,
+//           repairQuantity: resellerStock.repairQuantity,
+//           hasSerialNumbers: resellerStock.hasSerialNumbers,
+//           availableSerials: resellerStock.availableSerials,
+//           availableSerialsCount: resellerStock.availableSerialsCount
+//         },
+//         approvedSerials: product.approvedSerials || [],
+//         serialNumbers: product.serialNumbers || [],
+//         transferredSerials: product.transferredSerials || [],
+//         serialSummary: {
+//           approvedCount: product.approvedSerials?.length || 0,
+//           transferredCount: product.transferredSerials?.length || 0,
+//           requiresSerialNumbers: product.product.trackSerialNumber === "Yes",
+//         },
+//       };
+//     });
+
+//     // Calculate totals for summary
+//     const totalResellerAvailable = productsWithEnhancedData.reduce(
+//       (sum, product) => sum + product.resellerStock.availableQuantity, 0
+//     );
+    
+//     const totalOutletAvailable = productsWithEnhancedData.reduce(
+//       (sum, product) => sum + product.outletStock.availableQuantity, 0
+//     );
+
+//     const stockRequestWithEnhancedData = {
+//       ...stockRequest,
+//       products: productsWithEnhancedData,
+//       stockSummary: { // NEW: Added overall stock summary
+//         totalResellerAvailable,
+//         totalOutletAvailable,
+//         totalAvailable: totalResellerAvailable + totalOutletAvailable,
+//         resellerName: stockRequest.center?.reseller?.businessName || "N/A",
+//         resellerId: resellerId
+//       }
+//     };
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Stock request retrieved successfully",
+//       data: stockRequestWithEnhancedData,
+//     });
+//   } catch (error) {
+//     if (error.name === "CastError") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid stock request ID",
+//       });
+//     }
+
+//     console.error("Error retrieving stock request:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Error retrieving stock request",
+//       error: error.message,
+//     });
+//   }
+// };
+
+
+
 export const getStockRequestById = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
@@ -1218,8 +1435,8 @@ export const getStockRequestById = async (req, res) => {
 
     const productIds = stockRequest.products.map((p) => p.product._id);
 
-    // Get center stock (StockPurchase)
-    const centerStock = await StockPurchase.aggregate([
+    // Get center stock from CenterStock collection
+    const centerStock = await CenterStock.aggregate([
       {
         $match: {
           center: stockRequest.center._id,
@@ -1229,14 +1446,22 @@ export const getStockRequestById = async (req, res) => {
       {
         $group: {
           _id: "$product",
-          totalQuantity: { $sum: "$quantity" },
+          totalQuantity: { $sum: "$totalQuantity" },
+          availableQuantity: { $sum: "$availableQuantity" },
+          consumedQuantity: { $sum: "$consumedQuantity" },
+          inTransitQuantity: { $sum: "$inTransitQuantity" },
         },
       },
     ]);
 
     const centerStockMap = {};
     centerStock.forEach((stock) => {
-      centerStockMap[stock._id.toString()] = stock.totalQuantity;
+      centerStockMap[stock._id.toString()] = {
+        totalQuantity: stock.totalQuantity,
+        availableQuantity: stock.availableQuantity,
+        consumedQuantity: stock.consumedQuantity,
+        inTransitQuantity: stock.inTransitQuantity,
+      };
     });
 
     // Get outlet stock
@@ -1245,7 +1470,7 @@ export const getStockRequestById = async (req, res) => {
       productIds
     );
 
-    // NEW: Get reseller stock for the center's reseller
+    // Get reseller stock for the center's reseller
     const ResellerStock = mongoose.model("ResellerStock");
     const resellerId = stockRequest.center?.reseller?._id;
     
@@ -1277,14 +1502,42 @@ export const getStockRequestById = async (req, res) => {
       });
     }
 
+    // Get serial numbers from CenterStock for each product
+    const centerStockDetails = await CenterStock.find({
+      center: stockRequest.center._id,
+      product: { $in: productIds }
+    }).select("product serialNumbers");
+
+    const centerSerialNumbersMap = new Map();
+    centerStockDetails.forEach(stock => {
+      const availableSerials = stock.serialNumbers
+        .filter(sn => sn.status === "available")
+        .map(sn => sn.serialNumber);
+      
+      centerSerialNumbersMap.set(stock.product.toString(), {
+        hasSerialNumbers: stock.serialNumbers.length > 0,
+        availableSerials: availableSerials,
+        availableSerialsCount: availableSerials.length,
+        allSerials: stock.serialNumbers
+      });
+    });
+
     const productsWithEnhancedData = stockRequest.products.map((product) => {
-      const outletStock = outletStockMap.get(product.product._id.toString()) || {
+      const productId = product.product._id.toString();
+      const stockInfo = centerStockMap[productId] || {
+        totalQuantity: 0,
+        availableQuantity: 0,
+        consumedQuantity: 0,
+        inTransitQuantity: 0,
+      };
+
+      const outletStock = outletStockMap.get(productId) || {
         totalQuantity: 0,
         availableQuantity: 0,
         inTransitQuantity: 0,
       };
 
-      const resellerStock = resellerStockMap.get(product.product._id.toString()) || {
+      const resellerStock = resellerStockMap.get(productId) || {
         totalQuantity: 0,
         availableQuantity: 0,
         consumedQuantity: 0,
@@ -1294,9 +1547,18 @@ export const getStockRequestById = async (req, res) => {
         availableSerialsCount: 0
       };
 
+      const centerSerials = centerSerialNumbersMap.get(productId) || {
+        hasSerialNumbers: false,
+        availableSerials: [],
+        availableSerialsCount: 0,
+        allSerials: []
+      };
+
       return {
         ...product,
-        centerStockQuantity: centerStockMap[product.product._id.toString()] || 0,
+        // Using availableQuantity from CenterStock
+        centerStockQuantity: stockInfo.availableQuantity,
+        centerStockDetails: stockInfo, // Added for more details
         outletStock: {
           totalQuantity: outletStock.totalQuantity,
           availableQuantity: outletStock.availableQuantity,
@@ -1304,7 +1566,13 @@ export const getStockRequestById = async (req, res) => {
           hasSerialNumbers: outletStock.hasSerialNumbers,
           availableSerials: outletStock.availableSerials || []
         },
-        resellerStock: { // NEW: Added reseller stock information
+        centerStockSerials: { // Added center stock serials info
+          hasSerialNumbers: centerSerials.hasSerialNumbers,
+          availableSerials: centerSerials.availableSerials,
+          availableSerialsCount: centerSerials.availableSerialsCount,
+          allSerials: centerSerials.allSerials
+        },
+        resellerStock: {
           totalQuantity: resellerStock.totalQuantity,
           availableQuantity: resellerStock.availableQuantity,
           consumedQuantity: resellerStock.consumedQuantity,
@@ -1321,11 +1589,17 @@ export const getStockRequestById = async (req, res) => {
           approvedCount: product.approvedSerials?.length || 0,
           transferredCount: product.transferredSerials?.length || 0,
           requiresSerialNumbers: product.product.trackSerialNumber === "Yes",
+          centerAvailableSerials: centerSerials.availableSerialsCount,
+          resellerAvailableSerials: resellerStock.availableSerialsCount
         },
       };
     });
 
     // Calculate totals for summary
+    const totalCenterAvailable = productsWithEnhancedData.reduce(
+      (sum, product) => sum + product.centerStockQuantity, 0
+    );
+    
     const totalResellerAvailable = productsWithEnhancedData.reduce(
       (sum, product) => sum + product.resellerStock.availableQuantity, 0
     );
@@ -1337,12 +1611,14 @@ export const getStockRequestById = async (req, res) => {
     const stockRequestWithEnhancedData = {
       ...stockRequest,
       products: productsWithEnhancedData,
-      stockSummary: { // NEW: Added overall stock summary
+      stockSummary: {
+        totalCenterAvailable,
         totalResellerAvailable,
         totalOutletAvailable,
-        totalAvailable: totalResellerAvailable + totalOutletAvailable,
+        totalAvailable: totalCenterAvailable + totalResellerAvailable + totalOutletAvailable,
         resellerName: stockRequest.center?.reseller?.businessName || "N/A",
-        resellerId: resellerId
+        resellerId: resellerId,
+        centerName: stockRequest.center?.centerName || "N/A"
       }
     };
 
@@ -1367,6 +1643,8 @@ export const getStockRequestById = async (req, res) => {
     });
   }
 };
+
+
 export const updateStockRequest = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(

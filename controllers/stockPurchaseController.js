@@ -6,7 +6,6 @@ import Center from "../models/Center.js";
 import User from "../models/User.js";
 import mongoose from "mongoose";
 
-
 const checkStockPurchasePermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];
   const purchaseModule = userPermissions.find(

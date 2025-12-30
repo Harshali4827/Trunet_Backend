@@ -727,116 +727,6 @@ const getEntityConfig = (usageType, stockUsage) => {
 //       const product = await Product.findById(item.product);
 //       const center = await Center.findById(stockUsage.center).populate('reseller');
 //       const toCenter = stockUsage.toCenter ? await Center.findById(stockUsage.toCenter) : null;
-//       if (!product) {
-//         console.log(`Product not found: ${item.product}`);
-//         continue;
-//       }
-
-//       if (!center) {
-//         console.log(`Center not found: ${stockUsage.center}`);
-//         continue;
-//       }
-//       const reseller = center.reseller;
-//       if (!reseller) {
-//         console.log(`No reseller found for center: ${center.centerName}`);
-//         continue;
-//       }
-
-//       const faultyStockData = {
-//         date: stockUsage.date || new Date(),
-//         usageReference: stockUsage._id,
-//         center: stockUsage.center,
-//         toCenter: stockUsage.toCenter,
-//         reseller: reseller._id,
-//         product: item.product,
-//         quantity: item.quantity,
-//         serialNumbers: [],
-//         usageType: stockUsage.usageType,
-//         remark: stockUsage.remark || "Damage reported",
-//         reportedBy: stockUsage.createdBy,
-//         overallStatus: "damaged",
-//         damageDate: new Date(),
-//         productDetails: {
-//           productTitle: product.productTitle,
-//           productCode: product.productCode,
-//           productPrice: product.productPrice,
-//           trackSerialNumber: product.trackSerialNumber
-//         }
-//       };
-//       if (item.serialNumbers && item.serialNumbers.length > 0) {
-//         faultyStockData.serialNumbers = item.serialNumbers.map(serialNumber => ({
-//           serialNumber: serialNumber,
-//           status: "damaged",
-//           repairHistory: [{
-//             date: new Date(),
-//             status: "damaged",
-//             remark: "Initial damage report",
-//             updatedBy: stockUsage.createdBy
-//           }]
-//         }));
-//       } else {
-//         for (let i = 0; i < item.quantity; i++) {
-//           faultyStockData.serialNumbers.push({
-//             serialNumber: `NON-SERIAL-${Date.now()}-${i}`,
-//             status: "damaged",
-//             repairHistory: [{
-//               date: new Date(),
-//               status: "damaged",
-//               remark: "Initial damage report",
-//               updatedBy: stockUsage.createdBy
-//             }]
-//           });
-//         }
-//       }
-
-//       const existingFaultyStock = await FaultyStock.findOne({
-//         usageReference: stockUsage._id,
-//         product: item.product
-//       });
-
-//       if (existingFaultyStock) {
-//         await FaultyStock.findByIdAndUpdate(
-//           existingFaultyStock._id,
-//           {
-//             $set: faultyStockData,
-//             $inc: {
-//               quantity: item.quantity - (existingFaultyStock.quantity || 0)
-//             }
-//           }
-//         );
-//         console.log(`✓ Updated faulty stock for product: ${product.productTitle}`);
-//       } else {
-//         const faultyStock = new FaultyStock(faultyStockData);
-//         await faultyStock.save();
-//         console.log(`✓ Added to faulty stock: ${product.productTitle} - ${item.quantity} units`);
-//       }
-//       await updateCenterStockForDamage(stockUsage.center, item, product);
-//     }
-
-//     console.log("=== DAMAGE ITEMS ADDED TO FAULTY STOCK COLLECTION ===");
-//   } catch (error) {
-//     console.error("Error adding to faulty stock collection:", error);
-//     throw error;
-//   }
-// };
-
-//override repaired qty
-
-// const addToFaultyStockCollection = async (stockUsage) => {
-//   try {
-//     const FaultyStock = mongoose.model("FaultyStock");
-//     const Product = mongoose.model("Product");
-//     const Center = mongoose.model("Center");
-
-//     console.log("=== ADDING DAMAGE ITEMS TO FAULTY STOCK COLLECTION ===");
-//     console.log("Stock Usage ID:", stockUsage._id);
-//     console.log("Center:", stockUsage.center);
-//     console.log("To Center:", stockUsage.toCenter);
-
-//     for (let item of stockUsage.items) {
-//       const product = await Product.findById(item.product);
-//       const center = await Center.findById(stockUsage.center).populate('reseller');
-//       const toCenter = stockUsage.toCenter ? await Center.findById(stockUsage.toCenter) : null;
       
 //       if (!product) {
 //         console.log(`Product not found: ${item.product}`);
@@ -856,22 +746,51 @@ const getEntityConfig = (usageType, stockUsage) => {
 
 //       console.log(`Processing product: ${product.productTitle}, Quantity: ${item.quantity}`);
 //       console.log(`Product tracks serial: ${product.trackSerialNumber}`);
-      
+
 //       const existingFaultyStock = await FaultyStock.findOne({
 //         product: item.product,
 //         center: stockUsage.center,
 //         toCenter: stockUsage.toCenter,
-//         usageType: "Damage",
-//         overallStatus: { $in: ["damaged", "under_repair", "partially_repaired","repaired"] }
+//         usageType: "Damage"
 //       }).populate("product", "productTitle productCode trackSerialNumber");
 
 //       if (existingFaultyStock) {
 //         console.log(`Found existing faulty stock for product: ${product.productTitle}`);
-//         console.log(`Existing quantity: ${existingFaultyStock.quantity}, New quantity: ${item.quantity}`);
-  
-//         existingFaultyStock.quantity += item.quantity;
+//         console.log(`Existing: Qty=${existingFaultyStock.quantity}, Repaired=${existingFaultyStock.repairedQty}, Transferred=${existingFaultyStock.transferredQty}, UnderRepair=${existingFaultyStock.underRepairQty}, Irrepaired=${existingFaultyStock.irrepairedQty}, Damage=${existingFaultyStock.damageQty}`);
+//         console.log(`New damage quantity to add: ${item.quantity}`);
         
-//         if (product.trackSerialNumber === "Yes") {
+//         if (product.trackSerialNumber !== "Yes") {
+//           // NON-SERIALIZED: SIMPLIFIED LOGIC
+//           console.log(`Updating non-serialized product...`);
+          
+//           // 1. Increase total quantity by new items
+//           existingFaultyStock.quantity += item.quantity;
+          
+//           // 2. DO NOT TOUCH damageQty directly - let updateQuantitiesAndStatus calculate it
+//           // The new items are ALL damaged, so they will automatically increase damageQty
+          
+//           console.log(`Updated total quantity to: ${existingFaultyStock.quantity}`);
+          
+//           // 3. Add repair history for the new damage report
+//           if (!existingFaultyStock.repairHistory) {
+//             existingFaultyStock.repairHistory = [];
+//           }
+          
+//           existingFaultyStock.repairHistory.push({
+//             date: new Date(),
+//             status: "damaged",
+//             remark: `Additional damage reported: ${item.quantity} items`,
+//             quantity: item.quantity,
+//             repairedQty: 0,
+//             irrepairedQty: 0,
+//             updatedBy: stockUsage.createdBy,
+//             cost: 0
+//           });
+          
+//         } else {
+//           // SERIALIZED: Original logic
+//           existingFaultyStock.quantity += item.quantity;
+          
 //           if (item.serialNumbers && item.serialNumbers.length > 0) {
 //             const existingSerials = existingFaultyStock.serialNumbers.map(sn => sn.serialNumber);
 //             const newSerials = item.serialNumbers.filter(sn => !existingSerials.includes(sn));
@@ -885,7 +804,7 @@ const getEntityConfig = (usageType, stockUsage) => {
 //                 quantity: 1,
 //                 repairedQty: 0,
 //                 irrepairedQty: 0,
-//                 underRepairQty: 1,
+//                 underRepairQty: 0,
 //                 repairHistory: [{
 //                   date: new Date(),
 //                   status: "damaged",
@@ -898,36 +817,24 @@ const getEntityConfig = (usageType, stockUsage) => {
 //               });
 //             });
 //           }
-//         } else {
-//           // NON-SERIALIZED PRODUCTS: NO SERIAL NUMBERS NEEDED
-//           console.log(`Non-serialized product - updating quantity only, no serials`);
-          
-//           // If there are any serial entries from previous implementation, remove them
-//           if (existingFaultyStock.serialNumbers && existingFaultyStock.serialNumbers.length > 0) {
-//             console.log(`Clearing old serial entries for non-serialized product`);
-//             existingFaultyStock.serialNumbers = [];
-//           }
 //         }
-        
-//         // Update quantity tracking fields
-//         existingFaultyStock.repairedQty = existingFaultyStock.repairedQty || 0;
-//         existingFaultyStock.irrepairedQty = existingFaultyStock.irrepairedQty || 0;
-//         existingFaultyStock.underRepairQty = existingFaultyStock.quantity - 
-//           (existingFaultyStock.repairedQty + existingFaultyStock.irrepairedQty);
-        
-//         // Update overall status
+
+//         // Let updateQuantitiesAndStatus handle the damageQty calculation
 //         existingFaultyStock.updateQuantitiesAndStatus();
-        
-//         // Add usage reference if not already there
-//         if (!existingFaultyStock.usageReference) {
-//           existingFaultyStock.usageReference = stockUsage._id;
-//         }
         
 //         await existingFaultyStock.save();
 //         console.log(`✓ Updated existing faulty stock for product: ${product.productTitle}`);
+//         console.log(`New quantities:`);
+//         console.log(`- Total: ${existingFaultyStock.quantity}`);
+//         console.log(`- Repaired: ${existingFaultyStock.repairedQty}`);
+//         console.log(`- Transferred: ${existingFaultyStock.transferredQty}`);
+//         console.log(`- Under Repair: ${existingFaultyStock.underRepairQty}`);
+//         console.log(`- Irrepaired: ${existingFaultyStock.irrepairedQty}`);
+//         console.log(`- Damage: ${existingFaultyStock.damageQty}`);
+//         console.log(`- Overall Status: ${existingFaultyStock.overallStatus}`);
         
 //       } else {
-//         // Create new faulty stock entry
+//         // Create new faulty stock (existing code remains the same)
 //         console.log(`Creating new faulty stock entry for product: ${product.productTitle}`);
         
 //         const faultyStockData = {
@@ -938,7 +845,7 @@ const getEntityConfig = (usageType, stockUsage) => {
 //           reseller: reseller._id,
 //           product: item.product,
 //           quantity: item.quantity,
-//           serialNumbers: [], // Start with empty array
+//           serialNumbers: [],
 //           usageType: stockUsage.usageType,
 //           remark: stockUsage.remark || "Damage reported",
 //           reportedBy: stockUsage.createdBy,
@@ -953,11 +860,18 @@ const getEntityConfig = (usageType, stockUsage) => {
 //           repairedQty: 0,
 //           irrepairedQty: 0,
 //           underRepairQty: 0,
+//           transferredQty: 0,
+//           damageQty: 0,
 //           isSerialized: product.trackSerialNumber === "Yes"
 //         };
 
+//         // Let the model's pre-save middleware handle damageQty calculation
+//         if (product.trackSerialNumber !== "Yes") {
+//           // For non-serialized, pre-save will set damageQty = quantity
+//           console.log(`Non-serialized product - pre-save will set damageQty`);
+//         }
+
 //         if (product.trackSerialNumber === "Yes") {
-//           // SERIALIZED PRODUCTS: Add serial numbers
 //           if (item.serialNumbers && item.serialNumbers.length > 0) {
 //             faultyStockData.serialNumbers = item.serialNumbers.map(serialNumber => ({
 //               serialNumber: serialNumber,
@@ -965,7 +879,7 @@ const getEntityConfig = (usageType, stockUsage) => {
 //               quantity: 1,
 //               repairedQty: 0,
 //               irrepairedQty: 0,
-//               underRepairQty: 1,
+//               underRepairQty: 0,
 //               repairHistory: [{
 //                 date: new Date(),
 //                 status: "damaged",
@@ -978,17 +892,15 @@ const getEntityConfig = (usageType, stockUsage) => {
 //             }));
 //           }
 //         } else {
-//           // NON-SERIALIZED PRODUCTS: NO SERIAL NUMBERS
 //           console.log(`Non-serialized product - creating entry WITHOUT serial numbers`);
-//           // serialNumbers array remains empty for non-serialized products
 //         }
 
 //         const faultyStock = new FaultyStock(faultyStockData);
 //         await faultyStock.save();
 //         console.log(`✓ Created new faulty stock: ${product.productTitle} - ${item.quantity} units`);
+//         console.log(`DamageQty: ${faultyStock.damageQty}`);
 //       }
-      
-//       // Update center stock for damaged items
+    
 //       await updateCenterStockForDamage(stockUsage.center, item, product);
 //     }
 
@@ -1006,9 +918,6 @@ const addToFaultyStockCollection = async (stockUsage) => {
     const Center = mongoose.model("Center");
 
     console.log("=== ADDING DAMAGE ITEMS TO FAULTY STOCK COLLECTION ===");
-    console.log("Stock Usage ID:", stockUsage._id);
-    console.log("Center:", stockUsage.center);
-    console.log("To Center:", stockUsage.toCenter);
 
     for (let item of stockUsage.items) {
       const product = await Product.findById(item.product);
@@ -1033,96 +942,73 @@ const addToFaultyStockCollection = async (stockUsage) => {
 
       console.log(`Processing product: ${product.productTitle}, Quantity: ${item.quantity}`);
       console.log(`Product tracks serial: ${product.trackSerialNumber}`);
-      
+
       const existingFaultyStock = await FaultyStock.findOne({
         product: item.product,
         center: stockUsage.center,
         toCenter: stockUsage.toCenter,
-        usageType: "Damage",
-        overallStatus: { $in: ["damaged", "under_repair", "partially_repaired", "repaired"] }
+        usageType: "Damage"
       }).populate("product", "productTitle productCode trackSerialNumber");
 
       if (existingFaultyStock) {
         console.log(`Found existing faulty stock for product: ${product.productTitle}`);
-        console.log(`Existing quantity: ${existingFaultyStock.quantity}, New quantity: ${item.quantity}`);
-        
-        // Preserve existing repair quantities
-        const existingRepairedQty = existingFaultyStock.repairedQty || 0;
-        const existingIrrepairedQty = existingFaultyStock.irrepairedQty || 0;
-        const existingTransferredQty = existingFaultyStock.transferredQty || 0;
-        
-        // CRITICAL FIX: DO NOT ADD to underRepairQty for new damage reports
-        // New damage items should remain as damaged, not under repair
-        // Only existing underRepairQty stays (for items already sent to repair)
-        const existingUnderRepairQty = existingFaultyStock.underRepairQty || 0;
-        
-        // Update total quantity
-        existingFaultyStock.quantity += item.quantity;
-        
-        if (product.trackSerialNumber === "Yes") {
-          if (item.serialNumbers && item.serialNumbers.length > 0) {
-            const existingSerials = existingFaultyStock.serialNumbers.map(sn => sn.serialNumber);
-            const newSerials = item.serialNumbers.filter(sn => !existingSerials.includes(sn));
-            
-            console.log(`Adding ${newSerials.length} new serials to existing faulty stock`);
-            
-            newSerials.forEach(serialNumber => {
-              existingFaultyStock.serialNumbers.push({
-                serialNumber: serialNumber,
-                status: "damaged", // NEW ITEMS ARE DAMAGED, NOT UNDER REPAIR
+      
+        if (!existingFaultyStock.pendingDamageHistory) {
+          existingFaultyStock.pendingDamageHistory = [];
+        }
+
+        existingFaultyStock.pendingDamageHistory.push({
+          date: new Date(),
+          quantity: item.quantity,
+          status: "pending",
+          remark: `New damage reported - pending verification`,
+          reportedBy: stockUsage.createdBy,
+          usageReference: stockUsage._id,
+          serialNumbers: item.serialNumbers || []
+        });
+
+        if (!existingFaultyStock.pendingDamageQty) {
+          existingFaultyStock.pendingDamageQty = 0;
+        }
+        existingFaultyStock.pendingDamageQty += item.quantity;
+
+        if (existingFaultyStock.pendingDamageQty > 0) {
+          existingFaultyStock.overallStatus = "pending_damage";
+        }
+
+        if (product.trackSerialNumber === "Yes" && item.serialNumbers && item.serialNumbers.length > 0) {
+          const existingSerials = existingFaultyStock.serialNumbers.map(sn => sn.serialNumber);
+          const newSerials = item.serialNumbers.filter(sn => !existingSerials.includes(sn));
+          
+          console.log(`Adding ${newSerials.length} new serials as pending damage`);
+          
+          newSerials.forEach(serialNumber => {
+            existingFaultyStock.serialNumbers.push({
+              serialNumber: serialNumber,
+              status: "pending_damage",
+              quantity: 1,
+              repairedQty: 0,
+              irrepairedQty: 0,
+              underRepairQty: 0,
+              repairHistory: [{
+                date: new Date(),
+                status: "pending_damage",
+                remark: "Damage reported - pending verification",
                 quantity: 1,
                 repairedQty: 0,
                 irrepairedQty: 0,
-                underRepairQty: 0, // NEW DAMAGED ITEMS: underRepairQty = 0
-                repairHistory: [{
-                  date: new Date(),
-                  status: "damaged", // STATUS IS DAMAGED
-                  remark: "Damage reported",
-                  quantity: 1,
-                  repairedQty: 0,
-                  irrepairedQty: 0,
-                  updatedBy: stockUsage.createdBy
-                }]
-              });
+                updatedBy: stockUsage.createdBy
+              }]
             });
-          }
-        } else {
-          // NON-SERIALIZED PRODUCTS: NO SERIAL NUMBERS NEEDED
-          console.log(`Non-serialized product - updating quantity only, no serials`);
-          
-          // If there are any serial entries from previous implementation, remove them
-          if (existingFaultyStock.serialNumbers && existingFaultyStock.serialNumbers.length > 0) {
-            console.log(`Clearing old serial entries for non-serialized product`);
-            existingFaultyStock.serialNumbers = [];
-          }
+          });
         }
-        
-        // Restore preserved repair quantities
-        existingFaultyStock.repairedQty = existingRepairedQty;
-        existingFaultyStock.irrepairedQty = existingIrrepairedQty;
-        existingFaultyStock.transferredQty = existingTransferredQty;
-        existingFaultyStock.underRepairQty = existingUnderRepairQty; // KEEP existing under repair items
-        
-        // For new damage items, they remain as damaged (not under repair)
-        // So we don't increase underRepairQty
-        
-        // Update overall status
+
         existingFaultyStock.updateQuantitiesAndStatus();
-        
-        // Add usage reference if not already there
-        if (!existingFaultyStock.usageReference) {
-          existingFaultyStock.usageReference = stockUsage._id;
-        }
-        
         await existingFaultyStock.save();
         console.log(`✓ Updated existing faulty stock for product: ${product.productTitle}`);
-        console.log(`Repaired Qty: ${existingFaultyStock.repairedQty}`);
-        console.log(`Irrepaired Qty: ${existingFaultyStock.irrepairedQty}`);
-        console.log(`Under Repair Qty: ${existingFaultyStock.underRepairQty} (should only include items sent to repair)`);
-        console.log(`Damaged Qty (virtual): ${existingFaultyStock.damagedQty} (should include new damage items)`);
         
       } else {
-        // Create new faulty stock entry
+
         console.log(`Creating new faulty stock entry for product: ${product.productTitle}`);
         
         const faultyStockData = {
@@ -1132,12 +1018,13 @@ const addToFaultyStockCollection = async (stockUsage) => {
           toCenter: stockUsage.toCenter,
           reseller: reseller._id,
           product: item.product,
-          quantity: item.quantity,
-          serialNumbers: [], // Start with empty array
+          quantity: 0,  // Start with 0 actual quantity (will increase when accepted)
+          pendingDamageQty: item.quantity,  // Track pending quantity separately
+          serialNumbers: [],
           usageType: stockUsage.usageType,
-          remark: stockUsage.remark || "Damage reported",
+          remark: stockUsage.remark || "Damage reported - pending verification",
           reportedBy: stockUsage.createdBy,
-          overallStatus: "damaged", // INITIAL STATUS IS DAMAGED
+          overallStatus: "pending_damage",  // Initial status is pending
           damageDate: new Date(),
           productDetails: {
             productTitle: product.productTitle,
@@ -1145,48 +1032,53 @@ const addToFaultyStockCollection = async (stockUsage) => {
             productPrice: product.productPrice,
             trackSerialNumber: product.trackSerialNumber
           },
-          // CRITICAL: NEW DAMAGE ITEMS - NOT UNDER REPAIR YET
           repairedQty: 0,
           irrepairedQty: 0,
-          underRepairQty: 0, // ZERO INITIALLY - will increase when sent to repair
+          underRepairQty: 0,
           transferredQty: 0,
+          damageQty: 0,  // Start with 0 damaged quantity
+          pendingDamageHistory: [{
+            date: new Date(),
+            quantity: item.quantity,
+            status: "pending",
+            remark: "Initial damage report - pending verification",
+            reportedBy: stockUsage.createdBy,
+            usageReference: stockUsage._id,
+            serialNumbers: item.serialNumbers || []
+          }],
           isSerialized: product.trackSerialNumber === "Yes"
         };
 
-        if (product.trackSerialNumber === "Yes") {
-          // SERIALIZED PRODUCTS: Add serial numbers
-          if (item.serialNumbers && item.serialNumbers.length > 0) {
-            faultyStockData.serialNumbers = item.serialNumbers.map(serialNumber => ({
-              serialNumber: serialNumber,
-              status: "damaged", // INITIAL STATUS: DAMAGED
+        // For serialized products, add serials
+        if (product.trackSerialNumber === "Yes" && item.serialNumbers && item.serialNumbers.length > 0) {
+          faultyStockData.serialNumbers = item.serialNumbers.map(serialNumber => ({
+            serialNumber: serialNumber,
+            status: "pending_damage",  // Initial status is pending
+            quantity: 1,
+            repairedQty: 0,
+            irrepairedQty: 0,
+            underRepairQty: 0,
+            repairHistory: [{
+              date: new Date(),
+              status: "pending_damage",
+              remark: "Initial damage report - pending verification",
               quantity: 1,
               repairedQty: 0,
               irrepairedQty: 0,
-              underRepairQty: 0, // ZERO - not under repair yet
-              repairHistory: [{
-                date: new Date(),
-                status: "damaged", // STATUS: DAMAGED
-                remark: "Initial damage report",
-                quantity: 1,
-                repairedQty: 0,
-                irrepairedQty: 0,
-                updatedBy: stockUsage.createdBy
-              }]
-            }));
-          }
-        } else {
-          // NON-SERIALIZED PRODUCTS: NO SERIAL NUMBERS
-          console.log(`Non-serialized product - creating entry WITHOUT serial numbers`);
-          // serialNumbers array remains empty for non-serialized products
+              updatedBy: stockUsage.createdBy
+            }]
+          }));
         }
 
         const faultyStock = new FaultyStock(faultyStockData);
+        
+        // Bypass validation for new pending entries
+        faultyStock.$ignore('quantity'); // Ignore the min validation
+        
         await faultyStock.save();
-        console.log(`✓ Created new faulty stock: ${product.productTitle} - ${item.quantity} units`);
-        console.log(`Initial status: damaged, UnderRepairQty: 0`);
+        console.log(`✓ Created new faulty stock with pending status: ${product.productTitle} - ${item.quantity} units pending`);
       }
-      
-      // Update center stock for damaged items
+    
       await updateCenterStockForDamage(stockUsage.center, item, product);
     }
 
