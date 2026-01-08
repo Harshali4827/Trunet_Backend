@@ -16,7 +16,54 @@ const resellerStockSchema = new mongoose.Schema({
   consumedQuantity: { type: Number, default: 0 },
   damagedQuantity: { type: Number, default: 0 },
   repairQuantity: { type: Number, default: 0 },
-  
+  pendingIncomingQuantity: { type: Number, default: 0 },
+
+  pendingTransfers: [{
+    outletId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Center",
+      required: true
+    },
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1
+    },
+    serialNumbers: [{
+      serialNumber: String,
+      originalSerialNumber: String, 
+      status: {
+        type: String,
+        enum: ["pending", "available", "rejected"],
+        default: "pending"
+      }
+    }],
+    transferDate: {
+      type: Date,
+      default: Date.now
+    },
+    transferredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    },
+    transferRemark: String,
+    status: {
+      type: String,
+      enum: ["pending", "accepted", "rejected"],
+      default: "pending"
+    },
+    acceptedAt: Date,
+    acceptedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    },
+    rejectedAt: Date,
+    rejectedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    },
+    rejectionReason: String
+  }],
   sourceBreakdown: {
     damageRepairQuantity: { type: Number, default: 0 },
     centerReturnQuantity: { type: Number, default: 0 }, 

@@ -4,6 +4,7 @@ import User from "../models/User.js";
 import StockPurchase from "../models/StockPurchase.js";
 import CenterStock from "../models/CenterStock.js";
 import mongoose from "mongoose";
+import Product from "../models/Product.js";
 
 const checkStockRequestPermissions = (req, requiredPermissions = []) => {
   const userPermissions = req.user.role?.permissions || [];

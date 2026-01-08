@@ -719,6 +719,7 @@
 
 
 import mongoose from 'mongoose';
+
 const faultyStockSchema = new mongoose.Schema({
   batchNumber: {
     type: String,
@@ -821,6 +822,11 @@ const faultyStockSchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
+    pendingUnderRepairQty: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
     repairHistory: [{
       date: {
         type: Date,
@@ -828,7 +834,7 @@ const faultyStockSchema = new mongoose.Schema({
       },
       status: {
         type: String,
-        enum: ["pending_damage", "damaged", "under_repair", "repaired", "irreparable", "returned", "transferred", "partially_repaired", "rejected"]
+        enum: ["pending_damage", "damaged", "under_repair", "repaired", "irreparable", "returned", "transferred", "partially_repaired", "rejected","pending_under_repair"]
       },
       remark: String,
       quantity: {
@@ -987,8 +993,6 @@ faultyStockSchema.virtual('totalPendingDamageQty').get(function() {
     return this.pendingDamageQty || 0;
   }
 });
-
-// Virtual for available for repair quantity
 faultyStockSchema.virtual('availableForRepairQty').get(function() {
   return this.damageQty || 0;
 });
@@ -998,8 +1002,12 @@ faultyStockSchema.methods.validateQuantities = function() {
   if (this.isSerialized && this.serialNumbers && this.serialNumbers.length > 0) {
     const totalSerials = this.serialNumbers.length;
     
-    const totalPendingFromSerials = this.serialNumbers
+    const totalPendingDamageFromSerials = this.serialNumbers
       .filter(sn => sn.status === "pending_damage")
+      .reduce((sum, sn) => sum + (sn.quantity || 1), 0);
+    
+    const totalPendingUnderRepairFromSerials = this.serialNumbers
+      .filter(sn => sn.status === "pending_under_repair")
       .reduce((sum, sn) => sum + (sn.quantity || 1), 0);
     
     const totalRepairedFromSerials = this.serialNumbers
@@ -1022,14 +1030,16 @@ faultyStockSchema.methods.validateQuantities = function() {
       .filter(sn => sn.status === "damaged")
       .reduce((sum, sn) => sum + (sn.quantity || 1), 0);
     
-    this.pendingDamageQty = totalPendingFromSerials;
+    this.pendingDamageQty = totalPendingDamageFromSerials;
+    this.pendingUnderRepairQty = totalPendingUnderRepairFromSerials;
     this.repairedQty = totalRepairedFromSerials;
     this.irrepairedQty = totalIrrepairedFromSerials;
     this.underRepairQty = totalUnderRepairFromSerials;
     this.transferredQty = totalTransferredFromSerials;
     this.damageQty = totalDamagedFromSerials;
     
-    const totalFromSerials = totalPendingFromSerials + totalRepairedFromSerials + totalIrrepairedFromSerials + 
+    const totalFromSerials = totalPendingDamageFromSerials + totalPendingUnderRepairFromSerials + 
+                           totalRepairedFromSerials + totalIrrepairedFromSerials + 
                            totalUnderRepairFromSerials + totalTransferredFromSerials + 
                            totalDamagedFromSerials;
     
@@ -1044,6 +1054,7 @@ faultyStockSchema.methods.validateQuantities = function() {
     const totalFromAllQuantities = 
       (this.pendingDamageQty || 0) + 
       (this.damageQty || 0) + 
+      (this.pendingUnderRepairQty || 0) +
       (this.underRepairQty || 0) +
       (this.repairedQty || 0) + 
       (this.irrepairedQty || 0) + 
@@ -1059,17 +1070,18 @@ faultyStockSchema.methods.validateQuantities = function() {
   return true;
 };
 
-// Method to update overall status and quantities
 faultyStockSchema.methods.updateQuantitiesAndStatus = function() {
   this.validateQuantities();
   
   // Handle non-serialized products
   if (!this.isSerialized || !this.serialNumbers || this.serialNumbers.length === 0) {
-    console.log(`Non-serialized update - Before: Quantity=${this.quantity}, PendingDamageQty=${this.pendingDamageQty}, DamageQty=${this.damageQty}`);
+    console.log(`Non-serialized update - Before: Quantity=${this.quantity}, PendingDamageQty=${this.pendingDamageQty}, DamageQty=${this.damageQty}, PendingUnderRepairQty=${this.pendingUnderRepairQty}, UnderRepairQty=${this.underRepairQty}`);
     
-    // FIXED: Don't recalculate damageQty - it should remain as set
-    // Status logic - pending_damage takes priority
-    if (this.pendingDamageQty > 0) {
+    // Status logic - check for pending_under_repair first
+    if (this.pendingUnderRepairQty > 0) {
+      this.overallStatus = "pending_under_repair";
+      console.log(`Setting status to pending_under_repair because pendingUnderRepairQty=${this.pendingUnderRepairQty}`);
+    } else if (this.pendingDamageQty > 0) {
       this.overallStatus = "pending_damage";
       console.log(`Setting status to pending_damage because pendingDamageQty=${this.pendingDamageQty}`);
     } else if (this.damageQty > 0) {
@@ -1101,7 +1113,8 @@ faultyStockSchema.methods.updateQuantitiesAndStatus = function() {
   }
   
   // Handle serialized products
-  let totalPending = 0;
+  let totalPendingDamage = 0;
+  let totalPendingUnderRepair = 0;
   let totalRepaired = 0;
   let totalIrrepaired = 0;
   let totalUnderRepair = 0;
@@ -1112,7 +1125,9 @@ faultyStockSchema.methods.updateQuantitiesAndStatus = function() {
     const serialQty = serial.quantity || 1;
     
     if (serial.status === "pending_damage") {
-      totalPending += serialQty;
+      totalPendingDamage += serialQty;
+    } else if (serial.status === "pending_under_repair") {
+      totalPendingUnderRepair += serialQty;
     } else if (serial.status === "repaired") {
       totalRepaired += serialQty;
     } else if (serial.status === "irreparable") {
@@ -1128,27 +1143,32 @@ faultyStockSchema.methods.updateQuantitiesAndStatus = function() {
     // Update serial's underRepairQty
     if (serial.status === "under_repair") {
       serial.underRepairQty = Math.max(0, serialQty - (serial.repairedQty || 0) - (serial.irrepairedQty || 0));
-    } else if (serial.status === "pending_damage" || serial.status === "damaged") {
+    } else if (serial.status === "pending_damage" || serial.status === "damaged" || serial.status === "pending_under_repair") {
       serial.underRepairQty = 0;
     }
   });
   
-  // Update pending damage quantity for serialized products
-  this.pendingDamageQty = totalPending;
+  // Update quantities
+  this.pendingDamageQty = totalPendingDamage;
+  this.pendingUnderRepairQty = totalPendingUnderRepair;
   this.repairedQty = totalRepaired;
   this.irrepairedQty = totalIrrepaired;
   this.transferredQty = totalTransferred;
   this.underRepairQty = totalUnderRepair;
   this.damageQty = totalDamaged;
   
-  const calculatedTotal = totalPending + totalRepaired + totalIrrepaired + totalTransferred + totalUnderRepair + totalDamaged;
+  const calculatedTotal = totalPendingDamage + totalPendingUnderRepair + totalRepaired + totalIrrepaired + 
+                         totalTransferred + totalUnderRepair + totalDamaged;
+  
   if (calculatedTotal !== this.quantity) {
     console.warn(`Final quantity mismatch for ${this._id}: ${calculatedTotal} vs ${this.quantity}`);
     this.quantity = calculatedTotal;
   }
   
-  // Determine overall status with pending_damage as priority
-  if (totalPending > 0) {
+  // Determine overall status with priority
+  if (totalPendingUnderRepair > 0) {
+    this.overallStatus = "pending_under_repair";
+  } else if (totalPendingDamage > 0) {
     this.overallStatus = "pending_damage";
   } else if (this.repairedQty === this.quantity) {
     this.overallStatus = "repaired";
@@ -1170,7 +1190,7 @@ faultyStockSchema.methods.updateQuantitiesAndStatus = function() {
   this.lastRepairUpdate = new Date();
 };
 
-// Method to accept pending damage items
+// FIXED: Updated acceptPendingDamage method to handle multiple pending entries properly
 faultyStockSchema.methods.acceptPendingDamage = function(acceptedQuantities, acceptedBy, remark) {
   if (this.overallStatus !== "pending_damage" && this.pendingDamageQty <= 0) {
     throw new Error("No pending damage items to accept");
@@ -1180,7 +1200,6 @@ faultyStockSchema.methods.acceptPendingDamage = function(acceptedQuantities, acc
   console.log(`Before accept - Quantity: ${this.quantity}, PendingDamageQty: ${this.pendingDamageQty}, DamageQty: ${this.damageQty}`);
   
   if (this.isSerialized) {
-    // For serialized products
     const pendingSerials = this.serialNumbers.filter(sn => sn.status === "pending_damage");
     
     if (acceptedQuantities && Array.isArray(acceptedQuantities)) {
@@ -1188,10 +1207,7 @@ faultyStockSchema.methods.acceptPendingDamage = function(acceptedQuantities, acc
       for (const accepted of acceptedQuantities) {
         const serial = pendingSerials.find(sn => sn.serialNumber === accepted.serialNumber);
         if (serial) {
-          // Update serial status to damaged
           serial.status = "damaged";
-          
-          // Update repair history
           serial.repairHistory.push({
             date: new Date(),
             status: "damaged",
@@ -1203,6 +1219,30 @@ faultyStockSchema.methods.acceptPendingDamage = function(acceptedQuantities, acc
           });
           
           console.log(`Accepted serial: ${accepted.serialNumber}`);
+          
+          // Update ALL matching pendingDamageHistory entries for this serial
+          if (this.pendingDamageHistory && this.pendingDamageHistory.length > 0) {
+            for (const entry of this.pendingDamageHistory) {
+              if (entry.status === "pending" && 
+                  entry.serialNumbers && 
+                  entry.serialNumbers.includes(accepted.serialNumber)) {
+                
+                // Check if all serials in this entry are now damaged (accepted)
+                const allSerialsInEntryAccepted = entry.serialNumbers.every(sn => {
+                  const matchingSerial = this.serialNumbers.find(s => s.serialNumber === sn);
+                  return matchingSerial && matchingSerial.status === "damaged";
+                });
+                
+                if (allSerialsInEntryAccepted) {
+                  entry.status = "accepted";
+                  entry.acceptedBy = acceptedBy;
+                  entry.acceptedAt = new Date();
+                  entry.remark = remark || entry.remark;
+                  console.log(`Updated pendingDamageHistory entry to accepted for serials: ${entry.serialNumbers.join(', ')}`);
+                }
+              }
+            }
+          }
         }
       }
     } else {
@@ -1218,7 +1258,22 @@ faultyStockSchema.methods.acceptPendingDamage = function(acceptedQuantities, acc
           irrepairedQty: 0,
           updatedBy: acceptedBy
         });
+        
+        console.log(`Accepted serial: ${serial.serialNumber}`);
       });
+      
+      // Update ALL pendingDamageHistory entries
+      if (this.pendingDamageHistory && this.pendingDamageHistory.length > 0) {
+        for (const entry of this.pendingDamageHistory) {
+          if (entry.status === "pending") {
+            entry.status = "accepted";
+            entry.acceptedBy = acceptedBy;
+            entry.acceptedAt = new Date();
+            entry.remark = remark || entry.remark;
+            console.log(`Updated pendingDamageHistory entry to accepted for serials: ${entry.serialNumbers ? entry.serialNumbers.join(', ') : 'non-serialized'}`);
+          }
+        }
+      }
     }
   } else {
     // For non-serialized products
@@ -1230,23 +1285,46 @@ faultyStockSchema.methods.acceptPendingDamage = function(acceptedQuantities, acc
       throw new Error(`Cannot accept ${totalAccepted} items. Only ${this.pendingDamageQty} pending items available`);
     }
     
-    // FIXED: For non-serialized, we don't need to update quantity here
-    // because quantity is already the total sum (pending + damage + repaired, etc.)
-    // Just move items from pending to damaged
-    
     this.pendingDamageQty = Math.max(0, this.pendingDamageQty - totalAccepted);
     this.damageQty = (this.damageQty || 0) + totalAccepted;
-    
-    // Update pending damage history
+
+    // Update pending damage history - FIXED: Update ALL pending entries proportionally
     if (this.pendingDamageHistory && this.pendingDamageHistory.length > 0) {
-      const pendingEntries = this.pendingDamageHistory.filter(entry => entry.status === "pending");
-      if (pendingEntries.length > 0) {
-        // Update the oldest pending entry
-        const pendingEntry = pendingEntries[0];
-        pendingEntry.status = "accepted";
-        pendingEntry.acceptedBy = acceptedBy;
-        pendingEntry.acceptedAt = new Date();
-        pendingEntry.remark = remark || pendingEntry.remark;
+      let remainingToAccept = totalAccepted;
+      
+      // Sort pending entries by date (oldest first)
+      const pendingEntries = this.pendingDamageHistory
+        .filter(entry => entry.status === "pending")
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+      
+      for (const entry of pendingEntries) {
+        if (remainingToAccept <= 0) break;
+        
+        const entryQuantity = entry.quantity || 0;
+        
+        if (entryQuantity <= remainingToAccept) {
+          // Accept this entire entry
+          entry.status = "accepted";
+          entry.acceptedBy = acceptedBy;
+          entry.acceptedAt = new Date();
+          entry.remark = remark || entry.remark;
+          remainingToAccept -= entryQuantity;
+          console.log(`Accepted entire pendingDamageHistory entry with quantity: ${entryQuantity}`);
+        } else {
+          // Accept partial quantity from this entry
+          // For simplicity, we'll accept the whole entry
+          entry.status = "accepted";
+          entry.acceptedBy = acceptedBy;
+          entry.acceptedAt = new Date();
+          entry.remark = remark || entry.remark;
+          remainingToAccept = 0;
+          console.log(`Accepted partial pendingDamageHistory entry with quantity: ${entryQuantity} (full entry accepted)`);
+        }
+      }
+      
+      // If there's still quantity to accept but no more pending entries, create a summary entry
+      if (remainingToAccept > 0) {
+        console.warn(`Could not find enough pending entries to accept ${totalAccepted} items. Remaining: ${remainingToAccept}`);
       }
     }
     
@@ -1265,12 +1343,10 @@ faultyStockSchema.methods.acceptPendingDamage = function(acceptedQuantities, acc
       updatedBy: acceptedBy
     });
   }
-  
-  // Update timestamps
+
   this.acceptedBy = acceptedBy;
   this.acceptedAt = new Date();
-  
-  // Update overall status
+
   this.updateQuantitiesAndStatus();
   
   console.log(`After accept - Quantity: ${this.quantity}, PendingDamageQty: ${this.pendingDamageQty}, DamageQty: ${this.damageQty}, Status: ${this.overallStatus}`);
@@ -1287,7 +1363,6 @@ faultyStockSchema.methods.acceptPendingDamage = function(acceptedQuantities, acc
   };
 };
 
-// Method to reject pending damage items
 faultyStockSchema.methods.rejectPendingDamage = function(rejectedQuantities, rejectedBy, remark) {
   if (this.overallStatus !== "pending_damage" && this.pendingDamageQty <= 0) {
     throw new Error("No pending damage items to reject");
@@ -1303,11 +1378,41 @@ faultyStockSchema.methods.rejectPendingDamage = function(rejectedQuantities, rej
       this.serialNumbers = this.serialNumbers.filter(sn => 
         !rejectedQuantities.includes(sn.serialNumber) || sn.status !== "pending_damage"
       );
+      
+      // Update pendingDamageHistory for rejected serials
+      if (this.pendingDamageHistory && this.pendingDamageHistory.length > 0) {
+        for (const entry of this.pendingDamageHistory) {
+          if (entry.status === "pending" && entry.serialNumbers) {
+            // Check if all serials in this entry are rejected
+            const allSerialsRejected = entry.serialNumbers.every(sn => 
+              rejectedQuantities.includes(sn)
+            );
+            
+            if (allSerialsRejected) {
+              entry.status = "rejected";
+              entry.rejectedBy = rejectedBy;
+              entry.rejectedAt = new Date();
+              entry.remark = remark || entry.remark;
+            }
+          }
+        }
+      }
     } else {
       // Remove all pending serials
-      this.serialNumbers = this.serialNumbers.filter(sn => 
-        sn.status !== "pending_damage"
-      );
+      const removedSerials = this.serialNumbers.filter(sn => sn.status === "pending_damage");
+      this.serialNumbers = this.serialNumbers.filter(sn => sn.status !== "pending_damage");
+      
+      // Update all pendingDamageHistory entries
+      if (this.pendingDamageHistory && this.pendingDamageHistory.length > 0) {
+        for (const entry of this.pendingDamageHistory) {
+          if (entry.status === "pending") {
+            entry.status = "rejected";
+            entry.rejectedBy = rejectedBy;
+            entry.rejectedAt = new Date();
+            entry.remark = remark || entry.remark;
+          }
+        }
+      }
     }
   } else {
     // For non-serialized products
@@ -1320,14 +1425,28 @@ faultyStockSchema.methods.rejectPendingDamage = function(rejectedQuantities, rej
     
     // Update pending damage history
     if (this.pendingDamageHistory && this.pendingDamageHistory.length > 0) {
-      const pendingEntries = this.pendingDamageHistory.filter(entry => entry.status === "pending");
-      if (pendingEntries.length > 0) {
-        // Update the oldest pending entry
-        const pendingEntry = pendingEntries[0];
-        pendingEntry.status = "rejected";
-        pendingEntry.rejectedBy = rejectedBy;
-        pendingEntry.rejectedAt = new Date();
-        pendingEntry.remark = remark || pendingEntry.remark;
+      let remainingToReject = totalRejected;
+      const pendingEntries = this.pendingDamageHistory
+        .filter(entry => entry.status === "pending")
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+      
+      for (const entry of pendingEntries) {
+        if (remainingToReject <= 0) break;
+        
+        const entryQuantity = entry.quantity || 0;
+        if (entryQuantity <= remainingToReject) {
+          entry.status = "rejected";
+          entry.rejectedBy = rejectedBy;
+          entry.rejectedAt = new Date();
+          entry.remark = remark || entry.remark;
+          remainingToReject -= entryQuantity;
+        } else {
+          entry.status = "rejected";
+          entry.rejectedBy = rejectedBy;
+          entry.rejectedAt = new Date();
+          entry.remark = remark || entry.remark;
+          remainingToReject = 0;
+        }
       }
     }
     
@@ -1577,6 +1696,7 @@ faultyStockSchema.methods.getQuantitySummary = function() {
     return {
       total: this.quantity,
       pendingDamage: this.pendingDamageQty || 0,
+      pendingUnderRepair: this.pendingUnderRepairQty || 0,
       repaired: this.repairedQty || 0,
       irrepaired: this.irrepairedQty || 0,
       underRepair: this.underRepairQty || 0,
@@ -1589,6 +1709,7 @@ faultyStockSchema.methods.getQuantitySummary = function() {
   
   // For serialized products
   const pendingDamage = this.serialNumbers.filter(sn => sn.status === "pending_damage").length;
+  const pendingUnderRepair = this.serialNumbers.filter(sn => sn.status === "pending_under_repair").length;
   const underRepair = this.serialNumbers.filter(sn => sn.status === "under_repair").length;
   const repaired = this.serialNumbers.filter(sn => sn.status === "repaired").length;
   const irreparable = this.serialNumbers.filter(sn => sn.status === "irreparable").length;
@@ -1598,6 +1719,7 @@ faultyStockSchema.methods.getQuantitySummary = function() {
   return {
     total: this.quantity,
     pendingDamage: pendingDamage,
+    pendingUnderRepair: pendingUnderRepair,
     repaired: repaired,
     irrepaired: irreparable,
     underRepair: underRepair,
@@ -1608,35 +1730,25 @@ faultyStockSchema.methods.getQuantitySummary = function() {
   };
 };
 
-// Pre-save middleware to ensure consistency
 faultyStockSchema.pre('save', function(next) {
-  // Ensure damageQty is calculated if not set
   if (this.damageQty === undefined || this.damageQty === null) {
     this.damageQty = 0;
   }
-  
-  // Ensure pendingDamageQty is calculated if not set
+
   if (this.pendingDamageQty === undefined || this.pendingDamageQty === null) {
     this.pendingDamageQty = 0;
   }
-  
-  // Ensure underRepairQty is calculated if not set
+
   if (this.underRepairQty === undefined || this.underRepairQty === null) {
     this.underRepairQty = 0;
   }
-  
-  // Ensure overallStatus is set for new documents
   if (!this.overallStatus) {
     this.overallStatus = "pending_damage";
   }
-  
-  // For non-serialized products, ensure serialNumbers array is empty
   if (!this.isSerialized && this.serialNumbers && this.serialNumbers.length > 0) {
     console.warn(`Non-serialized product ${this._id} has serial numbers. Clearing them.`);
     this.serialNumbers = [];
   }
-  
-  // For serialized products, ensure status is set correctly
   if (this.isSerialized && this.serialNumbers) {
     this.serialNumbers.forEach(serial => {
       if (!serial.status) {

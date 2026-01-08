@@ -252,49 +252,6 @@ const buildResellerStockFilter = async (query, permissions, userCenter) => {
   return filter;
 };
 
-const buildProjectionStage = (includeSourceBreakdown = false) => {
-  const baseProjection = {
-    reseller: 1,
-    product: 1,
-    totalQuantity: 1,
-    availableQuantity: 1,
-    consumedQuantity: 1,
-    damagedQuantity: 1,
-    repairQuantity: 1,
-    lastUpdated: 1,
-    productName: "$productDetails.productTitle",
-    productCode: "$productDetails.productCode",
-    productCategory: {
-      _id: "$categoryDetails._id",
-      name: "$categoryDetails.productCategory",
-    },
-    trackSerialNumber: "$productDetails.trackSerialNumber",
-    resellerName: "$resellerDetails.businessName",
-    resellerCode: "$resellerDetails.code",
-    resellerContactPerson: "$resellerDetails.contactPerson",
-    resellerContactNumber: "$resellerDetails.mobile",
-    resellerEmail: "$resellerDetails.email",
-    
-    // Serial counts
-    availableSerialsCount: 1,
-    consumedSerialsCount: 1,
-    damagedSerialsCount: 1,
-    underRepairSerialsCount: 1,
-    repairedSerialsCount: 1,
-    irreparableSerialsCount: 1,
-    
-    // Calculated fields
-    effectiveAvailableQuantity: 1,
-  };
-
-  // Add sourceBreakdown only if requested
-  if (includeSourceBreakdown) {
-    baseProjection.sourceBreakdown = 1;
-  }
-
-  return baseProjection;
-};
-
 
 // export const getResellerAvailableStock = async (req, res) => {
 //   try {
@@ -991,6 +948,7 @@ export const getResellerAvailableStock = async (req, res) => {
       center,
       showCenterReturnsOnly = false,
       sourceCenter,
+      showPendingTransfers = false, // NEW: Add flag to show pending transfers
       ...filterParams
     } = req.query;
 
@@ -1011,7 +969,7 @@ export const getResellerAvailableStock = async (req, res) => {
         centerId,
         center,
         showCenterReturnsOnly,
-        sourceCenter: sourceCenterObjectId, // Pass ObjectId instead of string
+        sourceCenter: sourceCenterObjectId,
         ...filterParams 
       },
       permissions,
@@ -1042,6 +1000,7 @@ export const getResellerAvailableStock = async (req, res) => {
             lowStockItems: 0,
             outOfStockItems: 0,
             inStockItems: 0,
+            totalPendingIncoming: 0, // NEW
           },
           reseller: null,
           center: centerInfo,
@@ -1051,6 +1010,7 @@ export const getResellerAvailableStock = async (req, res) => {
             search: search || "",
             lowStockThreshold: parseInt(lowStockThreshold),
             center: centerInfo ? centerInfo._id : null,
+            showPendingTransfers: showPendingTransfers === "true", // NEW
           },
           pagination: {
             currentPage: parseInt(page),
@@ -1129,6 +1089,23 @@ export const getResellerAvailableStock = async (req, res) => {
         $addFields: {
           tracksSerial: {
             $eq: ["$productDetails.trackSerialNumber", "Yes"]
+          },
+          // NEW: Get pending transfers count and details
+          pendingTransfersCount: {
+            $cond: {
+              if: { $isArray: "$pendingTransfers" },
+              then: { $size: {
+                $filter: {
+                  input: "$pendingTransfers",
+                  as: "transfer",
+                  cond: { $eq: ["$$transfer.status", "pending"] }
+                }
+              } },
+              else: 0
+            }
+          },
+          pendingIncomingQuantity: {
+            $ifNull: ["$pendingIncomingQuantity", 0]
           }
         }
       }
@@ -1259,6 +1236,18 @@ export const getResellerAvailableStock = async (req, res) => {
       });
     }
 
+    // NEW: Filter by pending transfers if requested
+    if (showPendingTransfers === "true") {
+      aggregationPipeline.push({
+        $match: {
+          $or: [
+            { pendingIncomingQuantity: { $gt: 0 } },
+            { pendingTransfersCount: { $gt: 0 } }
+          ]
+        }
+      });
+    }
+
     // Calculate center-specific return quantities
     aggregationPipeline.push({
       $addFields: {
@@ -1385,6 +1374,47 @@ export const getResellerAvailableStock = async (req, res) => {
       }
     });
     
+    // NEW: Get pending transfers details
+    aggregationPipeline.push({
+      $addFields: {
+        pendingTransferDetails: {
+          $cond: {
+            if: { $isArray: "$pendingTransfers" },
+            then: {
+              $filter: {
+                input: "$pendingTransfers",
+                as: "transfer",
+                cond: { $eq: ["$$transfer.status", "pending"] }
+              }
+            },
+            else: []
+          }
+        },
+        // Calculate total pending quantity
+        totalPendingQuantity: {
+          $cond: {
+            if: { $isArray: "$pendingTransfers" },
+            then: {
+              $sum: {
+                $map: {
+                  input: {
+                    $filter: {
+                      input: "$pendingTransfers",
+                      as: "transfer",
+                      cond: { $eq: ["$$transfer.status", "pending"] }
+                    }
+                  },
+                  as: "transfer",
+                  in: "$$transfer.quantity"
+                }
+              }
+            },
+            else: 0
+          }
+        }
+      }
+    });
+    
     // Calculate serial counts
     aggregationPipeline.push({
       $addFields: {
@@ -1473,7 +1503,21 @@ export const getResellerAvailableStock = async (req, res) => {
           },
         },
         
-        // Stock status based on threshold
+        // NEW: Calculate total stock including pending
+        totalStockIncludingPending: {
+          $add: [
+            {
+              $cond: {
+                if: { $eq: ["$productDetails.trackSerialNumber", "Yes"] },
+                then: "$availableSerialsCount",
+                else: "$effectiveAvailableQuantity",
+              }
+            },
+            "$pendingIncomingQuantity"
+          ]
+        },
+        
+        // Stock status based on threshold (considering pending)
         stockStatus: {
           $cond: {
             if: {
@@ -1544,6 +1588,12 @@ export const getResellerAvailableStock = async (req, res) => {
         createdAt: 1,
         updatedAt: 1,
         
+        // NEW: Pending transfer fields
+        pendingIncomingQuantity: 1,
+        pendingTransfersCount: 1,
+        totalPendingQuantity: 1,
+        totalStockIncludingPending: 1,
+        
         // Product Details
         productName: "$productDetails.productTitle",
         productCode: "$productDetails.productCode",
@@ -1601,6 +1651,11 @@ export const getResellerAvailableStock = async (req, res) => {
       projectionStage.$project.centerReturnSerials = 1;
     }
 
+    // NEW: Add pending transfer details if requested
+    if (showPendingTransfers === "true") {
+      projectionStage.$project.pendingTransferDetails = 1;
+    }
+
     aggregationPipeline.push(projectionStage);
 
     // Create count pipeline
@@ -1612,7 +1667,8 @@ export const getResellerAvailableStock = async (req, res) => {
     const validSortFields = [
       "productName", "productCode", "resellerName", "resellerCode", 
       "effectiveAvailableQuantity", "stockStatus", "lastUpdated",
-      "centerReturnSerialsCount", "totalQuantity", "availableQuantity"
+      "centerReturnSerialsCount", "totalQuantity", "availableQuantity",
+      "pendingIncomingQuantity", "totalPendingQuantity", "totalStockIncludingPending" // NEW
     ];
     const actualSortBy = validSortFields.includes(sortBy) ? sortBy : "productName";
     sortConfig[actualSortBy] = sortOrder === "desc" ? -1 : 1;
@@ -1625,7 +1681,7 @@ export const getResellerAvailableStock = async (req, res) => {
       { $limit: limitNum }
     );
 
-    // Add lookup for center details
+    // Add lookup for center details in pending transfers
     aggregationPipeline.push({
       $addFields: {
         centerReturnsWithDetails: {
@@ -1639,6 +1695,28 @@ export const getResellerAvailableStock = async (req, res) => {
               latestTransfer: "$$centerReturn.v.latestTransfer"
             }
           }
+        },
+        // NEW: Add outlet details for pending transfers
+        pendingTransfersWithOutletDetails: {
+          $cond: {
+            if: { $isArray: "$pendingTransferDetails" },
+            then: {
+              $map: {
+                input: "$pendingTransferDetails",
+                as: "transfer",
+                in: {
+                  _id: "$$transfer._id",
+                  outletId: "$$transfer.outletId",
+                  quantity: "$$transfer.quantity",
+                  transferDate: "$$transfer.transferDate",
+                  transferredBy: "$$transfer.transferredBy",
+                  transferRemark: "$$transfer.transferRemark",
+                  status: "$$transfer.status"
+                }
+              }
+            },
+            else: []
+          }
         }
       }
     });
@@ -1649,6 +1727,26 @@ export const getResellerAvailableStock = async (req, res) => {
         localField: "centerReturnsWithDetails.centerId",
         foreignField: "_id",
         as: "centerDetailsArray",
+      }
+    });
+
+    // NEW: Lookup outlet details for pending transfers
+    aggregationPipeline.push({
+      $lookup: {
+        from: "centers",
+        localField: "pendingTransfersWithOutletDetails.outletId",
+        foreignField: "_id",
+        as: "outletDetailsArray",
+      }
+    });
+
+    // NEW: Lookup user details for who initiated the transfer
+    aggregationPipeline.push({
+      $lookup: {
+        from: "users",
+        localField: "pendingTransfersWithOutletDetails.transferredBy",
+        foreignField: "_id",
+        as: "transferredByDetailsArray",
       }
     });
 
@@ -1680,6 +1778,44 @@ export const getResellerAvailableStock = async (req, res) => {
               ]
             }
           }
+        },
+        // NEW: Process pending transfers with details
+        pendingTransfers: {
+          $map: {
+            input: "$pendingTransfersWithOutletDetails",
+            as: "transfer",
+            in: {
+              $mergeObjects: [
+                "$$transfer",
+                {
+                  outletDetails: {
+                    $arrayElemAt: [
+                      {
+                        $filter: {
+                          input: "$outletDetailsArray",
+                          as: "outlet",
+                          cond: { $eq: ["$$outlet._id", "$$transfer.outletId"] }
+                        }
+                      },
+                      0
+                    ]
+                  },
+                  transferredByDetails: {
+                    $arrayElemAt: [
+                      {
+                        $filter: {
+                          input: "$transferredByDetailsArray",
+                          as: "user",
+                          cond: { $eq: ["$$user._id", "$$transfer.transferredBy"] }
+                        }
+                      },
+                      0
+                    ]
+                  }
+                }
+              ]
+            }
+          }
         }
       }
     });
@@ -1698,6 +1834,12 @@ export const getResellerAvailableStock = async (req, res) => {
         lastUpdated: 1,
         createdAt: 1,
         updatedAt: 1,
+        
+        // NEW: Pending transfer fields
+        pendingIncomingQuantity: 1,
+        pendingTransfersCount: 1,
+        totalPendingQuantity: 1,
+        totalStockIncludingPending: 1,
         
         productName: 1,
         productCode: 1,
@@ -1752,7 +1894,34 @@ export const getResellerAvailableStock = async (req, res) => {
               latestReturnDate: "$$cr.latestTransfer"
             }
           }
-        }
+        },
+        
+        // NEW: Include pending transfers details
+        ...(showPendingTransfers === "true" ? {
+          pendingTransfers: {
+            $map: {
+              input: "$pendingTransfers",
+              as: "pt",
+              in: {
+                _id: "$$pt._id",
+                outletId: "$$pt.outletId",
+                outletName: { $ifNull: ["$$pt.outletDetails.centerName", "Unknown Outlet"] },
+                outletCode: { $ifNull: ["$$pt.outletDetails.centerCode", "N/A"] },
+                quantity: "$$pt.quantity",
+                transferDate: "$$pt.transferDate",
+                transferredBy: "$$pt.transferredBy",
+                transferredByName: { 
+                  $ifNull: [
+                    { $concat: ["$$pt.transferredByDetails.firstName", " ", "$$pt.transferredByDetails.lastName"] },
+                    "Unknown User"
+                  ] 
+                },
+                transferRemark: "$$pt.transferRemark",
+                status: "$$pt.status"
+              }
+            }
+          }
+        } : {})
       }
     });
 
@@ -1810,7 +1979,7 @@ export const getResellerAvailableStock = async (req, res) => {
       }
     }
 
-    // Calculate summary
+    // Calculate summary including pending transfers
     const summary = {
       totalProducts: total,
       totalQuantity: stockData.reduce((sum, item) => sum + item.totalQuantity, 0),
@@ -1820,6 +1989,11 @@ export const getResellerAvailableStock = async (req, res) => {
       totalRepair: stockData.reduce((sum, item) => sum + item.repairQuantity, 0),
       totalEffectiveAvailable: stockData.reduce((sum, item) => sum + (item.effectiveAvailableQuantity || 0), 0),
       totalCenterReturnsBySerial: stockData.reduce((sum, item) => sum + (item.centerReturnSerialsCount || 0), 0),
+      // NEW: Pending transfer summary
+      totalPendingIncoming: stockData.reduce((sum, item) => sum + (item.pendingIncomingQuantity || 0), 0),
+      totalPendingTransfers: stockData.reduce((sum, item) => sum + (item.pendingTransfersCount || 0), 0),
+      totalPendingQuantity: stockData.reduce((sum, item) => sum + (item.totalPendingQuantity || 0), 0),
+      totalStockIncludingPending: stockData.reduce((sum, item) => sum + (item.totalStockIncludingPending || 0), 0),
       lowStockItems: stockData.filter(item => item.stockStatus === "low_stock").length,
       outOfStockItems: stockData.filter(item => item.stockStatus === "out_of_stock").length,
       inStockItems: stockData.filter(item => item.stockStatus === "in_stock").length,
@@ -1852,6 +2026,7 @@ export const getResellerAvailableStock = async (req, res) => {
           center: centerInfo ? centerInfo._id : (centerId || center || null),
           showCenterReturnsOnly: showCenterReturnsOnly === "true",
           sourceCenter: sourceCenter || null,
+          showPendingTransfers: showPendingTransfers === "true", // NEW
         },
         pagination: {
           currentPage: pageNum,

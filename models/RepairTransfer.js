@@ -355,7 +355,6 @@
 
 
 
-
 import mongoose from 'mongoose';
 
 const repairTransferSchema = new mongoose.Schema({
@@ -414,6 +413,12 @@ const repairTransferSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
+  // NEW FIELD: For non-serialized pending transfers
+  pendingTransferQty: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   isSerialized: {
     type: Boolean,
     default: true
@@ -428,7 +433,7 @@ const repairTransferSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ["pending_under_repair", "under_repair", "repaired", "irreparable", "returned", "partially_repaired"],
+      enum: ["pending_under_repair", "under_repair", "repaired", "irreparable", "returned", "partially_repaired", "transferred","pending_transfer"],
       default: "pending_under_repair"
     },
     quantity: {
@@ -454,7 +459,7 @@ const repairTransferSchema = new mongoose.Schema({
       },
       status: {
         type: String,
-        enum: ["pending_under_repair", "under_repair", "repaired", "irreparable", "returned", "partially_repaired"]
+        enum: ["pending_under_repair", "under_repair", "repaired", "irreparable", "returned", "partially_repaired", "transferred","pending_transfer"]
       },
       remark: String,
       quantity: {
@@ -476,6 +481,16 @@ const repairTransferSchema = new mongoose.Schema({
       cost: {
         type: Number,
         default: 0
+      },
+      // For tracking transfer status
+      transferStatus: {
+        type: String,
+        enum: ["pending", "accepted", "rejected"],
+        default: "pending"
+      },
+      destinationOutlet: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Center"
       }
     }],
     repairDate: Date,
@@ -486,6 +501,45 @@ const repairTransferSchema = new mongoose.Schema({
     },
     technician: String,
     repairRemark: String
+  }],
+  // NEW FIELD: For tracking non-serialized pending transfers details
+  pendingTransferDetails: [{
+    outletId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Center",
+      required: true
+    },
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1
+    },
+    transferredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true
+    },
+    transferredAt: {
+      type: Date,
+      default: Date.now
+    },
+    remark: String,
+    status: {
+      type: String,
+      enum: ["pending", "accepted", "rejected"],
+      default: "pending"
+    },
+    acceptedAt: Date,
+    acceptedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    },
+    rejectedAt: Date,
+    rejectedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    },
+    rejectionReason: String
   }],
   transferRemark: {
     type: String,
@@ -508,7 +562,7 @@ const repairTransferSchema = new mongoose.Schema({
   completedAt: Date,
   status: {
     type: String,
-    enum: ["pending_under_repair", "partially_accepted", "under_repair", "repaired", "irreparable", "returned", "cancelled", "completed"],
+    enum: ["pending_under_repair", "partially_accepted", "under_repair", "repaired", "irreparable", "returned", "cancelled", "completed","transferred","pending_transfer"],
     default: "pending_under_repair"
   },
   repairUpdates: [{
@@ -518,7 +572,7 @@ const repairTransferSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ["pending_under_repair", "partially_accepted", "under_repair", "repaired", "irreparable", "returned", "cancelled", "completed"]
+      enum: ["pending_under_repair", "partially_accepted", "under_repair", "repaired", "irreparable", "returned", "cancelled", "completed", "transferred","pending_transfer"]
     },
     remark: String,
     quantity: {
@@ -532,6 +586,21 @@ const repairTransferSchema = new mongoose.Schema({
     cost: {
       type: Number,
       default: 0
+    },
+    // For tracking transfer status
+    transferStatus: {
+      type: String,
+      enum: ["pending", "accepted", "rejected"],
+      default: "pending"
+    },
+    destinationOutlet: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Center"
+    },
+    acceptedAt: Date,
+    acceptedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
     }
   }],
   estimatedCompletionDate: Date,
@@ -556,304 +625,127 @@ repairTransferSchema.virtual('remainingPendingQty').get(function() {
   return this.pendingUnderRepairQty || 0;
 });
 
-// Method to add items to an existing transfer
-repairTransferSchema.methods.addItemsToTransfer = function(items, updatedBy, remark) {
-  if (this.status !== "pending_under_repair" && this.status !== "partially_accepted") {
-    throw new Error(`Cannot add items to transfer with status: ${this.status}`);
-  }
-
-  let totalQuantityToAdd = 0;
+repairTransferSchema.methods.markAsPendingTransfer = function(quantity, outletId, transferredBy, remark, serialNumbers = []) {
+  console.log(`Marking ${quantity} items as pending transfer to outlet ${outletId}. IsSerialized: ${this.isSerialized}`);
   
   if (this.isSerialized) {
-    // For serialized products
-    const existingSerials = this.serialNumbers.map(sn => sn.serialNumber);
+    // For SERIALIZED products
+    if (!serialNumbers || !Array.isArray(serialNumbers) || serialNumbers.length === 0) {
+      throw new Error("Serial numbers are required for serialized products");
+    }
     
-    items.forEach(item => {
-      if (item.serialNumber && !existingSerials.includes(item.serialNumber)) {
-        this.serialNumbers.push({
-          serialNumber: item.serialNumber,
-          status: "pending_under_repair",
-          quantity: item.quantity || 1,
-          repairedQty: 0,
-          irrepairedQty: 0,
-          underRepairQty: 0,
-          repairHistory: [{
-            date: new Date(),
-            status: "pending_under_repair",
-            remark: remark || "Additional item transferred",
-            quantity: item.quantity || 1,
-            repairedQty: 0,
-            irrepairedQty: 0,
-            updatedBy: updatedBy,
-            cost: 0
-          }]
-        });
-        totalQuantityToAdd += (item.quantity || 1);
-      }
-    });
-  } else {
-    // For non-serialized products
-    items.forEach(item => {
-      totalQuantityToAdd += (item.quantity || 0);
-    });
-  }
-
-  // Update quantities
-  this.quantity += totalQuantityToAdd;
-  this.pendingUnderRepairQty = (this.pendingUnderRepairQty || 0) + totalQuantityToAdd;
-
-  // Add to repair updates
-  this.repairUpdates.push({
-    date: new Date(),
-    status: this.status,
-    remark: remark || `Added ${totalQuantityToAdd} items to transfer`,
-    quantity: totalQuantityToAdd,
-    updatedBy: updatedBy,
-    cost: 0
-  });
-
-  this.updateStatusAndQuantities();
-
-  return {
-    success: true,
-    addedQuantity: totalQuantityToAdd,
-    newTotalQuantity: this.quantity,
-    newPendingQty: this.pendingUnderRepairQty
-  };
-};
-
-// Method to accept pending items (for repair center)
-repairTransferSchema.methods.acceptPendingItems = function(acceptedQuantities, acceptedBy, remark) {
-  if (this.status !== "pending_under_repair" && this.status !== "partially_accepted") {
-    throw new Error(`Cannot accept items from transfer with status: ${this.status}`);
-  }
-
-  console.log(`Accepting pending items for transfer ${this._id}`);
-  console.log(`Before accept - PendingUnderRepairQty: ${this.pendingUnderRepairQty}, UnderRepairQty: ${this.underRepairQty}`);
-
-  if (this.isSerialized) {
-    // For serialized products
-    const pendingSerials = this.serialNumbers.filter(sn => sn.status === "pending_under_repair");
+    if (serialNumbers.length !== quantity) {
+      throw new Error(`Quantity (${quantity}) doesn't match serial numbers count (${serialNumbers.length})`);
+    }
     
-    if (acceptedQuantities && Array.isArray(acceptedQuantities)) {
-      // Accept specific serials
-      for (const accepted of acceptedQuantities) {
-        const serial = pendingSerials.find(sn => sn.serialNumber === accepted.serialNumber);
-        if (serial) {
-          // Update serial status to under_repair
-          serial.status = "under_repair";
-          serial.underRepairQty = 1;
-          
-          // Add repair history entry
-          serial.repairHistory.push({
-            date: new Date(),
-            status: "under_repair",
-            remark: accepted.remark || remark || "Accepted at repair center",
-            quantity: 1,
-            repairedQty: 0,
-            irrepairedQty: 0,
-            updatedBy: acceptedBy,
-            cost: 0
-          });
-        }
-      }
-    } else {
-      // Accept all pending serials
-      pendingSerials.forEach(serial => {
-        serial.status = "under_repair";
-        serial.underRepairQty = 1;
-        
-        serial.repairHistory.push({
+    // Update each serial from "repaired" to "pending_transfer"
+    let updatedCount = 0;
+    for (const serialNumber of serialNumbers) {
+      const serialIndex = this.serialNumbers.findIndex(sn => 
+        sn.serialNumber === serialNumber && sn.status === "repaired"
+      );
+      
+      if (serialIndex !== -1) {
+        this.serialNumbers[serialIndex].status = "pending_transfer";
+        this.serialNumbers[serialIndex].repairHistory.push({
           date: new Date(),
-          status: "under_repair",
-          remark: remark || "Accepted at repair center",
+          status: "pending_transfer",
+          remark: remark || `Transferred to warehouse (pending)`,
           quantity: 1,
           repairedQty: 0,
           irrepairedQty: 0,
-          updatedBy: acceptedBy,
-          cost: 0
+          updatedBy: transferredBy,
+          transferStatus: "pending",
+          destinationOutlet: outletId
         });
-      });
-    }
-
-    // Calculate accepted count
-    const acceptedCount = this.serialNumbers.filter(sn => sn.status === "under_repair").length;
-    const pendingCount = this.serialNumbers.filter(sn => sn.status === "pending_under_repair").length;
-    
-    this.underRepairQty = acceptedCount;
-    this.pendingUnderRepairQty = pendingCount;
-
-  } else {
-    // For non-serialized products
-    const totalAccepted = acceptedQuantities && acceptedQuantities.totalAcceptedQty 
-      ? acceptedQuantities.totalAcceptedQty 
-      : this.pendingUnderRepairQty;
-    
-    if (totalAccepted > this.pendingUnderRepairQty) {
-      throw new Error(`Cannot accept ${totalAccepted} items. Only ${this.pendingUnderRepairQty} pending items available`);
-    }
-
-    // Update quantities
-    this.underRepairQty = (this.underRepairQty || 0) + totalAccepted;
-    this.pendingUnderRepairQty = Math.max(0, this.pendingUnderRepairQty - totalAccepted);
-  }
-
-  // Update accepted info
-  this.acceptedBy = acceptedBy;
-  this.acceptedAt = new Date();
-
-  // Update status
-  this.updateStatusAndQuantities();
-
-  // Add to repair updates
-  this.repairUpdates.push({
-    date: new Date(),
-    status: this.status,
-    remark: remark || `Accepted ${this.isSerialized ? this.underRepairQty + ' items' : this.underRepairQty + ' quantity'} at repair center`,
-    quantity: this.underRepairQty,
-    updatedBy: acceptedBy,
-    cost: 0
-  });
-
-  console.log(`After accept - PendingUnderRepairQty: ${this.pendingUnderRepairQty}, UnderRepairQty: ${this.underRepairQty}, Status: ${this.status}`);
-
-  return {
-    success: true,
-    acceptedQty: this.underRepairQty,
-    pendingQty: this.pendingUnderRepairQty,
-    status: this.status,
-    acceptedBy: acceptedBy,
-    acceptedAt: this.acceptedAt
-  };
-};
-
-// Method to update repair status
-repairTransferSchema.methods.updateRepairStatus = function(updateData, updatedBy) {
-  const { repairedQty, irrepairedQty, status, remark, cost, technician } = updateData;
-  
-  // Validate
-  const totalToUpdate = (repairedQty || 0) + (irrepairedQty || 0);
-  const availableForRepair = this.underRepairQty - (this.repairedQty + this.irrepairedQty);
-  
-  if (totalToUpdate > availableForRepair) {
-    throw new Error(`Cannot update ${totalToUpdate} items. Only ${availableForRepair} items available for repair`);
-  }
-
-  if (this.isSerialized) {
-    // For serialized products - update specific serials if provided
-    const underRepairSerials = this.serialNumbers.filter(sn => sn.status === "under_repair");
-    
-    // For simplicity, update first N serials
-    let updatedCount = 0;
-    for (let i = 0; i < Math.min(totalToUpdate, underRepairSerials.length); i++) {
-      const serial = underRepairSerials[i];
-      
-      if (repairedQty > 0) {
-        serial.status = "repaired";
-        serial.repairedQty = 1;
-        serial.repairDate = new Date();
-        repairedQty--;
-      } else if (irrepairedQty > 0) {
-        serial.status = "irreparable";
-        serial.irrepairedQty = 1;
-        irrepairedQty--;
+        updatedCount++;
       }
-      
-      serial.repairHistory.push({
-        date: new Date(),
-        status: serial.status,
-        remark: remark || `Repair update`,
-        quantity: 1,
-        repairedQty: serial.status === "repaired" ? 1 : 0,
-        irrepairedQty: serial.status === "irreparable" ? 1 : 0,
-        updatedBy: updatedBy,
-        cost: cost || 0
-      });
-      
-      if (technician) serial.technician = technician;
-      if (remark) serial.repairRemark = remark;
-      if (cost) serial.repairCost = cost;
-      
-      updatedCount++;
     }
     
-    if (updatedCount !== totalToUpdate) {
-      throw new Error(`Only updated ${updatedCount} serials out of ${totalToUpdate}`);
+    if (updatedCount !== quantity) {
+      throw new Error(`Could only find ${updatedCount} repaired serials out of ${quantity} requested`);
     }
+    
   } else {
-    // For non-serialized products
-    if (repairedQty) {
-      this.repairedQty = (this.repairedQty || 0) + repairedQty;
+    // For NON-SERIALIZED products
+    if (quantity > this.repairedQty) {
+      throw new Error(`Cannot transfer ${quantity} items. Only ${this.repairedQty} repaired items available`);
     }
-    
-    if (irrepairedQty) {
-      this.irrepairedQty = (this.irrepairedQty || 0) + irrepairedQty;
-    }
-    
-    // Update underRepairQty
-    this.underRepairQty = Math.max(0, this.underRepairQty - totalToUpdate);
   }
-
-  // Update total repair cost
-  if (cost) {
-    this.totalRepairCost = (this.totalRepairCost || 0) + cost;
+  
+  // Update quantities for BOTH types
+  this.repairedQty = Math.max(0, this.repairedQty - quantity);
+  this.pendingTransferQty = (this.pendingTransferQty || 0) + quantity;
+  
+  // Track destination outlet for this pending transfer
+  if (!this.pendingTransferDetails) {
+    this.pendingTransferDetails = [];
   }
-
-  // Update status
-  this.updateStatusAndQuantities();
-
+  
+  this.pendingTransferDetails.push({
+    outletId: outletId,
+    quantity: quantity,
+    transferredBy: transferredBy,
+    transferredAt: new Date(),
+    remark: remark || `Pending transfer to outlet`,
+    status: "pending",
+    serialNumbers: this.isSerialized ? serialNumbers : []
+  });
+  
   // Add to repair updates
   this.repairUpdates.push({
     date: new Date(),
-    status: this.status,
-    remark: remark || `Repair update: ${repairedQty || 0} repaired, ${irrepairedQty || 0} irrepaired`,
-    quantity: totalToUpdate,
-    updatedBy: updatedBy,
-    cost: cost || 0
+    status: "pending_transfer",
+    remark: remark || `Transferred ${quantity} ${this.isSerialized ? 'serialized' : 'non-serialized'} items to warehouse (pending)`,
+    quantity: quantity,
+    updatedBy: transferredBy,
+    transferStatus: "pending",
+    destinationOutlet: outletId,
+    serialNumbers: this.isSerialized ? serialNumbers : []
   });
-
-  // Update completion dates if all items are processed
-  if (this.status === "repaired" || this.status === "irreparable" || this.status === "completed") {
-    this.actualCompletionDate = new Date();
-    this.completedBy = updatedBy;
-    this.completedAt = new Date();
-  }
-
+  
+  // Update overall status
+  this.updateStatusAndQuantities();
+  
+  console.log(`After - RepairedQty: ${this.repairedQty}, PendingTransferQty: ${this.pendingTransferQty}`);
+  
   return {
     success: true,
-    status: this.status,
+    quantity: quantity,
+    pendingTransferQty: this.pendingTransferQty,
     repairedQty: this.repairedQty,
-    irrepairedQty: this.irrepairedQty,
-    underRepairQty: this.underRepairQty,
-    totalRepairCost: this.totalRepairCost,
-    actualCompletionDate: this.actualCompletionDate
+    status: this.status,
+    isSerialized: this.isSerialized
   };
 };
-
-// Method to update status and quantities
+// Updated updateStatusAndQuantities method
 repairTransferSchema.methods.updateStatusAndQuantities = function() {
-  // For serialized products, sync quantities from serial numbers
+  // For SERIALIZED products
   if (this.isSerialized && this.serialNumbers && this.serialNumbers.length > 0) {
     const pendingCount = this.serialNumbers.filter(sn => sn.status === "pending_under_repair").length;
     const underRepairCount = this.serialNumbers.filter(sn => sn.status === "under_repair").length;
     const repairedCount = this.serialNumbers.filter(sn => sn.status === "repaired").length;
     const irrepairedCount = this.serialNumbers.filter(sn => sn.status === "irreparable").length;
     const returnedCount = this.serialNumbers.filter(sn => sn.status === "returned").length;
+    const pendingTransferCount = this.serialNumbers.filter(sn => sn.status === "pending_transfer").length;
+    const transferredCount = this.serialNumbers.filter(sn => sn.status === "transferred").length;
     
     this.pendingUnderRepairQty = pendingCount;
     this.underRepairQty = underRepairCount;
     this.repairedQty = repairedCount;
     this.irrepairedQty = irrepairedCount;
     this.returnedQty = returnedCount;
+    this.pendingTransferQty = pendingTransferCount; // Now includes serialized pending transfers
     
-    // Ensure total matches
-    const calculatedTotal = pendingCount + underRepairCount + repairedCount + irrepairedCount + returnedCount;
+    // Validate quantity matches
+    const calculatedTotal = pendingCount + underRepairCount + repairedCount + 
+                           irrepairedCount + returnedCount + pendingTransferCount + transferredCount;
     if (calculatedTotal !== this.quantity) {
       console.warn(`Quantity mismatch in transfer ${this._id}: Calculated ${calculatedTotal}, Expected ${this.quantity}`);
     }
   }
-
-  // Determine overall status
+  
+  // Determine status
   if (this.quantity === this.returnedQty) {
     this.status = "returned";
   } else if (this.quantity === this.repairedQty) {
@@ -870,12 +762,233 @@ repairTransferSchema.methods.updateStatusAndQuantities = function() {
     this.status = "partially_accepted";
   } else if (this.repairedQty > 0 || this.irrepairedQty > 0) {
     this.status = "partially_repaired";
+  } else if (this.pendingTransferQty > 0) {
+    // For BOTH serialized and non-serialized
+    this.status = "pending_transfer";
   } else {
     this.status = "pending_under_repair";
   }
 };
 
-// Method to get quantity summary
+// Method to accept pending non-serialized transfer
+repairTransferSchema.methods.acceptPendingTransfer = function(outletId, quantity, acceptedBy, remark) {
+  if (this.isSerialized) {
+    throw new Error("Use serial-specific methods for serialized products");
+  }
+  
+  console.log(`Accepting ${quantity} non-serialized items from pending transfer for outlet ${outletId}`);
+  
+  if (quantity > this.pendingTransferQty) {
+    throw new Error(`Cannot accept ${quantity} items. Only ${this.pendingTransferQty} pending transfer items available`);
+  }
+  
+  // Update pending transfer details
+  let remainingToAccept = quantity;
+  let acceptedCount = 0;
+  
+  if (this.pendingTransferDetails && this.pendingTransferDetails.length > 0) {
+    for (const detail of this.pendingTransferDetails) {
+      if (detail.outletId.toString() === outletId.toString() && 
+          detail.status === "pending" && 
+          remainingToAccept > 0) {
+        
+        const toAccept = Math.min(detail.quantity, remainingToAccept);
+        
+        detail.status = "accepted";
+        detail.acceptedAt = new Date();
+        detail.acceptedBy = acceptedBy;
+        if (remark) detail.remark = remark;
+        
+        // Reduce quantity if partially accepted
+        if (toAccept < detail.quantity) {
+          // Create new pending entry for remaining quantity
+          this.pendingTransferDetails.push({
+            outletId: outletId,
+            quantity: detail.quantity - toAccept,
+            transferredBy: detail.transferredBy,
+            transferredAt: detail.transferredAt,
+            remark: detail.remark,
+            status: "pending"
+          });
+          detail.quantity = toAccept;
+        }
+        
+        remainingToAccept -= toAccept;
+        acceptedCount += toAccept;
+      }
+    }
+  }
+  
+  if (acceptedCount !== quantity) {
+    throw new Error(`Could only accept ${acceptedCount} out of ${quantity} requested items`);
+  }
+  
+  // Update quantities
+  this.pendingTransferQty = Math.max(0, this.pendingTransferQty - quantity);
+  this.returnedQty = (this.returnedQty || 0) + quantity;
+  
+  // Add to repair updates
+  this.repairUpdates.push({
+    date: new Date(),
+    status: "transferred",
+    remark: remark || `Accepted ${quantity} repaired non-serialized items at warehouse`,
+    quantity: quantity,
+    updatedBy: acceptedBy,
+    transferStatus: "accepted",
+    destinationOutlet: outletId,
+    acceptedAt: new Date(),
+    acceptedBy: acceptedBy
+  });
+  
+  // Update overall status
+  this.updateStatusAndQuantities();
+  
+  console.log(`After accept - PendingTransferQty: ${this.pendingTransferQty}, ReturnedQty: ${this.returnedQty}`);
+  
+  return {
+    success: true,
+    acceptedQuantity: quantity,
+    pendingTransferQty: this.pendingTransferQty,
+    returnedQty: this.returnedQty,
+    status: this.status
+  };
+};
+
+// Method to reject pending non-serialized transfer
+repairTransferSchema.methods.rejectPendingTransfer = function(outletId, quantity, rejectedBy, reason) {
+  if (this.isSerialized) {
+    throw new Error("Use serial-specific methods for serialized products");
+  }
+  
+  console.log(`Rejecting ${quantity} non-serialized items from pending transfer for outlet ${outletId}`);
+  
+  if (quantity > this.pendingTransferQty) {
+    throw new Error(`Cannot reject ${quantity} items. Only ${this.pendingTransferQty} pending transfer items available`);
+  }
+  
+  // Update pending transfer details
+  let remainingToReject = quantity;
+  let rejectedCount = 0;
+  
+  if (this.pendingTransferDetails && this.pendingTransferDetails.length > 0) {
+    for (const detail of this.pendingTransferDetails) {
+      if (detail.outletId.toString() === outletId.toString() && 
+          detail.status === "pending" && 
+          remainingToReject > 0) {
+        
+        const toReject = Math.min(detail.quantity, remainingToReject);
+        
+        detail.status = "rejected";
+        detail.rejectedAt = new Date();
+        detail.rejectedBy = rejectedBy;
+        detail.rejectionReason = reason;
+        
+        // Reduce quantity if partially rejected
+        if (toReject < detail.quantity) {
+          // Create new pending entry for remaining quantity
+          this.pendingTransferDetails.push({
+            outletId: outletId,
+            quantity: detail.quantity - toReject,
+            transferredBy: detail.transferredBy,
+            transferredAt: detail.transferredAt,
+            remark: detail.remark,
+            status: "pending"
+          });
+          detail.quantity = toReject;
+        }
+        
+        remainingToReject -= toReject;
+        rejectedCount += toReject;
+      }
+    }
+  }
+  
+  if (rejectedCount !== quantity) {
+    throw new Error(`Could only reject ${rejectedCount} out of ${quantity} requested items`);
+  }
+  
+  // Update quantities - return to repairedQty
+  this.pendingTransferQty = Math.max(0, this.pendingTransferQty - quantity);
+  this.repairedQty = (this.repairedQty || 0) + quantity;
+  
+  // Add to repair updates
+  this.repairUpdates.push({
+    date: new Date(),
+    status: "rejected",
+    remark: `Rejected ${quantity} repaired non-serialized items: ${reason}`,
+    quantity: quantity,
+    updatedBy: rejectedBy,
+    transferStatus: "rejected",
+    destinationOutlet: outletId,
+    rejectionReason: reason
+  });
+  
+  // Update overall status
+  this.updateStatusAndQuantities();
+  
+  console.log(`After reject - PendingTransferQty: ${this.pendingTransferQty}, RepairedQty: ${this.repairedQty}`);
+  
+  return {
+    success: true,
+    rejectedQuantity: quantity,
+    pendingTransferQty: this.pendingTransferQty,
+    repairedQty: this.repairedQty,
+    status: this.status
+  };
+};
+
+// Updated status and quantities method
+repairTransferSchema.methods.updateStatusAndQuantities = function() {
+  // Update serialized quantities
+  if (this.isSerialized && this.serialNumbers && this.serialNumbers.length > 0) {
+    const pendingCount = this.serialNumbers.filter(sn => sn.status === "pending_under_repair").length;
+    const underRepairCount = this.serialNumbers.filter(sn => sn.status === "under_repair").length;
+    const repairedCount = this.serialNumbers.filter(sn => sn.status === "repaired").length;
+    const irrepairedCount = this.serialNumbers.filter(sn => sn.status === "irreparable").length;
+    const returnedCount = this.serialNumbers.filter(sn => sn.status === "returned").length;
+    const pendingTransferCount = this.serialNumbers.filter(sn => sn.status === "pending_transfer").length;
+    const transferredCount = this.serialNumbers.filter(sn => sn.status === "transferred").length;
+    
+    this.pendingUnderRepairQty = pendingCount;
+    this.underRepairQty = underRepairCount;
+    this.repairedQty = repairedCount;
+    this.irrepairedQty = irrepairedCount;
+    this.returnedQty = returnedCount;
+
+    const calculatedTotal = pendingCount + underRepairCount + repairedCount + 
+                           irrepairedCount + returnedCount + pendingTransferCount + transferredCount;
+    if (calculatedTotal !== this.quantity) {
+      console.warn(`Quantity mismatch in transfer ${this._id}: Calculated ${calculatedTotal}, Expected ${this.quantity}`);
+    }
+  }
+
+  // Determine status
+  if (this.quantity === this.returnedQty) {
+    this.status = "returned";
+  } else if (this.quantity === this.repairedQty) {
+    this.status = "repaired";
+    this.completedAt = this.completedAt || new Date();
+  } else if (this.quantity === this.irrepairedQty) {
+    this.status = "irreparable";
+    this.completedAt = this.completedAt || new Date();
+  } else if (this.quantity === this.underRepairQty) {
+    this.status = "under_repair";
+  } else if (this.pendingUnderRepairQty === this.quantity) {
+    this.status = "pending_under_repair";
+  } else if (this.pendingUnderRepairQty > 0 && this.underRepairQty > 0) {
+    this.status = "partially_accepted";
+  } else if (this.repairedQty > 0 || this.irrepairedQty > 0) {
+    this.status = "partially_repaired";
+  } else if (this.isSerialized && this.serialNumbers && this.serialNumbers.some(sn => sn.status === "pending_transfer")) {
+    this.status = "pending_transfer";
+  } else if (!this.isSerialized && this.pendingTransferQty > 0) {
+    this.status = "pending_transfer";
+  } else {
+    this.status = "pending_under_repair";
+  }
+};
+
+// Get quantity summary
 repairTransferSchema.methods.getQuantitySummary = function() {
   return {
     total: this.quantity,
@@ -884,56 +997,9 @@ repairTransferSchema.methods.getQuantitySummary = function() {
     repaired: this.repairedQty || 0,
     irrepaired: this.irrepairedQty || 0,
     returned: this.returnedQty || 0,
-    remaining: this.quantity - (this.pendingUnderRepairQty + this.underRepairQty + this.repairedQty + this.irrepairedQty + this.returnedQty)
-  };
-};
-
-// Method to return items to source center
-repairTransferSchema.methods.returnItems = function(returnQty, remark, returnedBy) {
-  if (returnQty > (this.pendingUnderRepairQty + this.underRepairQty)) {
-    throw new Error(`Cannot return ${returnQty} items. Only ${this.pendingUnderRepairQty + this.underRepairQty} items available for return`);
-  }
-
-  // First return from pending, then from under repair
-  let remainingToReturn = returnQty;
-  
-  // Return pending items first
-  if (this.pendingUnderRepairQty > 0) {
-    const pendingToReturn = Math.min(remainingToReturn, this.pendingUnderRepairQty);
-    this.pendingUnderRepairQty -= pendingToReturn;
-    remainingToReturn -= pendingToReturn;
-  }
-
-  // Then return under repair items
-  if (remainingToReturn > 0 && this.underRepairQty > 0) {
-    const underRepairToReturn = Math.min(remainingToReturn, this.underRepairQty);
-    this.underRepairQty -= underRepairToReturn;
-    remainingToReturn -= underRepairToReturn;
-  }
-
-  // Update returned quantity
-  this.returnedQty = (this.returnedQty || 0) + returnQty;
-
-  // Add to repair updates
-  this.repairUpdates.push({
-    date: new Date(),
-    status: this.status,
-    remark: remark || `Returned ${returnQty} items to source center`,
-    quantity: returnQty,
-    updatedBy: returnedBy,
-    cost: 0
-  });
-
-  // Update status
-  this.updateStatusAndQuantities();
-
-  return {
-    success: true,
-    returnedQty: returnQty,
-    newPendingUnderRepairQty: this.pendingUnderRepairQty,
-    newUnderRepairQty: this.underRepairQty,
-    newReturnedQty: this.returnedQty,
-    status: this.status
+    pendingTransfer: this.pendingTransferQty || 0,
+    remaining: this.quantity - (this.pendingUnderRepairQty + this.underRepairQty + this.repairedQty + 
+                               this.irrepairedQty + this.returnedQty + this.pendingTransferQty)
   };
 };
 
@@ -945,6 +1011,7 @@ repairTransferSchema.pre('save', function(next) {
   if (this.repairedQty === undefined) this.repairedQty = 0;
   if (this.irrepairedQty === undefined) this.irrepairedQty = 0;
   if (this.returnedQty === undefined) this.returnedQty = 0;
+  if (this.pendingTransferQty === undefined) this.pendingTransferQty = 0;
   if (this.totalRepairCost === undefined) this.totalRepairCost = 0;
   
   // For non-serialized, ensure serialNumbers is empty

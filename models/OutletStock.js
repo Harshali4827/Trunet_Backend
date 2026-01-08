@@ -30,21 +30,98 @@ const outletStockSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    pendingTestingQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     inTransitQuantity: {
       type: Number,
       default: 0,
       min: 0,
+    },
+    pendingRepairedQty: {
+      type: Number,
+      default: 0,
+      min: 0
     },
     repairedQuantity: {
       type: Number,
       default: 0,
       min: 0,
     },
+    pendingTransferToReseller: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    pendingTransfers: [{
+      resellerId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Reseller",
+        required: true
+      },
+      quantity: {
+        type: Number,
+        required: true,
+        min: 1
+      },
+      serialNumbers: [{
+        serialNumber: String,
+        status: String
+      }],
+      transferDate: {
+        type: Date,
+        default: Date.now
+      },
+      transferredBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User"
+      },
+      transferRemark: String,
+      status: {
+        type: String,
+        enum: ["pending", "accepted", "rejected"],
+        default: "pending"
+      },
+      acceptedAt: Date,
+      acceptedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User"
+      },
+      rejectedAt: Date,
+      rejectedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User"
+      },
+      rejectionReason: String
+    }],
     transferredRepairedQty: {
       type: Number,
       default: 0,
       min: 0,
     },
+    pendingSerials: [{
+      serialNumber: {
+        type: String,
+        required: true,
+        trim: true,
+      },
+      repairTransferId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "RepairTransfer",
+        required: true
+      },
+      addedAt: {
+        type: Date,
+        default: Date.now
+      },
+      status: {
+        type: String,
+        enum: ["pending_approval", "accepted", "rejected"],
+        default: "pending_approval"
+      }
+    }],
     serialNumbers: [
       {
         serialNumber: {
@@ -59,7 +136,7 @@ const outletStockSchema = new mongoose.Schema(
         },
         status: {
           type: String,
-          enum: ["available", "in_transit", "transferred", "sold", "returned"],
+          enum: ["available", "in_transit", "transferred", "sold", "returned","pending_approval","pending_transfer","pending_testing","under_testing"],
           default: "available",
         },
         sourceType: {
@@ -88,7 +165,7 @@ const outletStockSchema = new mongoose.Schema(
             transferDate: Date,
             transferType: {
               type: String,
-              enum: ["outlet_to_center", "center_to_center", "field_usage","outlet_to_reseller"],
+              enum: ["outlet_to_center", "center_to_center", "field_usage","outlet_to_reseller","outlet_to_testing"],
             },
           },
         ],

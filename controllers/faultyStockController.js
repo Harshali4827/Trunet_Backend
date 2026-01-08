@@ -43,6 +43,406 @@ const checkStockUsagePermissions = (req, requiredPermissions = []) => {
     };
 };
 
+// export const transferToRepairCenter = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
+//       req,
+//       ["manage_usage_own_center", "manage_usage_all_center"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Access denied. manage_usage_own_center or manage_usage_all_center permission required.",
+//       });
+//     }
+
+//     const { items, repairCenterId, transferRemark } = req.body;
+//     const transferredBy = req.user.id;
+
+//     if (!items || !Array.isArray(items) || items.length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Items array is required and cannot be empty",
+//       });
+//     }
+
+//     if (!repairCenterId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Repair center ID is required",
+//       });
+//     }
+
+//     if (!mongoose.Types.ObjectId.isValid(repairCenterId)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid repair center ID format",
+//       });
+//     }
+
+//     // Validate items
+//     for (const item of items) {
+//       if (!item.productId || !mongoose.Types.ObjectId.isValid(item.productId)) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `Invalid product ID: ${item.productId}`
+//         });
+//       }
+
+//       if (!item.quantity || item.quantity < 1) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `Invalid quantity for product ${item.productId}`
+//         });
+//       }
+//     }
+
+//     const Center = mongoose.model("Center");
+//     const Product = mongoose.model("Product");
+//     const FaultyStock = mongoose.model("FaultyStock");
+//     const RepairTransfer = mongoose.model("RepairTransfer");
+
+//     const repairCenter = await Center.findById(repairCenterId);
+//     if (!repairCenter) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Repair center not found",
+//       });
+//     }
+
+//     const transferResults = [];
+//     const errors = [];
+    
+//     for (const item of items) {
+//       try {
+//         const { productId, quantity, serialNumbers, damageRemark } = item;
+        
+//         const product = await Product.findById(productId);
+//         if (!product) {
+//           errors.push(`Product not found: ${productId}`);
+//           continue;
+//         }
+
+//         // Check for current user's center if they don't have all-center access
+//         let faultyFilter = {
+//           product: productId
+//         };
+        
+//         // Add center filter for users with only own center access
+//         if (!permissions.manage_usage_all_center && userCenter) {
+//           faultyFilter.center = userCenter._id || userCenter;
+//         }
+
+//         // Find existing faulty stock for this product
+//         const existingFaultyStocks = await FaultyStock.find(faultyFilter);
+        
+//         if (!existingFaultyStocks || existingFaultyStocks.length === 0) {
+//           errors.push(`No faulty stock found for product: ${product.productTitle}`);
+//           continue;
+//         }
+
+//         let selectedFaultyStock = null;
+//         let totalAvailableDamaged = 0;
+//         let allDamagedSerials = [];
+        
+//         // Calculate available damaged items
+//         for (const faultyStock of existingFaultyStocks) {
+//           if (product.trackSerialNumber === "Yes") {
+//             // SERIALIZED PRODUCTS: Look for damaged serials
+//             const damagedSerialsInRecord = faultyStock.serialNumbers.filter(
+//               sn => sn.status === "damaged"
+//             );
+            
+//             if (damagedSerialsInRecord.length > 0) {
+//               allDamagedSerials = [...allDamagedSerials, ...damagedSerialsInRecord];
+//               totalAvailableDamaged += damagedSerialsInRecord.length;
+              
+//               if (!selectedFaultyStock) {
+//                 selectedFaultyStock = faultyStock;
+//               }
+//             }
+//           } else {
+//             // NON-SERIALIZED PRODUCTS: Calculate damaged quantity
+//             const repairedQty = faultyStock.repairedQty || 0;
+//             const irrepairedQty = faultyStock.irrepairedQty || 0;
+//             const underRepairQty = faultyStock.underRepairQty || 0;
+            
+//             const damagedQty = Math.max(0, faultyStock.quantity - repairedQty - irrepairedQty - underRepairQty);
+            
+//             if (damagedQty > 0) {
+//               totalAvailableDamaged += damagedQty;
+//               if (!selectedFaultyStock) {
+//                 selectedFaultyStock = faultyStock;
+//               }
+//             }
+//           }
+//         }
+
+//         console.log(`Product: ${product.productTitle}, Type: ${product.trackSerialNumber === "Yes" ? "Serialized" : "Non-Serialized"}`);
+//         console.log(`Total available damaged: ${totalAvailableDamaged}, Requested: ${quantity}`);
+
+//         if (totalAvailableDamaged === 0) {
+//           errors.push(`No damaged items available for product: ${product.productTitle}. All items are either repaired, under repair, or irreparable.`);
+//           continue;
+//         }
+
+//         if (quantity > totalAvailableDamaged) {
+//           errors.push(`Insufficient damaged stock quantity for ${product.productTitle}. Available damaged items: ${totalAvailableDamaged}, Requested: ${quantity}`);
+//           continue;
+//         }
+
+//         // Validate serial numbers if product tracks them
+//         let actualSerialsToTransfer = [];
+//         if (product.trackSerialNumber === "Yes") {
+//           if (!serialNumbers || !Array.isArray(serialNumbers) || serialNumbers.length === 0) {
+//             // If no serial numbers provided, use the first N damaged serials
+//             const availableSerialNumbers = allDamagedSerials.map(sn => sn.serialNumber);
+//             actualSerialsToTransfer = availableSerialNumbers.slice(0, quantity);
+//           } else {
+//             // Validate provided serial numbers
+//             if (serialNumbers.length !== quantity) {
+//               errors.push(`Quantity (${quantity}) doesn't match serial numbers count (${serialNumbers.length}) for product ${product.productTitle}`);
+//               continue;
+//             }
+
+//             const availableSerialNumbers = allDamagedSerials.map(sn => sn.serialNumber);
+//             const invalidSerials = serialNumbers.filter(sn => !availableSerialNumbers.includes(sn));
+            
+//             if (invalidSerials.length > 0) {
+//               // Check if invalid serials exist but are not damaged
+//               const allSerials = existingFaultyStocks.flatMap(fs => fs.serialNumbers);
+//               const nonDamagedSerials = [];
+              
+//               for (const invalidSn of invalidSerials) {
+//                 const serialInfo = allSerials.find(sn => sn.serialNumber === invalidSn);
+//                 if (serialInfo) {
+//                   nonDamagedSerials.push(`${invalidSn} (status: ${serialInfo.status})`);
+//                 }
+//               }
+              
+//               if (nonDamagedSerials.length > 0) {
+//                 errors.push(`Cannot transfer serials with non-damaged status for product ${product.productTitle}: ${nonDamagedSerials.join(', ')}`);
+//                 continue;
+//               } else {
+//                 errors.push(`Invalid serial numbers for product ${product.productTitle}: ${invalidSerials.join(', ')}`);
+//                 continue;
+//               }
+//             }
+//             actualSerialsToTransfer = serialNumbers;
+//           }
+//         }
+
+//         console.log(`Processing transfer: ${product.productTitle}, Qty: ${quantity}, Type: ${product.trackSerialNumber === "Yes" ? "Serialized" : "Non-Serialized"}`);
+
+//         // Update the selected faulty stock record
+//         if (!selectedFaultyStock) {
+//           errors.push(`No valid faulty stock record found for product: ${product.productTitle}`);
+//           continue;
+//         }
+
+//         // Update faulty stock - mark items as under repair
+//         if (product.trackSerialNumber === "Yes") {
+//           // SERIALIZED PRODUCTS: Update serial numbers status to "under_repair"
+//           let updatedCount = 0;
+//           for (const serial of selectedFaultyStock.serialNumbers) {
+//             if (actualSerialsToTransfer.includes(serial.serialNumber)) {
+//               serial.status = "under_repair";
+//               serial.underRepairQty = 1;
+              
+//               // Add repair history entry
+//               serial.repairHistory.push({
+//                 date: new Date(),
+//                 status: "under_repair",
+//                 remark: damageRemark || "Transferred to repair center",
+//                 updatedBy: transferredBy,
+//                 cost: 0
+//               });
+              
+//               updatedCount++;
+//             }
+//           }
+
+//           if (updatedCount !== quantity) {
+//             errors.push(`Failed to update all serial numbers. Expected: ${quantity}, Updated: ${updatedCount}`);
+//             continue;
+//           }
+//         } else {
+//           // NON-SERIALIZED PRODUCTS: Update underRepairQty
+//           const currentUnderRepair = selectedFaultyStock.underRepairQty || 0;
+//           selectedFaultyStock.underRepairQty = currentUnderRepair + quantity;
+//         }
+
+//         // Update faulty stock status and save
+//         selectedFaultyStock.updateQuantitiesAndStatus();
+//         await selectedFaultyStock.save();
+//         console.log(`✓ FaultyStock saved with status: ${selectedFaultyStock.overallStatus}`);
+
+//         // CHECK IF REPAIR TRANSFER ALREADY EXISTS FOR THIS FAULTY STOCK
+//         // Look for active transfers (not completed/returned)
+//         let repairTransfer = await RepairTransfer.findOne({
+//           faultyStock: selectedFaultyStock._id,
+//           product: productId,
+//           toCenter: repairCenterId,
+//           status: { $in: ["transferred", "in_repair", "under_repair", "partially_repaired", "repaired"] }
+//         });
+
+//         if (repairTransfer) {
+//           // UPDATE EXISTING REPAIR TRANSFER
+//           console.log(`Found existing repair transfer ${repairTransfer._id}, updating...`);
+          
+//           // Prepare items to add
+//           const itemsToAdd = product.trackSerialNumber === "Yes" 
+//             ? actualSerialsToTransfer.map(sn => ({ serialNumber: sn, quantity: 1 }))
+//             : [{ quantity: quantity }];
+          
+//           // Use the model method to add items
+//           try {
+//             const addResult = repairTransfer.addItemsToTransfer(
+//               itemsToAdd,
+//               transferredBy,
+//               damageRemark || "Additional items transferred"
+//             );
+            
+//             console.log(`Added items result:`, addResult);
+//           } catch (addError) {
+//             errors.push(`Failed to add items to existing transfer: ${addError.message}`);
+//             continue;
+//           }
+          
+//         } else {
+//           // CREATE NEW REPAIR TRANSFER
+//           console.log(`Creating new repair transfer for ${product.productTitle}`);
+          
+//           let repairTransferSerials = [];
+//           if (product.trackSerialNumber === "Yes") {
+//             // SERIALIZED: Add actual serials
+//             repairTransferSerials = actualSerialsToTransfer.map(sn => ({
+//               serialNumber: sn,
+//               status: "under_repair",
+//               quantity: 1,
+//               repairedQty: 0,
+//               irrepairedQty: 0,
+//               underRepairQty: 1,
+//               repairHistory: [{
+//                 date: new Date(),
+//                 status: "under_repair",
+//                 remark: damageRemark || "Transferred to repair center",
+//                 updatedBy: transferredBy,
+//                 cost: 0
+//               }]
+//             }));
+//           } else {
+//             // NON-SERIALIZED: Keep serialNumbers array empty
+//             repairTransferSerials = [];
+//           }
+
+//           // Create repair transfer record
+//           repairTransfer = new RepairTransfer({
+//             date: new Date(),
+//             faultyStock: selectedFaultyStock._id,
+//             fromCenter: selectedFaultyStock.center,
+//             toCenter: repairCenterId,
+//             product: productId,
+//             quantity: quantity,
+//             serialNumbers: repairTransferSerials,
+//             isSerialized: product.trackSerialNumber === "Yes",
+//             transferRemark: transferRemark || `Transferred to repair center: ${repairCenter.centerName}`,
+//             transferredBy: transferredBy,
+//             status: "under_repair",
+//             // Set quantity fields correctly
+//             underRepairQty: quantity,
+//             repairedQty: 0,
+//             irrepairedQty: 0,
+//             repairUpdates: [{
+//               date: new Date(),
+//               status: "under_repair",
+//               remark: transferRemark || `Initial transfer to repair center`,
+//               quantity: quantity,
+//               updatedBy: transferredBy,
+//               cost: 0
+//             }]
+//           });
+//         }
+
+//         // Save the repair transfer
+//         await repairTransfer.save();
+//         console.log(`✓ RepairTransfer saved with status: ${repairTransfer.status}`);
+
+//         transferResults.push({
+//           product: product.productTitle,
+//           productCode: product.productCode,
+//           quantity: quantity,
+//           serialNumbers: actualSerialsToTransfer,
+//           transferId: repairTransfer._id,
+//           fromCenter: selectedFaultyStock.center,
+//           toCenter: repairCenter.centerName,
+//           status: "success",
+//           action: repairTransfer.isNew ? "created" : "updated",
+//           productType: product.trackSerialNumber === "Yes" ? "serialized" : "non-serialized",
+//           faultyStockStatus: selectedFaultyStock.overallStatus,
+//           faultyStockId: selectedFaultyStock._id,
+//           repairTransferStatus: repairTransfer.status,
+//           repairTransferQuantities: repairTransfer.getQuantitySummary()
+//         });
+
+//         console.log(`✓ Transferred to repair center: ${product.productTitle} (Qty: ${quantity})`);
+
+//       } catch (error) {
+//         console.error(`Error processing ${item.productId}:`, error);
+//         errors.push(`Error processing ${item.productId}: ${error.message}`);
+//       }
+//     }
+
+//     // If there are errors and no successful transfers, return error
+//     if (errors.length > 0 && transferResults.length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Failed to transfer any items",
+//         errors: errors
+//       });
+//     }
+
+//     // If there are mixed results (some success, some errors)
+//     if (errors.length > 0) {
+//       return res.json({
+//         success: true,
+//         message: `Partially completed. ${transferResults.length} items transferred successfully, ${errors.length} failed`,
+//         data: {
+//           transferred: transferResults,
+//           errors: errors,
+//           repairCenter: {
+//             id: repairCenter._id,
+//             name: repairCenter.centerName,
+//             code: repairCenter.centerCode
+//           }
+//         }
+//       });
+//     }
+
+//     // All items transferred successfully
+//     res.json({
+//       success: true,
+//       message: `Successfully transferred ${transferResults.length} items to repair center`,
+//       data: {
+//         transferred: transferResults,
+//         repairCenter: {
+//           id: repairCenter._id,
+//           name: repairCenter.centerName,
+//           code: repairCenter.centerCode
+//         }
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error("Transfer to repair center error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: error.message || "Failed to transfer to repair center",
+//     });
+//   }
+// };
+
 export const transferToRepairCenter = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
@@ -81,23 +481,6 @@ export const transferToRepairCenter = async (req, res) => {
       });
     }
 
-    // Validate items
-    for (const item of items) {
-      if (!item.productId || !mongoose.Types.ObjectId.isValid(item.productId)) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid product ID: ${item.productId}`
-        });
-      }
-
-      if (!item.quantity || item.quantity < 1) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid quantity for product ${item.productId}`
-        });
-      }
-    }
-
     const Center = mongoose.model("Center");
     const Product = mongoose.model("Product");
     const FaultyStock = mongoose.model("FaultyStock");
@@ -124,137 +507,91 @@ export const transferToRepairCenter = async (req, res) => {
           continue;
         }
 
-        // Check for current user's center if they don't have all-center access
+        // Find faulty stock for this product
         let faultyFilter = {
-          product: productId
+          product: productId,
+          overallStatus: "damaged" // Only transfer from damaged status
         };
         
-        // Add center filter for users with only own center access
         if (!permissions.manage_usage_all_center && userCenter) {
           faultyFilter.center = userCenter._id || userCenter;
         }
 
-        // Find existing faulty stock for this product
-        const existingFaultyStocks = await FaultyStock.find(faultyFilter);
+        const faultyStocks = await FaultyStock.find(faultyFilter);
         
-        if (!existingFaultyStocks || existingFaultyStocks.length === 0) {
-          errors.push(`No faulty stock found for product: ${product.productTitle}`);
+        if (!faultyStocks || faultyStocks.length === 0) {
+          errors.push(`No damaged faulty stock found for product: ${product.productTitle}`);
           continue;
         }
 
         let selectedFaultyStock = null;
-        let totalAvailableDamaged = 0;
-        let allDamagedSerials = [];
+        let totalAvailable = 0;
+        let availableSerials = [];
         
-        // Calculate available damaged items
-        for (const faultyStock of existingFaultyStocks) {
+        // Find available damaged items
+        for (const faultyStock of faultyStocks) {
           if (product.trackSerialNumber === "Yes") {
-            // SERIALIZED PRODUCTS: Look for damaged serials
-            const damagedSerialsInRecord = faultyStock.serialNumbers.filter(
-              sn => sn.status === "damaged"
-            );
-            
-            if (damagedSerialsInRecord.length > 0) {
-              allDamagedSerials = [...allDamagedSerials, ...damagedSerialsInRecord];
-              totalAvailableDamaged += damagedSerialsInRecord.length;
-              
-              if (!selectedFaultyStock) {
-                selectedFaultyStock = faultyStock;
-              }
+            const damagedSerials = faultyStock.serialNumbers.filter(sn => sn.status === "damaged");
+            if (damagedSerials.length > 0) {
+              availableSerials = [...availableSerials, ...damagedSerials];
+              totalAvailable += damagedSerials.length;
+              if (!selectedFaultyStock) selectedFaultyStock = faultyStock;
             }
           } else {
-            // NON-SERIALIZED PRODUCTS: Calculate damaged quantity
-            const repairedQty = faultyStock.repairedQty || 0;
-            const irrepairedQty = faultyStock.irrepairedQty || 0;
-            const underRepairQty = faultyStock.underRepairQty || 0;
-            
-            const damagedQty = Math.max(0, faultyStock.quantity - repairedQty - irrepairedQty - underRepairQty);
-            
-            if (damagedQty > 0) {
-              totalAvailableDamaged += damagedQty;
-              if (!selectedFaultyStock) {
-                selectedFaultyStock = faultyStock;
-              }
+            if (faultyStock.damageQty > 0) {
+              totalAvailable += faultyStock.damageQty;
+              if (!selectedFaultyStock) selectedFaultyStock = faultyStock;
             }
           }
         }
 
-        console.log(`Product: ${product.productTitle}, Type: ${product.trackSerialNumber === "Yes" ? "Serialized" : "Non-Serialized"}`);
-        console.log(`Total available damaged: ${totalAvailableDamaged}, Requested: ${quantity}`);
-
-        if (totalAvailableDamaged === 0) {
-          errors.push(`No damaged items available for product: ${product.productTitle}. All items are either repaired, under repair, or irreparable.`);
+        if (totalAvailable === 0) {
+          errors.push(`No damaged items available for product: ${product.productTitle}`);
           continue;
         }
 
-        if (quantity > totalAvailableDamaged) {
-          errors.push(`Insufficient damaged stock quantity for ${product.productTitle}. Available damaged items: ${totalAvailableDamaged}, Requested: ${quantity}`);
+        if (quantity > totalAvailable) {
+          errors.push(`Insufficient damaged stock for ${product.productTitle}. Available: ${totalAvailable}, Requested: ${quantity}`);
           continue;
         }
 
-        // Validate serial numbers if product tracks them
-        let actualSerialsToTransfer = [];
+        // Validate serial numbers for serialized products
+        let actualSerials = [];
         if (product.trackSerialNumber === "Yes") {
           if (!serialNumbers || !Array.isArray(serialNumbers) || serialNumbers.length === 0) {
-            // If no serial numbers provided, use the first N damaged serials
-            const availableSerialNumbers = allDamagedSerials.map(sn => sn.serialNumber);
-            actualSerialsToTransfer = availableSerialNumbers.slice(0, quantity);
+            // Take first N available serials
+            actualSerials = availableSerials.slice(0, quantity).map(s => s.serialNumber);
           } else {
-            // Validate provided serial numbers
             if (serialNumbers.length !== quantity) {
-              errors.push(`Quantity (${quantity}) doesn't match serial numbers count (${serialNumbers.length}) for product ${product.productTitle}`);
+              errors.push(`Quantity mismatch for ${product.productTitle}. Serial count: ${serialNumbers.length}, Quantity: ${quantity}`);
               continue;
             }
-
-            const availableSerialNumbers = allDamagedSerials.map(sn => sn.serialNumber);
-            const invalidSerials = serialNumbers.filter(sn => !availableSerialNumbers.includes(sn));
             
+            const availableSerialNumbers = availableSerials.map(s => s.serialNumber);
+            const invalidSerials = serialNumbers.filter(sn => !availableSerialNumbers.includes(sn));
             if (invalidSerials.length > 0) {
-              // Check if invalid serials exist but are not damaged
-              const allSerials = existingFaultyStocks.flatMap(fs => fs.serialNumbers);
-              const nonDamagedSerials = [];
-              
-              for (const invalidSn of invalidSerials) {
-                const serialInfo = allSerials.find(sn => sn.serialNumber === invalidSn);
-                if (serialInfo) {
-                  nonDamagedSerials.push(`${invalidSn} (status: ${serialInfo.status})`);
-                }
-              }
-              
-              if (nonDamagedSerials.length > 0) {
-                errors.push(`Cannot transfer serials with non-damaged status for product ${product.productTitle}: ${nonDamagedSerials.join(', ')}`);
-                continue;
-              } else {
-                errors.push(`Invalid serial numbers for product ${product.productTitle}: ${invalidSerials.join(', ')}`);
-                continue;
-              }
+              errors.push(`Invalid serial numbers for ${product.productTitle}: ${invalidSerials.join(', ')}`);
+              continue;
             }
-            actualSerialsToTransfer = serialNumbers;
+            actualSerials = serialNumbers;
           }
         }
 
-        console.log(`Processing transfer: ${product.productTitle}, Qty: ${quantity}, Type: ${product.trackSerialNumber === "Yes" ? "Serialized" : "Non-Serialized"}`);
+        console.log(`Transferring ${product.productTitle}: ${quantity} units to pending_under_repair`);
 
-        // Update the selected faulty stock record
-        if (!selectedFaultyStock) {
-          errors.push(`No valid faulty stock record found for product: ${product.productTitle}`);
-          continue;
-        }
-
-        // Update faulty stock - mark items as under repair
+        // Update faulty stock - move from damaged to pending_under_repair
         if (product.trackSerialNumber === "Yes") {
-          // SERIALIZED PRODUCTS: Update serial numbers status to "under_repair"
+          // For serialized: Update serial status to pending_under_repair
           let updatedCount = 0;
           for (const serial of selectedFaultyStock.serialNumbers) {
-            if (actualSerialsToTransfer.includes(serial.serialNumber)) {
-              serial.status = "under_repair";
-              serial.underRepairQty = 1;
+            if (actualSerials.includes(serial.serialNumber)) {
+              serial.status = "pending_under_repair";
+              serial.underRepairQty = 0; // NOT counted as under repair yet
               
-              // Add repair history entry
               serial.repairHistory.push({
                 date: new Date(),
-                status: "under_repair",
-                remark: damageRemark || "Transferred to repair center",
+                status: "pending_under_repair",
+                remark: damageRemark || "Transferred to repair center - pending acceptance",
                 updatedBy: transferredBy,
                 cost: 0
               });
@@ -262,188 +599,129 @@ export const transferToRepairCenter = async (req, res) => {
               updatedCount++;
             }
           }
-
+          
           if (updatedCount !== quantity) {
-            errors.push(`Failed to update all serial numbers. Expected: ${quantity}, Updated: ${updatedCount}`);
+            errors.push(`Failed to update ${quantity} serials. Updated: ${updatedCount}`);
             continue;
           }
         } else {
-          // NON-SERIALIZED PRODUCTS: Update underRepairQty
-          const currentUnderRepair = selectedFaultyStock.underRepairQty || 0;
-          selectedFaultyStock.underRepairQty = currentUnderRepair + quantity;
-        }
-
-        // Update faulty stock status and save
-        selectedFaultyStock.updateQuantitiesAndStatus();
-        await selectedFaultyStock.save();
-        console.log(`✓ FaultyStock saved with status: ${selectedFaultyStock.overallStatus}`);
-
-        // CHECK IF REPAIR TRANSFER ALREADY EXISTS FOR THIS FAULTY STOCK
-        // Look for active transfers (not completed/returned)
-        let repairTransfer = await RepairTransfer.findOne({
-          faultyStock: selectedFaultyStock._id,
-          product: productId,
-          toCenter: repairCenterId,
-          status: { $in: ["transferred", "in_repair", "under_repair", "partially_repaired", "repaired"] }
-        });
-
-        if (repairTransfer) {
-          // UPDATE EXISTING REPAIR TRANSFER
-          console.log(`Found existing repair transfer ${repairTransfer._id}, updating...`);
-          
-          // Prepare items to add
-          const itemsToAdd = product.trackSerialNumber === "Yes" 
-            ? actualSerialsToTransfer.map(sn => ({ serialNumber: sn, quantity: 1 }))
-            : [{ quantity: quantity }];
-          
-          // Use the model method to add items
-          try {
-            const addResult = repairTransfer.addItemsToTransfer(
-              itemsToAdd,
-              transferredBy,
-              damageRemark || "Additional items transferred"
-            );
-            
-            console.log(`Added items result:`, addResult);
-          } catch (addError) {
-            errors.push(`Failed to add items to existing transfer: ${addError.message}`);
+          // For non-serialized: Reduce damageQty and add to pendingUnderRepairQty
+          if (selectedFaultyStock.damageQty < quantity) {
+            errors.push(`Insufficient damageQty: ${selectedFaultyStock.damageQty}, requested: ${quantity}`);
             continue;
           }
           
-        } else {
-          // CREATE NEW REPAIR TRANSFER
-          console.log(`Creating new repair transfer for ${product.productTitle}`);
+          selectedFaultyStock.damageQty -= quantity;
+          selectedFaultyStock.pendingUnderRepairQty = (selectedFaultyStock.pendingUnderRepairQty || 0) + quantity;
           
-          let repairTransferSerials = [];
-          if (product.trackSerialNumber === "Yes") {
-            // SERIALIZED: Add actual serials
-            repairTransferSerials = actualSerialsToTransfer.map(sn => ({
-              serialNumber: sn,
-              status: "under_repair",
-              quantity: 1,
-              repairedQty: 0,
-              irrepairedQty: 0,
-              underRepairQty: 1,
-              repairHistory: [{
-                date: new Date(),
-                status: "under_repair",
-                remark: damageRemark || "Transferred to repair center",
-                updatedBy: transferredBy,
-                cost: 0
-              }]
-            }));
-          } else {
-            // NON-SERIALIZED: Keep serialNumbers array empty
-            repairTransferSerials = [];
-          }
-
-          // Create repair transfer record
-          repairTransfer = new RepairTransfer({
+          // Add to repair history
+          selectedFaultyStock.repairHistory.push({
             date: new Date(),
-            faultyStock: selectedFaultyStock._id,
-            fromCenter: selectedFaultyStock.center,
-            toCenter: repairCenterId,
-            product: productId,
+            status: "pending_under_repair",
+            remark: damageRemark || `Transferred ${quantity} items to repair center - pending acceptance`,
             quantity: quantity,
-            serialNumbers: repairTransferSerials,
-            isSerialized: product.trackSerialNumber === "Yes",
-            transferRemark: transferRemark || `Transferred to repair center: ${repairCenter.centerName}`,
-            transferredBy: transferredBy,
-            status: "under_repair",
-            // Set quantity fields correctly
-            underRepairQty: quantity,
             repairedQty: 0,
             irrepairedQty: 0,
-            repairUpdates: [{
-              date: new Date(),
-              status: "under_repair",
-              remark: transferRemark || `Initial transfer to repair center`,
-              quantity: quantity,
-              updatedBy: transferredBy,
-              cost: 0
-            }]
+            updatedBy: transferredBy
           });
         }
 
-        // Save the repair transfer
+        // Update faulty stock status (but NOT underRepairQty)
+        selectedFaultyStock.updateQuantitiesAndStatus();
+        await selectedFaultyStock.save();
+        
+        console.log(`FaultyStock saved: DamageQty: ${selectedFaultyStock.damageQty}, PendingUnderRepairQty: ${selectedFaultyStock.pendingUnderRepairQty}, UnderRepairQty: ${selectedFaultyStock.underRepairQty}`);
+
+        // Create repair transfer record
+        let repairTransferSerials = [];
+        if (product.trackSerialNumber === "Yes") {
+          repairTransferSerials = actualSerials.map(sn => ({
+            serialNumber: sn,
+            status: "pending_under_repair",
+            quantity: 1,
+            repairedQty: 0,
+            irrepairedQty: 0,
+            underRepairQty: 0, // ZERO - not accepted yet
+            repairHistory: [{
+              date: new Date(),
+              status: "pending_under_repair",
+              remark: damageRemark || "Transferred - pending acceptance",
+              updatedBy: transferredBy,
+              cost: 0
+            }]
+          }));
+        }
+
+        const repairTransfer = new RepairTransfer({
+          date: new Date(),
+          faultyStock: selectedFaultyStock._id,
+          fromCenter: selectedFaultyStock.center,
+          toCenter: repairCenterId,
+          product: productId,
+          quantity: quantity,
+          serialNumbers: repairTransferSerials,
+          isSerialized: product.trackSerialNumber === "Yes",
+          transferRemark: transferRemark || `Transferred to ${repairCenter.centerName} - pending acceptance`,
+          transferredBy: transferredBy,
+          status: "pending_under_repair",
+          pendingUnderRepairQty: quantity, // ALL items are pending
+          underRepairQty: 0, // ZERO - none accepted yet
+          repairedQty: 0,
+          irrepairedQty: 0,
+          returnedQty: 0,
+          repairUpdates: [{
+            date: new Date(),
+            status: "pending_under_repair",
+            remark: transferRemark || `Transferred to repair center - pending acceptance`,
+            quantity: quantity,
+            updatedBy: transferredBy,
+            cost: 0
+          }]
+        });
+
         await repairTransfer.save();
-        console.log(`✓ RepairTransfer saved with status: ${repairTransfer.status}`);
+        console.log(`RepairTransfer saved: PendingUnderRepairQty: ${repairTransfer.pendingUnderRepairQty}, UnderRepairQty: ${repairTransfer.underRepairQty}`);
 
         transferResults.push({
           product: product.productTitle,
-          productCode: product.productCode,
           quantity: quantity,
-          serialNumbers: actualSerialsToTransfer,
-          transferId: repairTransfer._id,
-          fromCenter: selectedFaultyStock.center,
-          toCenter: repairCenter.centerName,
-          status: "success",
-          action: repairTransfer.isNew ? "created" : "updated",
-          productType: product.trackSerialNumber === "Yes" ? "serialized" : "non-serialized",
-          faultyStockStatus: selectedFaultyStock.overallStatus,
+          status: "pending_under_repair",
           faultyStockId: selectedFaultyStock._id,
-          repairTransferStatus: repairTransfer.status,
-          repairTransferQuantities: repairTransfer.getQuantitySummary()
+          transferId: repairTransfer._id,
+          message: "Transferred successfully. Waiting for repair center acceptance."
         });
 
-        console.log(`✓ Transferred to repair center: ${product.productTitle} (Qty: ${quantity})`);
-
       } catch (error) {
-        console.error(`Error processing ${item.productId}:`, error);
-        errors.push(`Error processing ${item.productId}: ${error.message}`);
+        console.error(`Error processing item:`, error);
+        errors.push(`Error: ${error.message}`);
       }
     }
 
-    // If there are errors and no successful transfers, return error
     if (errors.length > 0 && transferResults.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Failed to transfer any items",
+        message: "Transfer failed",
         errors: errors
       });
     }
 
-    // If there are mixed results (some success, some errors)
-    if (errors.length > 0) {
-      return res.json({
-        success: true,
-        message: `Partially completed. ${transferResults.length} items transferred successfully, ${errors.length} failed`,
-        data: {
-          transferred: transferResults,
-          errors: errors,
-          repairCenter: {
-            id: repairCenter._id,
-            name: repairCenter.centerName,
-            code: repairCenter.centerCode
-          }
-        }
-      });
-    }
-
-    // All items transferred successfully
     res.json({
       success: true,
-      message: `Successfully transferred ${transferResults.length} items to repair center`,
+      message: `Transferred ${transferResults.length} items to pending_under_repair status`,
       data: {
         transferred: transferResults,
-        repairCenter: {
-          id: repairCenter._id,
-          name: repairCenter.centerName,
-          code: repairCenter.centerCode
-        }
+        errors: errors.length > 0 ? errors : undefined
       }
     });
 
   } catch (error) {
-    console.error("Transfer to repair center error:", error);
+    console.error("Transfer error:", error);
     res.status(500).json({
       success: false,
-      message: error.message || "Failed to transfer to repair center",
+      message: error.message
     });
   }
 };
-
-
 
 export const returnFromRepairCenter = async (req, res) => {
     try {
@@ -3276,7 +3554,7 @@ export const getRepairedProducts = async (req, res) => {
 //     const OutletStock = mongoose.model("OutletStock");
 //     const Center = mongoose.model("Center");
 //     const Product = mongoose.model("Product");
-//     const FaultyStock = mongoose.model("FaultyStock");
+//     // NO FaultyStock model needed here
 
 //     const transferResults = [];
 //     const errors = [];
@@ -3340,7 +3618,7 @@ export const getRepairedProducts = async (req, res) => {
           
 //           console.log(`Transferring ${quantity} items from transfer ${repairTransfer._id}`);
           
-//           // Update repair transfer
+//           // Update repair transfer ONLY
 //           repairTransfer.returnedQty = (repairTransfer.returnedQty || 0) + quantity;
 //           repairTransfer.repairedQty = Math.max(0, (repairTransfer.repairedQty || 0) - quantity);
           
@@ -3352,70 +3630,16 @@ export const getRepairedProducts = async (req, res) => {
           
 //           repairTransfer.repairUpdates.push({
 //             date: new Date(),
-//             status: "transferred",
-//             remark: damageRemark || `Transferred ${quantity} repaired items to ${destinationOutlet.centerName}`,
+//             status: "transferred", // Status is "transferred" for warehouse transfer
+//             remark: damageRemark || `Transferred ${quantity} repaired items to warehouse: ${destinationOutlet.centerName}`,
 //             quantity: quantity,
 //             updatedBy: transferredBy
 //           });
           
 //           await repairTransfer.save();
+//           console.log(`✓ Updated RepairTransfer status to: ${repairTransfer.status}`);
           
-//           // FIND AND UPDATE FAULTY STOCK WITHOUT usageReference
-//           console.log(`\n=== FINDING FAULTY STOCK ===`);
-          
-//           // Method 1: Try to find by usageReference if exists
-//           let faultyStock = null;
-//           if (repairTransfer.usageReference) {
-//             faultyStock = await FaultyStock.findById(repairTransfer.usageReference);
-//             console.log(`Found by usageReference: ${faultyStock ? 'Yes' : 'No'}`);
-//           }
-          
-//           // Method 2: Find by product, center, and repairedQty > 0
-//           if (!faultyStock) {
-//             faultyStock = await FaultyStock.findOne({
-//               product: productId,
-//               center: repairTransfer.fromCenter || repairCenterId,
-//               isSerialized: false,
-//               repairedQty: { $gte: quantity }
-//             }).sort({ createdAt: -1 });
-//             console.log(`Found by product/center search: ${faultyStock ? 'Yes' : 'No'}`);
-//           }
-          
-//           // Method 3: Find any faulty stock with this product
-//           if (!faultyStock) {
-//             faultyStock = await FaultyStock.findOne({
-//               product: productId,
-//               isSerialized: false,
-//               repairedQty: { $gte: quantity }
-//             }).sort({ createdAt: -1 });
-//             console.log(`Found by product only: ${faultyStock ? 'Yes' : 'No'}`);
-//           }
-          
-//           if (faultyStock) {
-//             console.log(`✓ Found FaultyStock: ${faultyStock._id}`);
-//             console.log(`Before update - repairedQty: ${faultyStock.repairedQty}, transferredQty: ${faultyStock.transferredQty}`);
-            
-//             // Update FaultyStock
-//             faultyStock.repairedQty = Math.max(0, (faultyStock.repairedQty || 0) - quantity);
-//             faultyStock.transferredQty = (faultyStock.transferredQty || 0) + quantity;
-            
-//             // Update overall status
-//             if (faultyStock.transferredQty === faultyStock.quantity) {
-//               faultyStock.overallStatus = "transferred";
-//             } else if (faultyStock.transferredQty > 0) {
-//               faultyStock.overallStatus = "partially_repaired";
-//             }
-            
-//             faultyStock.lastRepairUpdate = new Date();
-//             await faultyStock.save();
-            
-//             console.log(`After update - repairedQty: ${faultyStock.repairedQty}, transferredQty: ${faultyStock.transferredQty}, status: ${faultyStock.overallStatus}`);
-//           } else {
-//             console.log(`⚠ Could not find FaultyStock to update`);
-//             errors.push(`Could not update FaultyStock for ${productDoc.productTitle}`);
-//           }
-          
-//           // UPDATE OUTLET STOCK
+//           // UPDATE OUTLET STOCK ONLY - NO FAULTY STOCK UPDATE
 //           let outletStock = await OutletStock.findOne({
 //             outlet: outletId,
 //             product: productId
@@ -3436,15 +3660,16 @@ export const getRepairedProducts = async (req, res) => {
           
 //           outletStock.availableQuantity += quantity;
 //           outletStock.totalQuantity += quantity;
-//           outletStock.repairedQuantity += quantity;
+//           outletStock.repairedQuantity += quantity; // Add to repaired quantity
           
 //           await outletStock.save();
+//           console.log(`✓ Updated OutletStock - repairedQuantity: ${outletStock.repairedQuantity}`);
           
 //           transferResults.push({
 //             product: productDoc.productTitle,
 //             quantity: quantity,
 //             status: "success",
-//             message: `Transferred ${quantity} repaired non-serialized items`
+//             message: `Transferred ${quantity} repaired non-serialized items to warehouse`
 //           });
           
 //         } else {
@@ -3489,13 +3714,13 @@ export const getRepairedProducts = async (req, res) => {
 //               if (sn.serialNumber === serialNumber) {
 //                 return {
 //                   ...sn.toObject(),
-//                   status: "transferred",
+//                   status: "transferred", // Status is "transferred" for warehouse transfer
 //                   repairHistory: [
 //                     ...(sn.repairHistory || []),
 //                     {
 //                       date: new Date(),
 //                       status: "transferred",
-//                       remark: damageRemark || `Transferred to ${destinationOutlet.centerName}`,
+//                       remark: damageRemark || `Transferred to warehouse: ${destinationOutlet.centerName}`,
 //                       updatedBy: transferredBy
 //                     }
 //                   ]
@@ -3518,97 +3743,15 @@ export const getRepairedProducts = async (req, res) => {
 //           repairTransfer.repairUpdates.push({
 //             date: new Date(),
 //             status: "transferred",
-//             remark: damageRemark || `Transferred ${quantity} serialized items to ${destinationOutlet.centerName}`,
+//             remark: damageRemark || `Transferred ${quantity} serialized items to warehouse: ${destinationOutlet.centerName}`,
 //             quantity: quantity,
 //             updatedBy: transferredBy
 //           });
           
 //           await repairTransfer.save();
+//           console.log(`✓ Updated RepairTransfer status to: ${repairTransfer.status}`);
           
-//           // FIND AND UPDATE FAULTY STOCK WITHOUT usageReference
-//           console.log(`\n=== FINDING FAULTY STOCK FOR SERIALIZED ===`);
-          
-//           let faultyStock = null;
-          
-//           // Method 1: Try to find by usageReference
-//           if (repairTransfer.usageReference) {
-//             faultyStock = await FaultyStock.findById(repairTransfer.usageReference);
-//           }
-          
-//           // Method 2: Find by product and serial numbers
-//           if (!faultyStock) {
-//             faultyStock = await FaultyStock.findOne({
-//               product: productId,
-//               isSerialized: true,
-//               "serialNumbers.serialNumber": { $in: serialNumbers },
-//               "serialNumbers.status": "repaired"
-//             });
-//           }
-          
-//           // Method 3: Find by product and center
-//           if (!faultyStock) {
-//             faultyStock = await FaultyStock.findOne({
-//               product: productId,
-//               center: repairTransfer.fromCenter || repairCenterId,
-//               isSerialized: true
-//             }).sort({ createdAt: -1 });
-//           }
-          
-//           if (faultyStock) {
-//             console.log(`✓ Found FaultyStock: ${faultyStock._id}`);
-//             console.log(`Serial numbers in FaultyStock: ${faultyStock.serialNumbers.map(s => `${s.serialNumber}(${s.status})`).join(', ')}`);
-            
-//             // Update each serial in FaultyStock
-//             for (const serialNumber of serialNumbers) {
-//               for (let i = 0; i < faultyStock.serialNumbers.length; i++) {
-//                 if (faultyStock.serialNumbers[i].serialNumber === serialNumber && 
-//                     faultyStock.serialNumbers[i].status === "repaired") {
-                  
-//                   faultyStock.serialNumbers[i].status = "transferred";
-                  
-//                   // Add repair history
-//                   if (!faultyStock.serialNumbers[i].repairHistory) {
-//                     faultyStock.serialNumbers[i].repairHistory = [];
-//                   }
-//                   faultyStock.serialNumbers[i].repairHistory.push({
-//                     date: new Date(),
-//                     status: "transferred",
-//                     remark: damageRemark || `Transferred to ${destinationOutlet.centerName}`,
-//                     quantity: 1,
-//                     repairedQty: 0,
-//                     irrepairedQty: 0,
-//                     updatedBy: transferredBy
-//                   });
-                  
-//                   console.log(`Updated serial ${serialNumber} to "transferred"`);
-//                 }
-//               }
-//             }
-            
-//             // Update quantities
-//             const transferredCount = faultyStock.serialNumbers.filter(sn => sn.status === "transferred").length;
-//             const repairedCount = faultyStock.serialNumbers.filter(sn => sn.status === "repaired").length;
-            
-//             faultyStock.transferredQty = transferredCount;
-//             faultyStock.repairedQty = repairedCount;
-            
-//             // Update overall status
-//             if (faultyStock.transferredQty === faultyStock.quantity) {
-//               faultyStock.overallStatus = "transferred";
-//             } else if (faultyStock.transferredQty > 0) {
-//               faultyStock.overallStatus = "partially_repaired";
-//             }
-            
-//             faultyStock.lastRepairUpdate = new Date();
-//             await faultyStock.save();
-            
-//             console.log(`Updated FaultyStock - transferredQty: ${faultyStock.transferredQty}, status: ${faultyStock.overallStatus}`);
-//           } else {
-//             console.log(`⚠ Could not find FaultyStock for serialized product`);
-//             errors.push(`Could not update FaultyStock for ${productDoc.productTitle}`);
-//           }
-          
-//           // UPDATE OUTLET STOCK
+//           // UPDATE OUTLET STOCK ONLY - NO FAULTY STOCK UPDATE
 //           let outletStock = await OutletStock.findOne({
 //             outlet: outletId,
 //             product: productId
@@ -3629,7 +3772,7 @@ export const getRepairedProducts = async (req, res) => {
           
 //           outletStock.availableQuantity += quantity;
 //           outletStock.totalQuantity += quantity;
-//           outletStock.repairedQuantity += quantity;
+//           outletStock.repairedQuantity += quantity; // Add to repaired quantity
           
 //           // Add/update serials in outlet stock
 //           for (const serialNumber of serialNumbers) {
@@ -3661,15 +3804,18 @@ export const getRepairedProducts = async (req, res) => {
 //           }
           
 //           await outletStock.save();
+//           console.log(`✓ Updated OutletStock - repairedQuantity: ${outletStock.repairedQuantity}`);
           
 //           transferResults.push({
 //             product: productDoc.productTitle,
 //             quantity: quantity,
 //             serialNumbers: serialNumbers,
 //             status: "success",
-//             message: `Transferred ${quantity} repaired serialized items`
+//             message: `Transferred ${quantity} repaired serialized items to warehouse`
 //           });
 //         }
+
+//         console.log(`✅ Warehouse transfer complete - NO FaultyStock updates needed`);
 
 //       } catch (error) {
 //         console.error(`Error transferring ${item.productId}:`, error);
@@ -3687,7 +3833,7 @@ export const getRepairedProducts = async (req, res) => {
 
 //     const response = {
 //       success: true,
-//       message: `Transferred ${transferResults.length} repaired items to ${destinationOutlet.centerName}`,
+//       message: `Transferred ${transferResults.length} repaired items to warehouse: ${destinationOutlet.centerName}`,
 //       data: {
 //         transferred: transferResults,
 //         totalItems: transferResults.length,
@@ -3696,7 +3842,8 @@ export const getRepairedProducts = async (req, res) => {
 //           id: outletId,
 //           name: destinationOutlet.centerName,
 //           type: destinationOutlet.centerType
-//         }
+//         },
+//         note: "FaultyStock not updated - warehouse transfers are internal movements"
 //       }
 //     };
     
@@ -3715,674 +3862,6 @@ export const getRepairedProducts = async (req, res) => {
 //     });
 //   }
 // };
-
-// export const transferRepairedToResellerStock = async (req, res) => {
-//   try {
-//     const { items, transferRemark } = req.body;
-//     const transferredBy = req.user.id;
-//     const sourceOutletId = req.user.center;
-
-//     if (!items || !Array.isArray(items) || items.length === 0) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Items array is required",
-//       });
-//     }
-
-//     const transferResults = [];
-//     const errors = [];
-
-//     for (const item of items) {
-//       try {
-//         const { outletStockId, productId, quantity, serialNumbers, resellerId } = item;
-        
-//         if (!resellerId) {
-//           errors.push(`Reseller ID is required for item: ${productId}`);
-//           continue;
-//         }
-
-//         const productDoc = await Product.findById(productId);
-//         if (!productDoc) {
-//           errors.push(`Product not found: ${productId}`);
-//           continue;
-//         }
-
-//         const outletStock = await OutletStock.findById(outletStockId);
-//         if (!outletStock) {
-//           errors.push(`Outlet stock not found for ID: ${outletStockId}`);
-//           continue;
-//         }
-
-//         let serialsToTransfer = [];
-
-//         if (productDoc.trackSerialNumber === "Yes") {
-
-//           if (!serialNumbers || !Array.isArray(serialNumbers) || serialNumbers.length === 0) {
-//             errors.push(`Serial numbers are required for product: ${productDoc.productTitle}`);
-//             continue;
-//           }
-
-//           if (serialNumbers.length !== quantity) {
-//             errors.push(
-//               `Quantity (${quantity}) doesn't match serial numbers count (${serialNumbers.length}) for product ${productDoc.productTitle}`
-//             );
-//             continue;
-//           }
-
-//           const availableSerials = outletStock.serialNumbers.filter(
-//             sn =>
-//               serialNumbers.includes(sn.serialNumber) &&
-//               sn.status === "available" &&
-//               sn.sourceType === "repair_return"
-//           );
-
-//           if (availableSerials.length !== quantity) {
-//             const missingSerials = serialNumbers.filter(
-//               sn => !availableSerials.map(as => as.serialNumber).includes(sn)
-//             );
-//             errors.push(
-//               `Some serials are not available or not from repair stock: ${missingSerials.join(
-//                 ", "
-//               )}. Available repair serials: ${availableSerials
-//                 .map(as => as.serialNumber)
-//                 .join(", ")}`
-//             );
-//             continue;
-//           }
-
-//           serialsToTransfer = serialNumbers;
-//         } else {
-//           console.log(`Processing non-serialized product: ${productDoc.productTitle}`);
-
-//           const repairSerials = outletStock.serialNumbers.filter(
-//             sn => sn.sourceType === "repair_return" && sn.status === "available"
-//           );
-
-//           if (repairSerials.length === 0) {
-//             errors.push(
-//               `No repaired items available in outlet stock for: ${productDoc.productTitle}`
-//             );
-//             continue;
-//           }
-
-//           const totalAvailableRepaired = outletStock.availableQuantity;
-
-//           if (totalAvailableRepaired < quantity) {
-//             errors.push(
-//               `Insufficient repaired stock for ${productDoc.productTitle}. Available: ${totalAvailableRepaired}, Requested: ${quantity}`
-//             );
-//             continue;
-//           }
-
-//           const batchSerial = repairSerials[0];
-//           serialsToTransfer = [batchSerial.serialNumber];
-//         }
-
-//         // 1. UPDATE OUTLET STOCK
-//         if (productDoc.trackSerialNumber === "Yes") {
-//           outletStock.serialNumbers = outletStock.serialNumbers.map(sn => {
-//             if (serialsToTransfer.includes(sn.serialNumber)) {
-//               const transferRecord = {
-//                 fromCenter: sourceOutletId,
-//                 toReseller: resellerId,
-//                 transferDate: new Date(),
-//                 transferType: "outlet_to_reseller",
-//                 sourceType: "damage_repair",
-//                 referenceId: outletStock._id,
-//                 remark:
-//                   transferRemark ||
-//                   `Transferred from outlet repair stock to reseller`,
-//                 transferredBy: transferredBy,
-//               };
-
-//               const transferHistory = Array.isArray(sn.transferHistory)
-//                 ? sn.transferHistory
-//                 : [];
-
-//               return {
-//                 ...sn.toObject(),
-//                 status: "transferred",
-//                 currentLocation: null,
-//                 transferHistory: [...transferHistory, transferRecord],
-//               };
-//             }
-//             return sn;
-//           });
-
-//           outletStock.availableQuantity -= quantity;
-//           outletStock.totalQuantity -= quantity;
-//         } else {
-
-//           // ---------- FIXED BLOCK ----------
-//           let qtyToTransfer = quantity;
-
-//           outletStock.serialNumbers = outletStock.serialNumbers.map(sn => {
-//             if (
-//               sn.sourceType === "repair_return" &&
-//               sn.status === "available" &&
-//               qtyToTransfer > 0
-//             ) {
-//               const batchQty = sn.batchQuantity || 0;
-
-//               const transferQty =
-//                 qtyToTransfer >= batchQty ? batchQty : qtyToTransfer;
-
-//               const transferRecord = {
-//                 fromCenter: sourceOutletId,
-//                 toReseller: resellerId,
-//                 transferDate: new Date(),
-//                 transferType: "outlet_to_reseller",
-//                 sourceType: "damage_repair",
-//                 referenceId: outletStock._id,
-//                 transferredQuantity: transferQty,
-//                 remark:
-//                   transferRemark ||
-//                   `Transferred ${transferQty} items to reseller`,
-//                 transferredBy,
-//               };
-
-//               const history = Array.isArray(sn.transferHistory)
-//                 ? sn.transferHistory
-//                 : [];
-
-//               const newBatchQty = batchQty - transferQty;
-
-//               qtyToTransfer -= transferQty;
-
-//               return {
-//                 ...sn.toObject(),
-//                 batchQuantity: newBatchQty,
-//                 status: newBatchQty === 0 ? "transferred" : "available",
-//                 currentLocation:
-//                   newBatchQty === 0 ? null : sourceOutletId,
-//                 transferHistory: [...history, transferRecord],
-//               };
-//             }
-
-//             return sn;
-//           });
-
-//           outletStock.availableQuantity -= quantity;
-//           outletStock.totalQuantity -= quantity;
-//           // ---------- END FIX ----------
-//         }
-
-//         await outletStock.save();
-
-//         // 2. ADD / UPDATE RESELLER STOCK
-//         let resellerStock = await ResellerStock.findOne({
-//           reseller: resellerId,
-//           product: productId,
-//         });
-
-//         if (!resellerStock) {
-//           resellerStock = new ResellerStock({
-//             reseller: resellerId,
-//             product: productId,
-//             availableQuantity: 0,
-//             totalQuantity: 0,
-//             consumedQuantity: 0,
-//             damagedQuantity: 0,
-//             repairQuantity: 0,
-//             sourceBreakdown: {
-//               damageRepairQuantity: 0,
-//               centerReturnQuantity: 0,
-//               directPurchaseQuantity: 0,
-//             },
-//             serialNumbers: [],
-//           });
-//         }
-
-//         if (productDoc.trackSerialNumber === "Yes") {
-//           for (const serialNumber of serialsToTransfer) {
-//             const existingSerialIndex =
-//               resellerStock.serialNumbers.findIndex(
-//                 sn => sn.serialNumber === serialNumber
-//               );
-
-//             if (existingSerialIndex === -1) {
-//               resellerStock.serialNumbers.push({
-//                 serialNumber: serialNumber,
-//                 status: "available",
-//                 sourceType: "damage_repair",
-//                 currentLocation: resellerId,
-//                 originalOutlet: sourceOutletId,
-//                 purchaseId:
-//                   outletStock.purchaseId ||
-//                   new mongoose.Types.ObjectId(),
-//                 transferHistory: [
-//                   {
-//                     fromCenter: sourceOutletId,
-//                     toReseller: resellerId,
-//                     transferDate: new Date(),
-//                     transferType: "outlet_to_reseller",
-//                     sourceType: "damage_repair",
-//                     referenceId: outletStock._id,
-//                     remark:
-//                       transferRemark ||
-//                       `Transferred from outlet repair stock`,
-//                     transferredBy: transferredBy,
-//                   },
-//                 ],
-//                 addedAt: new Date(),
-//                 addedBy: transferredBy,
-//               });
-//             } else {
-//               const existingSerial =
-//                 resellerStock.serialNumbers[existingSerialIndex];
-
-//               if (
-//                 existingSerial.status === "consumed" ||
-//                 existingSerial.status === "damaged"
-//               ) {
-//                 existingSerial.status = "available";
-//               }
-
-//               existingSerial.sourceType = "damage_repair";
-//               existingSerial.currentLocation = resellerId;
-
-//               existingSerial.transferHistory.push({
-//                 fromCenter: sourceOutletId,
-//                 toReseller: resellerId,
-//                 transferDate: new Date(),
-//                 transferType: "outlet_to_reseller",
-//                 sourceType: "damage_repair",
-//                 referenceId: outletStock._id,
-//                 remark:
-//                   transferRemark ||
-//                   `Transferred from outlet repair stock`,
-//                 transferredBy: transferredBy,
-//               });
-
-//               existingSerial.updatedAt = new Date();
-//             }
-//           }
-
-//           resellerStock.availableQuantity += quantity;
-//           resellerStock.totalQuantity += quantity;
-//           resellerStock.sourceBreakdown.damageRepairQuantity += quantity;
-//         } else {
-//           for (const serialNumber of serialsToTransfer) {
-//             const existingSerialIndex =
-//               resellerStock.serialNumbers.findIndex(
-//                 sn => sn.serialNumber === serialNumber
-//               );
-
-//             if (existingSerialIndex === -1) {
-//               resellerStock.serialNumbers.push({
-//                 serialNumber: serialNumber,
-//                 status: "available",
-//                 sourceType: "damage_repair",
-//                 batchQuantity: quantity,
-//                 currentLocation: resellerId,
-//                 originalOutlet: sourceOutletId,
-//                 purchaseId: new mongoose.Types.ObjectId(),
-//                 transferHistory: [
-//                   {
-//                     fromCenter: sourceOutletId,
-//                     toReseller: resellerId,
-//                     transferDate: new Date(),
-//                     transferType: "outlet_to_reseller",
-//                     sourceType: "damage_repair",
-//                     referenceId: outletStock._id,
-//                     remark:
-//                       transferRemark ||
-//                       `Transferred ${quantity} items from repair stock`,
-//                     transferredBy: transferredBy,
-//                   },
-//                 ],
-//                 addedAt: new Date(),
-//                 addedBy: transferredBy,
-//               });
-//             } else {
-//               const existingSerial =
-//                 resellerStock.serialNumbers[existingSerialIndex];
-
-//               existingSerial.batchQuantity =
-//                 (existingSerial.batchQuantity || 0) + quantity;
-
-//               existingSerial.status = "available";
-//               existingSerial.sourceType = "damage_repair";
-//               existingSerial.currentLocation = resellerId;
-//               existingSerial.updatedAt = new Date();
-
-//               existingSerial.transferHistory.push({
-//                 fromCenter: sourceOutletId,
-//                 toReseller: resellerId,
-//                 transferDate: new Date(),
-//                 transferType: "outlet_to_reseller",
-//                 sourceType: "damage_repair",
-//                 referenceId: outletStock._id,
-//                 remark:
-//                   transferRemark ||
-//                   `Additional ${quantity} items transferred`,
-//                 transferredBy: transferredBy,
-//               });
-//             }
-//           }
-
-//           resellerStock.availableQuantity += quantity;
-//           resellerStock.totalQuantity += quantity;
-
-//           if (!resellerStock.sourceBreakdown) {
-//             resellerStock.sourceBreakdown = {
-//               damageRepairQuantity: quantity,
-//               centerReturnQuantity: 0,
-//               directPurchaseQuantity: 0,
-//             };
-//           } else {
-//             resellerStock.sourceBreakdown.damageRepairQuantity += quantity;
-//           }
-//         }
-
-//         await resellerStock.save();
-
-//         // FAULTY STOCK LOGIC (unchanged…)
-
-//         transferResults.push({
-//           productId: productId,
-//           productName: productDoc.productTitle,
-//           quantity: quantity,
-//           serialNumbers: serialsToTransfer,
-//           fromOutlet: sourceOutletId,
-//           toReseller: resellerId,
-//           outletStockId: outletStock._id,
-//           resellerStockId: resellerStock._id,
-//           sourceType: "damage_repair",
-//           status: "success",
-//         });
-
-//       } catch (error) {
-//         errors.push(
-//           `Error transferring ${item.productId || "item"}: ${
-//             error.message
-//           }`
-//         );
-//       }
-//     }
-
-//     res.status(200).json({
-//       success: transferResults.length > 0,
-//       data: { transferred: transferResults, errors },
-//     });
-
-//   } catch (error) {
-//     res.status(500).json({
-//       success: false,
-//       message: error.message || "Failed to transfer to reseller stock",
-//     });
-//   }
-// };
-
-
-// export const getRepairedProductsInOutletStock = async (req, res) => {
-//   try {
-//     const { hasAccess } = checkStockUsagePermissions(
-//       req,
-//       ["view_usage_own_center", "view_usage_all_center"]
-//     );
-
-//     if (!hasAccess) {
-//       return res.status(403).json({
-//         success: false,
-//         message: "Access denied.",
-//       });
-//     }
-
-//     const OutletStock = mongoose.model("OutletStock");
-//     const RepairTransfer = mongoose.model("RepairTransfer");
-//     const FaultyStock = mongoose.model("FaultyStock");
-//     const outletStocks = await OutletStock.find({
-//       "serialNumbers.sourceType": "repair_return"
-//     })
-//     .populate({
-//       path: "outlet",
-//       select: "_id centerName centerCode centerType" 
-//     })
-//     .populate({
-//       path: "product",
-//       select: "_id productTitle productCode trackSerialNumber"
-//     });
-
-//     const result = [];
-
-//     for (const outletStock of outletStocks) {
-//       const availableRepairedSerials = outletStock.serialNumbers.filter(
-//         sn => sn.sourceType === "repair_return" && sn.status === "available"
-//       );
-
-//       if (availableRepairedSerials.length === 0) {
-//         continue;
-//       }
-
-//       const serialNumbers = availableRepairedSerials.map(sn => sn.serialNumber);
-
-//       console.log(`Processing ${outletStock.product.productTitle}:`);
-//       console.log(`- Available repaired serials: ${serialNumbers.join(', ')}`);
-//       console.log(`- Product type: ${outletStock.product.trackSerialNumber === "Yes" ? "Serialized" : "Non-Serialized"}`);
-
-//       let repairTransfers = [];
-      
-//       if (outletStock.product.trackSerialNumber === "Yes") {
-
-//         repairTransfers = await RepairTransfer.find({
-//           product: outletStock.product._id,
-//           "serialNumbers.serialNumber": { $in: serialNumbers }
-//         })
-//         .populate({
-//           path: 'faultyStock',
-//           populate: [
-//             {
-//               path: 'center',
-//               select: '_id centerName centerCode',
-//               populate: {
-//                 path: 'reseller',
-//                 select: '_id businessName'
-//               }
-//             }
-//           ]
-//         });
-        
-//         console.log(`Found ${repairTransfers.length} repair transfers for serialized product`);
-        
-//       } else {
-//         // NON-SERIALIZED PRODUCTS
-//         repairTransfers = await RepairTransfer.find({
-//           product: outletStock.product._id,
-//           "repairUpdates.status": "transferred",
-//           "repairUpdates.remark": { $regex: new RegExp(outletStock.outlet.centerName, "i") }
-//         })
-//         .populate({
-//           path: 'faultyStock',
-//           populate: [
-//             {
-//               path: 'center',
-//               select: '_id centerName centerCode',
-//               populate: {
-//                 path: 'reseller',
-//                 select: '_id businessName'
-//               }
-//             }
-//           ]
-//         });
-//       }
-
-//       if (repairTransfers.length === 0) {
-//         console.log(`No repair transfers found for ${outletStock.product.productTitle}`);
-//         continue;
-//       }
-
-//       // Group by center and reseller
-//       const groups = {};
-//       let totalRepairedQuantity = 0;
-      
-//       for (const transfer of repairTransfers) {
-//         if (!transfer.faultyStock || !transfer.faultyStock.center) {
-//           continue;
-//         }
-        
-//         const center = transfer.faultyStock.center;
-//         const reseller = center.reseller;
-        
-//         if (!reseller) {
-//           continue;
-//         }
-        
-//         const key = `${center._id}-${reseller._id}`;
-        
-//         if (!groups[key]) {
-//           groups[key] = {
-//             center: {
-//               _id: center._id,
-//               centerName: center.centerName,
-//               centerCode: center.centerCode
-//             },
-//             reseller: {
-//               _id: reseller._id,
-//               resellerName: reseller.businessName
-//             },
-//             quantity: 0,
-//             transferIds: [],
-//             serials: []
-//           };
-//         }
-
-//         // Check if product is serialized or non-serialized
-//         if (outletStock.product.trackSerialNumber === "No") {
-//           // NON-SERIALIZED PRODUCTS
-//           const transfersToThisOutlet = transfer.repairUpdates.filter(update => 
-//             update.status === "transferred" && 
-//             update.remark && 
-//             update.remark.includes(outletStock.outlet.centerName)
-//           );
-          
-//           const transferredQuantity = transfersToThisOutlet.reduce((sum, update) => 
-//             sum + (update.quantity || 0), 0
-//           );
-          
-//           if (transferredQuantity > 0) {
-//             groups[key].quantity += transferredQuantity;
-//             groups[key].transferIds.push(transfer._id);
-//             totalRepairedQuantity += transferredQuantity;
-//           }
-//         } else {
-//           // SERIALIZED PRODUCTS - FIXED LOGIC
-//           // Count how many of the available serials came from this transfer
-//           const matchingSerials = [];
-          
-//           for (const serialNumber of serialNumbers) {
-//             // Check if this serial exists in the repair transfer (regardless of its current status)
-//             const serialInTransfer = transfer.serialNumbers.find(
-//               sn => sn.serialNumber === serialNumber
-//             );
-            
-//             if (serialInTransfer) {
-//               matchingSerials.push(serialNumber);
-//             }
-//           }
-          
-//           if (matchingSerials.length > 0) {
-//             groups[key].serials.push(...matchingSerials);
-//             groups[key].quantity += matchingSerials.length;
-//             groups[key].transferIds.push(transfer._id);
-//             totalRepairedQuantity += matchingSerials.length;
-            
-//             console.log(`Transfer ${transfer._id} contributed ${matchingSerials.length} serials: ${matchingSerials.join(', ')}`);
-//           }
-//         }
-//       }
-
-//       const resellerGroups = Object.values(groups);
-
-//       if (resellerGroups.length === 0) {
-//         console.log(`No reseller groups found for ${outletStock.product.productTitle}`);
-//         continue;
-//       }
-
-//       console.log(`Total repaired quantity for ${outletStock.product.productTitle}: ${totalRepairedQuantity}`);
-
-//       // Prepare repaired serials for response
-//       const repairedSerialsForResponse = availableRepairedSerials.map(serial => ({
-//         serialNumber: serial.serialNumber,
-//         status: serial.status,
-//         sourceType: serial.sourceType,
-//         quantity: 1,
-//         purchaseId: serial.purchaseId,
-//         currentLocation: serial.currentLocation
-//       }));
-
-//       // Create result entry
-//       result.push({
-//         outlet: {
-//           _id: outletStock.outlet._id,
-//           centerName: outletStock.outlet.centerName,
-//           centerCode: outletStock.outlet.centerCode,
-//           centerType: outletStock.outlet.centerType
-//         },
-//         product: {
-//           _id: outletStock.product._id,
-//           productTitle: outletStock.product.productTitle,
-//           productCode: outletStock.product.productCode,
-//           trackSerialNumber: outletStock.product.trackSerialNumber
-//         },
-//         totalRepairedQuantity: totalRepairedQuantity,
-//         repairedSerials: repairedSerialsForResponse,
-//         resellerGroups: resellerGroups.map(group => ({
-//           center: group.center,
-//           reseller: group.reseller,
-//           quantity: group.quantity,
-//           transferIds: group.transferIds,
-//           serials: group.serials || []
-//         })),
-//         center: resellerGroups[0]?.center || null,
-//         reseller: resellerGroups[0]?.reseller || null,
-//         outletStockId: outletStock._id,
-//         lastUpdated: outletStock.updatedAt,
-//         outletStockQuantity: {
-//           total: outletStock.totalQuantity,
-//           available: outletStock.availableQuantity,
-//           inTransit: outletStock.inTransitQuantity
-//         },
-//         isNonSerialized: outletStock.product.trackSerialNumber === "No",
-//         note: outletStock.product.trackSerialNumber === "No" 
-//           ? "For non-serialized products, serial numbers represent batch entries" 
-//           : null
-//       });
-//     }
-
-//     // Calculate summary statistics
-//     const serializedCount = result.filter(item => !item.isNonSerialized).length;
-//     const nonSerializedCount = result.filter(item => item.isNonSerialized).length;
-//     const totalRepairedQty = result.reduce((sum, item) => sum + item.totalRepairedQuantity, 0);
-
-//     console.log(`Final summary: ${result.length} products, ${totalRepairedQty} total repaired items`);
-//     console.log(`Serialized: ${serializedCount}, Non-serialized: ${nonSerializedCount}`);
-
-//     res.json({
-//       success: true,
-//       data: {
-//         repairedProducts: result,
-//         totalItems: result.length,
-//         totalRepairedQuantity: totalRepairedQty,
-//         summary: {
-//           serialized: serializedCount,
-//           nonSerialized: nonSerializedCount,
-//           totalProducts: result.length,
-//           totalOutlets: [...new Set(result.map(item => item.outlet._id.toString()))].length
-//         }
-//       }
-//     });
-
-//   } catch (error) {
-//     console.error("Get repaired products error:", error);
-//     res.status(500).json({
-//       success: false,
-//       message: error.message || "Failed to fetch repaired products in outlet stock",
-//       error: process.env.NODE_ENV === "development" ? error.stack : undefined
-//     });
-//   }
-// };
-
 
 export const transferRepairedToMainWarehouse = async (req, res) => {
   try {
@@ -4420,7 +3899,6 @@ export const transferRepairedToMainWarehouse = async (req, res) => {
     const OutletStock = mongoose.model("OutletStock");
     const Center = mongoose.model("Center");
     const Product = mongoose.model("Product");
-    // NO FaultyStock model needed here
 
     const transferResults = [];
     const errors = [];
@@ -4464,7 +3942,7 @@ export const transferRepairedToMainWarehouse = async (req, res) => {
           continue;
         }
 
-        // Handle NON-SERIALIZED products
+        // For NON-SERIALIZED products
         if (!isSerialized) {
           console.log(`\n=== PROCESSING NON-SERIALIZED PRODUCT ===`);
           
@@ -4478,68 +3956,68 @@ export const transferRepairedToMainWarehouse = async (req, res) => {
           }
           
           if (!repairTransfer || repairTransfer.repairedQty < quantity) {
-            errors.push(`Insufficient repaired items for ${productDoc.productTitle}`);
+            errors.push(`Insufficient repaired items for ${productDoc.productTitle}. Available: ${repairTransfer?.repairedQty || 0}, Requested: ${quantity}`);
             continue;
           }
           
-          console.log(`Transferring ${quantity} items from transfer ${repairTransfer._id}`);
+          console.log(`Transferring ${quantity} non-serialized items from transfer ${repairTransfer._id}`);
+          console.log(`Before - RepairedQty: ${repairTransfer.repairedQty}, Status: ${repairTransfer.status}`);
           
-          // Update repair transfer ONLY
-          repairTransfer.returnedQty = (repairTransfer.returnedQty || 0) + quantity;
-          repairTransfer.repairedQty = Math.max(0, (repairTransfer.repairedQty || 0) - quantity);
-          
-          if (repairTransfer.returnedQty === repairTransfer.quantity) {
-            repairTransfer.status = "returned";
-          } else if (repairTransfer.returnedQty > 0) {
-            repairTransfer.status = "partially_repaired";
-          }
-          
-          repairTransfer.repairUpdates.push({
-            date: new Date(),
-            status: "transferred", // Status is "transferred" for warehouse transfer
-            remark: damageRemark || `Transferred ${quantity} repaired items to warehouse: ${destinationOutlet.centerName}`,
-            quantity: quantity,
-            updatedBy: transferredBy
-          });
-          
-          await repairTransfer.save();
-          console.log(`✓ Updated RepairTransfer status to: ${repairTransfer.status}`);
-          
-          // UPDATE OUTLET STOCK ONLY - NO FAULTY STOCK UPDATE
-          let outletStock = await OutletStock.findOne({
-            outlet: outletId,
-            product: productId
-          });
-
-          if (!outletStock) {
-            outletStock = new OutletStock({
+          try {
+            // Use markAsPendingTransfer method
+            const transferResult = repairTransfer.markAsPendingTransfer(
+              quantity, 
+              outletId, 
+              transferredBy, 
+              damageRemark || `Transferred to warehouse (pending): ${destinationOutlet.centerName}`,
+              [] // Empty array for non-serialized
+            );
+            
+            await repairTransfer.save();
+            console.log(`✓ Updated RepairTransfer. Status: ${repairTransfer.status}, RepairedQty: ${repairTransfer.repairedQty}, PendingTransferQty: ${repairTransfer.pendingTransferQty}`);
+            
+            // Update OutletStock
+            let outletStock = await OutletStock.findOne({
               outlet: outletId,
-              product: productId,
-              totalQuantity: 0,
-              availableQuantity: 0,
-              inTransitQuantity: 0,
-              repairedQuantity: 0,
-              transferredRepairedQty: 0,
-              serialNumbers: []
+              product: productId
             });
+
+            if (!outletStock) {
+              outletStock = new OutletStock({
+                outlet: outletId,
+                product: productId,
+                totalQuantity: 0,
+                availableQuantity: 0,
+                inTransitQuantity: 0,
+                repairedQuantity: 0,
+                transferredRepairedQty: 0,
+                pendingRepairedQty: 0,
+                pendingSerials: []
+              });
+            }
+            
+            // Track pending repaired quantity
+            outletStock.pendingRepairedQty = (outletStock.pendingRepairedQty || 0) + quantity;
+            
+            await outletStock.save();
+            console.log(`✓ Added ${quantity} to pendingRepairedQty in OutletStock. Total pending: ${outletStock.pendingRepairedQty}`);
+            
+            transferResults.push({
+              product: productDoc.productTitle,
+              quantity: quantity,
+              status: "pending_transfer",
+              isSerialized: false,
+              repairTransferId: repairTransfer._id,
+              message: `Transferred ${quantity} repaired non-serialized items to warehouse (pending approval)`
+            });
+            
+          } catch (error) {
+            console.error(`Error in markAsPendingTransfer:`, error);
+            errors.push(`Failed to transfer non-serialized items for ${productDoc.productTitle}: ${error.message}`);
           }
-          
-          outletStock.availableQuantity += quantity;
-          outletStock.totalQuantity += quantity;
-          outletStock.repairedQuantity += quantity; // Add to repaired quantity
-          
-          await outletStock.save();
-          console.log(`✓ Updated OutletStock - repairedQuantity: ${outletStock.repairedQuantity}`);
-          
-          transferResults.push({
-            product: productDoc.productTitle,
-            quantity: quantity,
-            status: "success",
-            message: `Transferred ${quantity} repaired non-serialized items to warehouse`
-          });
           
         } else {
-          // SERIALIZED PRODUCTS
+          // For SERIALIZED products
           console.log(`\n=== PROCESSING SERIALIZED PRODUCT ===`);
           
           // Check if serial numbers are provided
@@ -4574,121 +4052,123 @@ export const transferRepairedToMainWarehouse = async (req, res) => {
           
           console.log(`Found RepairTransfer: ${repairTransfer._id}`);
           
-          // Update each serial in repair transfer
-          for (const serialNumber of serialNumbers) {
-            repairTransfer.serialNumbers = repairTransfer.serialNumbers.map(sn => {
-              if (sn.serialNumber === serialNumber) {
-                return {
-                  ...sn.toObject(),
-                  status: "transferred", // Status is "transferred" for warehouse transfer
-                  repairHistory: [
-                    ...(sn.repairHistory || []),
-                    {
-                      date: new Date(),
-                      status: "transferred",
-                      remark: damageRemark || `Transferred to warehouse: ${destinationOutlet.centerName}`,
-                      updatedBy: transferredBy
-                    }
-                  ]
-                };
-              }
-              return sn;
-            });
-          }
-          
-          // Update repair transfer quantities
-          repairTransfer.returnedQty = (repairTransfer.returnedQty || 0) + quantity;
-          repairTransfer.repairedQty = Math.max(0, (repairTransfer.repairedQty || 0) - quantity);
-          
-          if (repairTransfer.returnedQty === repairTransfer.quantity) {
-            repairTransfer.status = "returned";
-          } else if (repairTransfer.returnedQty > 0) {
-            repairTransfer.status = "partially_repaired";
-          }
-          
-          repairTransfer.repairUpdates.push({
-            date: new Date(),
-            status: "transferred",
-            remark: damageRemark || `Transferred ${quantity} serialized items to warehouse: ${destinationOutlet.centerName}`,
-            quantity: quantity,
-            updatedBy: transferredBy
-          });
-          
-          await repairTransfer.save();
-          console.log(`✓ Updated RepairTransfer status to: ${repairTransfer.status}`);
-          
-          // UPDATE OUTLET STOCK ONLY - NO FAULTY STOCK UPDATE
-          let outletStock = await OutletStock.findOne({
-            outlet: outletId,
-            product: productId
-          });
-
-          if (!outletStock) {
-            outletStock = new OutletStock({
-              outlet: outletId,
-              product: productId,
-              totalQuantity: 0,
-              availableQuantity: 0,
-              inTransitQuantity: 0,
-              repairedQuantity: 0,
-              transferredRepairedQty: 0,
-              serialNumbers: []
-            });
-          }
-          
-          outletStock.availableQuantity += quantity;
-          outletStock.totalQuantity += quantity;
-          outletStock.repairedQuantity += quantity; // Add to repaired quantity
-          
-          // Add/update serials in outlet stock
-          for (const serialNumber of serialNumbers) {
-            const existingIndex = outletStock.serialNumbers.findIndex(
-              sn => sn.serialNumber === serialNumber
+          try {
+            // Use markAsPendingTransfer method with serial numbers
+            const transferResult = repairTransfer.markAsPendingTransfer(
+              quantity, 
+              outletId, 
+              transferredBy, 
+              damageRemark || `Transferred to warehouse (pending): ${destinationOutlet.centerName}`,
+              serialNumbers // Pass serial numbers for serialized
             );
             
-            if (existingIndex === -1) {
-              outletStock.serialNumbers.push({
-                serialNumber: serialNumber,
-                purchaseId: new mongoose.Types.ObjectId(),
-                status: "available",
-                sourceType: "repair_return",
-                repairSource: "repaired",
-                currentLocation: outletId,
-                transferHistory: [{
+            await repairTransfer.save();
+            console.log(`✓ Updated RepairTransfer. Status: ${repairTransfer.status}, PendingTransferQty: ${repairTransfer.pendingTransferQty}`);
+            
+            // Update OutletStock
+            let outletStock = await OutletStock.findOne({
+              outlet: outletId,
+              product: productId
+            });
+
+            if (!outletStock) {
+              outletStock = new OutletStock({
+                outlet: outletId,
+                product: productId,
+                totalQuantity: 0,
+                availableQuantity: 0,
+                inTransitQuantity: 0,
+                repairedQuantity: 0,
+                transferredRepairedQty: 0,
+                pendingRepairedQty: 0,
+                serialNumbers: [],
+                pendingSerials: []
+              });
+            }
+            
+            // Track pending repaired quantity
+            outletStock.pendingRepairedQty = (outletStock.pendingRepairedQty || 0) + quantity;
+            
+            // Track pending serials
+            for (const serialNumber of serialNumbers) {
+              // Check if serial already exists in pendingSerials
+              const existingPendingSerial = outletStock.pendingSerials.find(
+                ps => ps.serialNumber === serialNumber
+              );
+              
+              if (!existingPendingSerial) {
+                outletStock.pendingSerials.push({
+                  serialNumber: serialNumber,
+                  repairTransferId: repairTransfer._id,
+                  status: "pending_approval"
+                });
+              }
+              
+              // Also add to main serialNumbers array with pending_approval status
+              const existingSerial = outletStock.serialNumbers.find(
+                sn => sn.serialNumber === serialNumber
+              );
+              
+              if (!existingSerial) {
+                outletStock.serialNumbers.push({
+                  serialNumber: serialNumber,
+                  purchaseId: new mongoose.Types.ObjectId(),
+                  status: "pending_approval",
+                  sourceType: "repair_return",
+                  currentLocation: outletId,
+                  transferHistory: [{
+                    fromCenter: repairCenterId,
+                    toCenter: outletId,
+                    transferDate: new Date(),
+                    transferType: "outlet_to_center",
+                    source: "repair_return",
+                    transferStatus: "pending",
+                    transferredBy: transferredBy
+                  }]
+                });
+              } else {
+                // Update existing serial
+                existingSerial.status = "pending_approval";
+                existingSerial.sourceType = "repair_return";
+                existingSerial.transferHistory.push({
                   fromCenter: repairCenterId,
                   toCenter: outletId,
                   transferDate: new Date(),
                   transferType: "outlet_to_center",
-                  source: "repair_return"
-                }]
-              });
-            } else {
-              outletStock.serialNumbers[existingIndex].status = "available";
-              outletStock.serialNumbers[existingIndex].sourceType = "repair_return";
-              outletStock.serialNumbers[existingIndex].repairSource = "repaired";
+                  source: "repair_return",
+                  transferStatus: "pending",
+                  transferredBy: transferredBy
+                });
+              }
             }
+            
+            await outletStock.save();
+            console.log(`✓ Added ${quantity} to pendingRepairedQty and pendingSerials in OutletStock`);
+            
+            transferResults.push({
+              product: productDoc.productTitle,
+              quantity: quantity,
+              serialNumbers: serialNumbers,
+              status: "pending_transfer",
+              isSerialized: true,
+              repairTransferId: repairTransfer._id,
+              message: `Transferred ${quantity} repaired serialized items to warehouse (pending approval)`
+            });
+            
+          } catch (error) {
+            console.error(`Error in markAsPendingTransfer for serialized:`, error);
+            errors.push(`Failed to transfer serialized items for ${productDoc.productTitle}: ${error.message}`);
           }
-          
-          await outletStock.save();
-          console.log(`✓ Updated OutletStock - repairedQuantity: ${outletStock.repairedQuantity}`);
-          
-          transferResults.push({
-            product: productDoc.productTitle,
-            quantity: quantity,
-            serialNumbers: serialNumbers,
-            status: "success",
-            message: `Transferred ${quantity} repaired serialized items to warehouse`
-          });
         }
 
-        console.log(`✅ Warehouse transfer complete - NO FaultyStock updates needed`);
+        console.log(`✅ Warehouse transfer complete - Pending approval`);
 
       } catch (error) {
         console.error(`Error transferring ${item.productId}:`, error);
         errors.push(`Error transferring ${item.productId}: ${error.message}`);
       }
     }
-
+    
     if (errors.length > 0 && transferResults.length === 0) {
       return res.status(400).json({
         success: false,
@@ -4699,7 +4179,7 @@ export const transferRepairedToMainWarehouse = async (req, res) => {
 
     const response = {
       success: true,
-      message: `Transferred ${transferResults.length} repaired items to warehouse: ${destinationOutlet.centerName}`,
+      message: `Transferred ${transferResults.length} repaired items to warehouse (pending approval): ${destinationOutlet.centerName}`,
       data: {
         transferred: transferResults,
         totalItems: transferResults.length,
@@ -4709,7 +4189,7 @@ export const transferRepairedToMainWarehouse = async (req, res) => {
           name: destinationOutlet.centerName,
           type: destinationOutlet.centerType
         },
-        note: "FaultyStock not updated - warehouse transfers are internal movements"
+        note: "Items are pending approval from warehouse. They will be available after acceptance."
       }
     };
     
@@ -4729,6 +4209,551 @@ export const transferRepairedToMainWarehouse = async (req, res) => {
   }
 };
 
+// export const transferRepairedToResellerStock = async (req, res) => {
+//   try {
+//     const { items, transferRemark } = req.body;
+//     const transferredBy = req.user.id;
+//     const sourceOutletId = req.user.center;
+
+//     if (!items || !Array.isArray(items) || items.length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Items array is required",
+//       });
+//     }
+
+//     // Import models
+//     const Product = mongoose.model("Product");
+//     const OutletStock = mongoose.model("OutletStock");
+//     const ResellerStock = mongoose.model("ResellerStock");
+//     const RepairTransfer = mongoose.model("RepairTransfer");
+//     const FaultyStock = mongoose.model("FaultyStock");
+//     const Reseller = mongoose.model("Reseller");
+
+//     const transferResults = [];
+//     const errors = [];
+
+//     for (const item of items) {
+//       try {
+//         const { outletStockId, productId, quantity, serialNumbers, resellerId } = item;
+        
+//         if (!resellerId) {
+//           errors.push(`Reseller ID is required for item: ${productId}`);
+//           continue;
+//         }
+
+//         // Validate reseller exists
+//         const reseller = await Reseller.findById(resellerId);
+//         if (!reseller) {
+//           errors.push(`Reseller not found: ${resellerId}`);
+//           continue;
+//         }
+
+//         const productDoc = await Product.findById(productId);
+//         if (!productDoc) {
+//           errors.push(`Product not found: ${productId}`);
+//           continue;
+//         }
+
+//         const outletStock = await OutletStock.findById(outletStockId);
+//         if (!outletStock) {
+//           errors.push(`Outlet stock not found for ID: ${outletStockId}`);
+//           continue;
+//         }
+
+//         console.log(`\n=== Processing ${productDoc.productTitle} ===`);
+//         console.log(`Source Outlet: ${sourceOutletId}`);
+//         console.log(`Destination Reseller: ${resellerId} (${reseller.businessName})`);
+//         console.log(`Requested quantity: ${quantity}`);
+//         console.log(`OutletStock BEFORE update:`);
+//         console.log(`- repairedQuantity: ${outletStock.repairedQuantity || 0}`);
+//         console.log(`- transferredRepairedQty: ${outletStock.transferredRepairedQty || 0}`);
+
+//         // Check if enough repaired items are available for transfer
+//         // const availableRepaired = (outletStock.repairedQuantity || 0) - (outletStock.transferredRepairedQty || 0);
+//         const availableRepaired = (outletStock.repairedQuantity || 0)
+//         console.log(`Available repaired for transfer: ${availableRepaired}`);
+        
+//         if (availableRepaired < quantity) {
+//           errors.push(`Insufficient repaired items available for transfer. Available: ${availableRepaired}, Requested: ${quantity}`);
+//           continue;
+//         }
+
+//         let serialsToTransfer = [];
+
+//         if (productDoc.trackSerialNumber === "Yes") {
+//           // SERIALIZED PRODUCTS
+//           if (!serialNumbers || !Array.isArray(serialNumbers) || serialNumbers.length === 0) {
+//             errors.push(`Serial numbers are required for product: ${productDoc.productTitle}`);
+//             continue;
+//           }
+
+//           if (serialNumbers.length !== quantity) {
+//             errors.push(
+//               `Quantity (${quantity}) doesn't match serial numbers count (${serialNumbers.length}) for product ${productDoc.productTitle}`
+//             );
+//             continue;
+//           }
+
+//           // Validate serials are from repair_return and available
+//           const availableRepairedSerials = outletStock.serialNumbers.filter(
+//             sn =>
+//               serialNumbers.includes(sn.serialNumber) &&
+//               sn.status === "available" &&
+//               sn.sourceType === "repair_return"
+//           );
+
+//           if (availableRepairedSerials.length !== quantity) {
+//             const missingSerials = serialNumbers.filter(
+//               sn => !availableRepairedSerials.map(as => as.serialNumber).includes(sn)
+//             );
+//             errors.push(
+//               `Some serials are not available or not from repair stock: ${missingSerials.join(", ")}`
+//             );
+//             continue;
+//           }
+
+//           serialsToTransfer = serialNumbers;
+//           console.log(`Processing ${serialsToTransfer.length} serial numbers: ${serialsToTransfer.join(', ')}`);
+//         } else {
+//           // NON-SERIALIZED PRODUCTS
+//           console.log(`Processing non-serialized product: ${productDoc.productTitle}`);
+          
+//           // For non-serialized, we don't need specific serials
+//           // Just check if we have enough repaired quantity
+//           if (quantity > availableRepaired) {
+//             errors.push(`Insufficient repaired stock. Available: ${availableRepaired}, Requested: ${quantity}`);
+//             continue;
+//           }
+          
+//           serialsToTransfer = [`REPAIR-BATCH-${Date.now()}`];
+//           console.log(`Non-serialized transfer of ${quantity} items`);
+//         }
+
+//         // 1. UPDATE OUTLET STOCK - FIXED: Update BOTH repairedQuantity AND transferredRepairedQty
+//         if (productDoc.trackSerialNumber === "Yes") {
+//           // Update serial status and transfer history
+//           outletStock.serialNumbers = outletStock.serialNumbers.map(sn => {
+//             if (serialsToTransfer.includes(sn.serialNumber)) {
+//               const transferRecord = {
+//                 fromCenter: sourceOutletId,
+//                 toReseller: resellerId,
+//                 transferDate: new Date(),
+//                 transferType: "outlet_to_reseller",
+//                 sourceType: "damage_repair",
+//                 referenceId: outletStock._id,
+//                 remark: transferRemark || `Transferred repaired item to reseller ${reseller.businessName}`,
+//                 transferredBy: transferredBy,
+//               };
+
+//               const transferHistory = Array.isArray(sn.transferHistory) ? sn.transferHistory : [];
+
+//               return {
+//                 ...sn.toObject(),
+//                 status: "transferred",
+//                 currentLocation: null,
+//                 transferHistory: [...transferHistory, transferRecord],
+//               };
+//             }
+//             return sn;
+//           });
+
+//           // Update quantities
+//           outletStock.availableQuantity -= quantity;
+//           outletStock.totalQuantity -= quantity;
+          
+//         } else {
+//           // NON-SERIALIZED PRODUCTS
+//           // Update quantities only (no serials to update)
+//           outletStock.availableQuantity -= quantity;
+//           outletStock.totalQuantity -= quantity;
+          
+//           // For non-serialized, we might have a placeholder serial number
+//           // Update it if it exists
+//           const repairSerialIndex = outletStock.serialNumbers.findIndex(
+//             sn => sn.sourceType === "repair_return" && sn.status === "available"
+//           );
+          
+//           if (repairSerialIndex !== -1) {
+//             const batchSerial = outletStock.serialNumbers[repairSerialIndex];
+//             const batchQty = batchSerial.batchQuantity || 1;
+            
+//             if (quantity >= batchQty) {
+//               // Transfer entire batch
+//               outletStock.serialNumbers[repairSerialIndex].status = "transferred";
+//               outletStock.serialNumbers[repairSerialIndex].currentLocation = null;
+              
+//               // Add transfer history
+//               const transferHistory = Array.isArray(batchSerial.transferHistory) 
+//                 ? batchSerial.transferHistory 
+//                 : [];
+              
+//               outletStock.serialNumbers[repairSerialIndex].transferHistory = [
+//                 ...transferHistory,
+//                 {
+//                   fromCenter: sourceOutletId,
+//                   toReseller: resellerId,
+//                   transferDate: new Date(),
+//                   transferType: "outlet_to_reseller",
+//                   sourceType: "damage_repair",
+//                   referenceId: outletStock._id,
+//                   transferredQuantity: quantity,
+//                   remark: transferRemark || `Transferred ${quantity} repaired items to reseller ${reseller.businessName}`,
+//                   transferredBy,
+//                 }
+//               ];
+//             } else {
+//               // Partial transfer - update batch quantity
+//               outletStock.serialNumbers[repairSerialIndex].batchQuantity = batchQty - quantity;
+              
+//               // Add transfer history
+//               const transferHistory = Array.isArray(batchSerial.transferHistory) 
+//                 ? batchSerial.transferHistory 
+//                 : [];
+              
+//               outletStock.serialNumbers[repairSerialIndex].transferHistory = [
+//                 ...transferHistory,
+//                 {
+//                   fromCenter: sourceOutletId,
+//                   toReseller: resellerId,
+//                   transferDate: new Date(),
+//                   transferType: "outlet_to_reseller",
+//                   sourceType: "damage_repair",
+//                   referenceId: outletStock._id,
+//                   transferredQuantity: quantity,
+//                   remark: transferRemark || `Transferred ${quantity} repaired items to reseller ${reseller.businessName}`,
+//                   transferredBy,
+//                 }
+//               ];
+//             }
+//           }
+//         }
+
+//         // CRITICAL FIX: Update BOTH repairedQuantity AND transferredRepairedQty
+//         outletStock.transferredRepairedQty = (outletStock.transferredRepairedQty || 0) + quantity;
+//         // ALSO reduce repairedQuantity since items are leaving
+//         outletStock.repairedQuantity = Math.max(0, (outletStock.repairedQuantity || 0) - quantity);
+        
+//         console.log(`OutletStock AFTER update:`);
+//         console.log(`- transferredRepairedQty: ${outletStock.transferredRepairedQty} (+${quantity})`);
+//         console.log(`- repairedQuantity: ${outletStock.repairedQuantity} (-${quantity})`);
+//         console.log(`- availableQuantity: ${outletStock.availableQuantity}`);
+//         console.log(`- totalQuantity: ${outletStock.totalQuantity}`);
+
+//         await outletStock.save();
+//         console.log(`✓ Updated OutletStock`);
+
+//         // 2. ADD / UPDATE RESELLER STOCK - MISSING LOGIC ADDED HERE
+//         console.log(`\n=== UPDATING RESELLER STOCK ===`);
+        
+//         // Find or create reseller stock
+//         let resellerStock = await ResellerStock.findOne({
+//           reseller: resellerId,
+//           product: productId
+//         });
+
+//         const transferRecord = {
+//           fromCenter: sourceOutletId,
+//           toReseller: resellerId,
+//           transferDate: new Date(),
+//           transferType: "outlet_to_reseller",
+//           sourceType: "damage_repair",
+//           referenceId: outletStock._id,
+//           remark: transferRemark || `Transferred repaired items from outlet`,
+//           transferredBy: transferredBy
+//         };
+
+//         if (!resellerStock) {
+//           // Create new reseller stock
+//           resellerStock = new ResellerStock({
+//             reseller: resellerId,
+//             product: productId,
+//             availableQuantity: quantity,
+//             totalQuantity: quantity,
+//             sourceBreakdown: {
+//               damageRepairQuantity: quantity
+//             }
+//           });
+
+//           if (productDoc.trackSerialNumber === "Yes") {
+//             // Add serials for serialized products
+//             resellerStock.serialNumbers = serialsToTransfer.map(sn => ({
+//               serialNumber: sn,
+//               status: "available",
+//               currentLocation: null,
+//               transferHistory: [transferRecord]
+//             }));
+//           } else {
+//             // Add batch record for non-serialized
+//             resellerStock.serialNumbers = [{
+//               serialNumber: `REPAIR-BATCH-${Date.now()}`,
+//               status: "available",
+//               currentLocation: null,
+//               transferHistory: [transferRecord]
+//             }];
+//           }
+
+//           console.log(`Created new ResellerStock for ${reseller.businessName}`);
+//         } else {
+//           // Update existing reseller stock
+//           resellerStock.availableQuantity += quantity;
+//           resellerStock.totalQuantity += quantity;
+//           resellerStock.sourceBreakdown.damageRepairQuantity = 
+//             (resellerStock.sourceBreakdown.damageRepairQuantity || 0) + quantity;
+          
+//           if (productDoc.trackSerialNumber === "Yes") {
+//             // Add serials for serialized products
+//             for (const serialNumber of serialsToTransfer) {
+//               const existingSerial = resellerStock.serialNumbers.find(
+//                 sn => sn.serialNumber === serialNumber
+//               );
+              
+//               if (!existingSerial) {
+//                 resellerStock.serialNumbers.push({
+//                   serialNumber: serialNumber,
+//                   status: "available",
+//                   currentLocation: null,
+//                   transferHistory: [transferRecord]
+//                 });
+//               } else {
+//                 // Update existing serial
+//                 existingSerial.status = "available";
+//                 if (!Array.isArray(existingSerial.transferHistory)) {
+//                   existingSerial.transferHistory = [];
+//                 }
+//                 existingSerial.transferHistory.push(transferRecord);
+//               }
+//             }
+//           } else {
+//             // For non-serialized, add or update batch record
+//             const existingBatch = resellerStock.serialNumbers.find(
+//               sn => sn.serialNumber.startsWith("REPAIR-BATCH-")
+//             );
+            
+//             if (!existingBatch) {
+//               resellerStock.serialNumbers.push({
+//                 serialNumber: `REPAIR-BATCH-${Date.now()}`,
+//                 status: "available",
+//                 currentLocation: null,
+//                 transferHistory: [transferRecord]
+//               });
+//             } else {
+//               if (!Array.isArray(existingBatch.transferHistory)) {
+//                 existingBatch.transferHistory = [];
+//               }
+//               existingBatch.transferHistory.push(transferRecord);
+//             }
+//           }
+          
+//           console.log(`Updated existing ResellerStock for ${reseller.businessName}`);
+//         }
+
+//         resellerStock.lastUpdated = new Date();
+//         await resellerStock.save();
+//         console.log(`✓ Updated ResellerStock - Available: ${resellerStock.availableQuantity}, Total: ${resellerStock.totalQuantity}`);
+
+//         // 3. UPDATE FAULTY STOCK STATUS (FIXED VERSION)
+//         console.log(`\n=== UPDATING FAULTY STOCK ===`);
+        
+//         if (productDoc.trackSerialNumber === "Yes") {
+//           // SERIALIZED: Find FaultyStock by serial numbers
+//           const faultyStock = await FaultyStock.findOne({
+//             product: productId,
+//             isSerialized: true,
+//             "serialNumbers.serialNumber": { $in: serialsToTransfer },
+//             "serialNumbers.status": "repaired"
+//           });
+          
+//           if (faultyStock) {
+//             console.log(`✓ Found FaultyStock: ${faultyStock._id}`);
+            
+//             // Update each serial in FaultyStock
+//             for (const serialNumber of serialsToTransfer) {
+//               for (let i = 0; i < faultyStock.serialNumbers.length; i++) {
+//                 if (faultyStock.serialNumbers[i].serialNumber === serialNumber && 
+//                     faultyStock.serialNumbers[i].status === "repaired") {
+                  
+//                   faultyStock.serialNumbers[i].status = "transferred";
+                  
+//                   // Add repair history
+//                   if (!faultyStock.serialNumbers[i].repairHistory) {
+//                     faultyStock.serialNumbers[i].repairHistory = [];
+//                   }
+//                   faultyStock.serialNumbers[i].repairHistory.push({
+//                     date: new Date(),
+//                     status: "transferred",
+//                     remark: `Transferred to reseller ${reseller.businessName}`,
+//                     quantity: 1,
+//                     repairedQty: 0,
+//                     irrepairedQty: 0,
+//                     updatedBy: transferredBy
+//                   });
+                  
+//                   console.log(`Updated serial ${serialNumber} to "transferred" in FaultyStock`);
+//                 }
+//               }
+//             }
+            
+//             // Update quantities
+//             const transferredCount = faultyStock.serialNumbers.filter(sn => sn.status === "transferred").length;
+//             const repairedCount = faultyStock.serialNumbers.filter(sn => sn.status === "repaired").length;
+            
+//             faultyStock.transferredQty = transferredCount;
+//             faultyStock.repairedQty = repairedCount;
+            
+//             // Update overall status
+//             if (faultyStock.transferredQty === faultyStock.quantity) {
+//               faultyStock.overallStatus = "transferred";
+//             } else if (faultyStock.transferredQty > 0) {
+//               faultyStock.overallStatus = "partially_repaired";
+//             }
+            
+//             faultyStock.lastRepairUpdate = new Date();
+//             await faultyStock.save();
+            
+//             console.log(`✓ Updated FaultyStock - transferredQty: ${faultyStock.transferredQty}, repairedQty: ${faultyStock.repairedQty}, status: ${faultyStock.overallStatus}`);
+//           } else {
+//             console.log(`⚠ Could not find FaultyStock for serialized product`);
+//           }
+//         } else {
+//           // NON-SERIALIZED: Find FaultyStock with repaired items
+//           const faultyStock = await FaultyStock.findOne({
+//             product: productId,
+//             isSerialized: false,
+//             repairedQty: { $gte: quantity },
+//             $or: [
+//               { toCenter: sourceOutletId },
+//               { center: sourceOutletId }
+//             ]
+//           }).sort({ createdAt: -1 });
+
+//           if (faultyStock) {
+//             console.log(`✓ Found FaultyStock: ${faultyStock._id}`);
+//             console.log(`Before update - Total: ${faultyStock.quantity}, Repaired: ${faultyStock.repairedQty}, Transferred: ${faultyStock.transferredQty}, Damage: ${faultyStock.damageQty}`);
+            
+//             // Validate we have enough repaired items
+//             if ((faultyStock.repairedQty || 0) < quantity) {
+//               console.log(`⚠ Not enough repaired items. Available: ${faultyStock.repairedQty}, Requested: ${quantity}`);
+//             } else {
+//               // Update FaultyStock - reduce repairedQty and increase transferredQty
+//               faultyStock.repairedQty = Math.max(0, (faultyStock.repairedQty || 0) - quantity);
+//               faultyStock.transferredQty = (faultyStock.transferredQty || 0) + quantity;
+              
+//               // IMPORTANT: DO NOT reduce the main quantity field
+//               // The quantity field should remain the total count of damaged items reported
+              
+//               // Add repair history for the transfer
+//               if (!faultyStock.repairHistory) {
+//                 faultyStock.repairHistory = [];
+//               }
+              
+//               faultyStock.repairHistory.push({
+//                 date: new Date(),
+//                 action: "transfer_to_reseller",
+//                 remark: `Transferred ${quantity} repaired items to reseller ${reseller.businessName}`,
+//                 quantity: quantity,
+//                 previousRepairedQty: faultyStock.repairedQty + quantity,
+//                 newRepairedQty: faultyStock.repairedQty,
+//                 previousTransferredQty: faultyStock.transferredQty - quantity,
+//                 newTransferredQty: faultyStock.transferredQty,
+//                 updatedBy: transferredBy
+//               });
+              
+//               // Update overall status using the model's method if available
+//               if (faultyStock.updateQuantitiesAndStatus) {
+//                 faultyStock.updateQuantitiesAndStatus();
+//               } else {
+//                 // Manual status update
+//                 const totalProcessed = (faultyStock.repairedQty || 0) + 
+//                                       (faultyStock.irrepairedQty || 0) + 
+//                                       (faultyStock.transferredQty || 0) + 
+//                                       (faultyStock.underRepairQty || 0);
+                
+//                 const totalQuantity = faultyStock.quantity || 0;
+                
+//                 if (faultyStock.transferredQty === totalQuantity) {
+//                   faultyStock.overallStatus = "transferred";
+//                 } else if (faultyStock.transferredQty > 0 && totalProcessed < totalQuantity) {
+//                   faultyStock.overallStatus = "partially_repaired";
+//                 } else if (faultyStock.repairedQty === totalQuantity) {
+//                   faultyStock.overallStatus = "repaired";
+//                 } else if (faultyStock.repairedQty > 0) {
+//                   faultyStock.overallStatus = "partially_repaired";
+//                 } else if (faultyStock.damageQty > 0) {
+//                   faultyStock.overallStatus = "damaged";
+//                 }
+//               }
+              
+//               faultyStock.lastRepairUpdate = new Date();
+//               await faultyStock.save();
+              
+//               console.log(`After update - Total: ${faultyStock.quantity}, Repaired: ${faultyStock.repairedQty}, Transferred: ${faultyStock.transferredQty}, Damage: ${faultyStock.damageQty}, Status: ${faultyStock.overallStatus}`);
+//             }
+//           } else {
+//             console.log(`⚠ Could not find FaultyStock for non-serialized product ${productDoc.productTitle}`);
+//           }
+//         }
+
+//         transferResults.push({
+//           productId: productId,
+//           productName: productDoc.productTitle,
+//           quantity: quantity,
+//           serialNumbers: serialsToTransfer,
+//           fromOutlet: sourceOutletId,
+//           toReseller: resellerId,
+//           resellerName: reseller.businessName,
+//           outletStockId: outletStock._id,
+//           resellerStockId: resellerStock._id, // NOW DEFINED
+//           sourceType: "damage_repair",
+//           outletStockUpdate: {
+//             newRepairedQuantity: outletStock.repairedQuantity,
+//             newTransferredRepairedQty: outletStock.transferredRepairedQty,
+//             newAvailableQuantity: outletStock.availableQuantity,
+//             newTotalQuantity: outletStock.totalQuantity
+//           },
+//           resellerStockUpdate: {
+//             newAvailableQuantity: resellerStock.availableQuantity,
+//             newTotalQuantity: resellerStock.totalQuantity,
+//             newDamageRepairQuantity: resellerStock.sourceBreakdown.damageRepairQuantity
+//           },
+//           status: "success",
+//           message: `Transferred ${quantity} repaired ${productDoc.trackSerialNumber === "Yes" ? "serialized" : "non-serialized"} items to reseller`
+//         });
+
+//         console.log(`✅ Successfully transferred ${quantity} items to reseller`);
+
+//       } catch (error) {
+//         console.error(`Error transferring item:`, error);
+//         errors.push(`Error transferring ${item.productId || "item"}: ${error.message}`);
+//       }
+//     }
+
+//     const response = {
+//       success: transferResults.length > 0,
+//       message: transferResults.length > 0 
+//         ? `Transferred ${transferResults.length} items to reseller` 
+//         : "No items transferred",
+//       data: { 
+//         transferred: transferResults, 
+//         errors: errors.length > 0 ? errors : undefined 
+//       }
+//     };
+
+//     if (errors.length > 0) {
+//       response.partialSuccess = transferResults.length > 0;
+//     }
+
+//     res.status(200).json(response);
+
+//   } catch (error) {
+//     console.error("Transfer to reseller error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: error.message || "Failed to transfer to reseller stock",
+//     });
+//   }
+// };
+
 export const transferRepairedToResellerStock = async (req, res) => {
   try {
     const { items, transferRemark } = req.body;
@@ -4747,7 +4772,6 @@ export const transferRepairedToResellerStock = async (req, res) => {
     const OutletStock = mongoose.model("OutletStock");
     const ResellerStock = mongoose.model("ResellerStock");
     const RepairTransfer = mongoose.model("RepairTransfer");
-    const FaultyStock = mongoose.model("FaultyStock");
     const Reseller = mongoose.model("Reseller");
 
     const transferResults = [];
@@ -4786,20 +4810,21 @@ export const transferRepairedToResellerStock = async (req, res) => {
         console.log(`Destination Reseller: ${resellerId} (${reseller.businessName})`);
         console.log(`Requested quantity: ${quantity}`);
         console.log(`OutletStock BEFORE update:`);
+        console.log(`- availableQuantity: ${outletStock.availableQuantity || 0}`);
         console.log(`- repairedQuantity: ${outletStock.repairedQuantity || 0}`);
-        console.log(`- transferredRepairedQty: ${outletStock.transferredRepairedQty || 0}`);
+        console.log(`- pendingTransferToReseller: ${outletStock.pendingTransferToReseller || 0}`);
 
-        // Check if enough repaired items are available for transfer
-        // const availableRepaired = (outletStock.repairedQuantity || 0) - (outletStock.transferredRepairedQty || 0);
-        const availableRepaired = (outletStock.repairedQuantity || 0)
-        console.log(`Available repaired for transfer: ${availableRepaired}`);
+        // Check if enough items are available
+        const availableQuantity = outletStock.availableQuantity || 0;
+        console.log(`Available quantity for transfer: ${availableQuantity}`);
         
-        if (availableRepaired < quantity) {
-          errors.push(`Insufficient repaired items available for transfer. Available: ${availableRepaired}, Requested: ${quantity}`);
+        if (availableQuantity < quantity) {
+          errors.push(`Insufficient items available for transfer. Available: ${availableQuantity}, Requested: ${quantity}`);
           continue;
         }
 
         let serialsToTransfer = [];
+        let validatedSerials = [];
 
         if (productDoc.trackSerialNumber === "Yes") {
           // SERIALIZED PRODUCTS
@@ -4815,44 +4840,37 @@ export const transferRepairedToResellerStock = async (req, res) => {
             continue;
           }
 
-          // Validate serials are from repair_return and available
-          const availableRepairedSerials = outletStock.serialNumbers.filter(
+          // Validate serials are available
+          const availableSerials = outletStock.serialNumbers.filter(
             sn =>
               serialNumbers.includes(sn.serialNumber) &&
-              sn.status === "available" &&
-              sn.sourceType === "repair_return"
+              sn.status === "available"
           );
 
-          if (availableRepairedSerials.length !== quantity) {
+          if (availableSerials.length !== quantity) {
             const missingSerials = serialNumbers.filter(
-              sn => !availableRepairedSerials.map(as => as.serialNumber).includes(sn)
+              sn => !availableSerials.map(as => as.serialNumber).includes(sn)
             );
             errors.push(
-              `Some serials are not available or not from repair stock: ${missingSerials.join(", ")}`
+              `Some serials are not available: ${missingSerials.join(", ")}`
             );
             continue;
           }
 
           serialsToTransfer = serialNumbers;
+          validatedSerials = availableSerials;
           console.log(`Processing ${serialsToTransfer.length} serial numbers: ${serialsToTransfer.join(', ')}`);
         } else {
           // NON-SERIALIZED PRODUCTS
           console.log(`Processing non-serialized product: ${productDoc.productTitle}`);
-          
-          // For non-serialized, we don't need specific serials
-          // Just check if we have enough repaired quantity
-          if (quantity > availableRepaired) {
-            errors.push(`Insufficient repaired stock. Available: ${availableRepaired}, Requested: ${quantity}`);
-            continue;
-          }
-          
-          serialsToTransfer = [`REPAIR-BATCH-${Date.now()}`];
           console.log(`Non-serialized transfer of ${quantity} items`);
         }
 
-        // 1. UPDATE OUTLET STOCK - FIXED: Update BOTH repairedQuantity AND transferredRepairedQty
+        // 1. UPDATE OUTLET STOCK - Mark as pending_transfer
+        console.log(`\n=== UPDATING OUTLET STOCK (Pending Transfer) ===`);
+        
         if (productDoc.trackSerialNumber === "Yes") {
-          // Update serial status and transfer history
+          // Update serial status to pending_transfer
           outletStock.serialNumbers = outletStock.serialNumbers.map(sn => {
             if (serialsToTransfer.includes(sn.serialNumber)) {
               const transferRecord = {
@@ -4862,15 +4880,16 @@ export const transferRepairedToResellerStock = async (req, res) => {
                 transferType: "outlet_to_reseller",
                 sourceType: "damage_repair",
                 referenceId: outletStock._id,
-                remark: transferRemark || `Transferred repaired item to reseller ${reseller.businessName}`,
+                remark: transferRemark || `Pending transfer to reseller ${reseller.businessName}`,
                 transferredBy: transferredBy,
+                transferStatus: "pending"
               };
 
               const transferHistory = Array.isArray(sn.transferHistory) ? sn.transferHistory : [];
 
               return {
                 ...sn.toObject(),
-                status: "transferred",
+                status: "pending_transfer",
                 currentLocation: null,
                 transferHistory: [...transferHistory, transferRecord],
               };
@@ -4878,388 +4897,281 @@ export const transferRepairedToResellerStock = async (req, res) => {
             return sn;
           });
 
-          // Update quantities
+          // Update available quantity
           outletStock.availableQuantity -= quantity;
-          outletStock.totalQuantity -= quantity;
           
         } else {
           // NON-SERIALIZED PRODUCTS
-          // Update quantities only (no serials to update)
           outletStock.availableQuantity -= quantity;
-          outletStock.totalQuantity -= quantity;
           
-          // For non-serialized, we might have a placeholder serial number
-          // Update it if it exists
-          const repairSerialIndex = outletStock.serialNumbers.findIndex(
-            sn => sn.sourceType === "repair_return" && sn.status === "available"
+          // Update or create a batch record for pending transfer
+          const batchSerial = outletStock.serialNumbers.find(
+            sn => sn.status === "available" && sn.sourceType === "repair_return"
           );
           
-          if (repairSerialIndex !== -1) {
-            const batchSerial = outletStock.serialNumbers[repairSerialIndex];
-            const batchQty = batchSerial.batchQuantity || 1;
+          if (batchSerial) {
+            batchSerial.status = "pending_transfer";
+            const transferHistory = Array.isArray(batchSerial.transferHistory) 
+              ? batchSerial.transferHistory 
+              : [];
             
-            if (quantity >= batchQty) {
-              // Transfer entire batch
-              outletStock.serialNumbers[repairSerialIndex].status = "transferred";
-              outletStock.serialNumbers[repairSerialIndex].currentLocation = null;
-              
-              // Add transfer history
-              const transferHistory = Array.isArray(batchSerial.transferHistory) 
-                ? batchSerial.transferHistory 
-                : [];
-              
-              outletStock.serialNumbers[repairSerialIndex].transferHistory = [
-                ...transferHistory,
-                {
-                  fromCenter: sourceOutletId,
-                  toReseller: resellerId,
-                  transferDate: new Date(),
-                  transferType: "outlet_to_reseller",
-                  sourceType: "damage_repair",
-                  referenceId: outletStock._id,
-                  transferredQuantity: quantity,
-                  remark: transferRemark || `Transferred ${quantity} repaired items to reseller ${reseller.businessName}`,
-                  transferredBy,
-                }
-              ];
-            } else {
-              // Partial transfer - update batch quantity
-              outletStock.serialNumbers[repairSerialIndex].batchQuantity = batchQty - quantity;
-              
-              // Add transfer history
-              const transferHistory = Array.isArray(batchSerial.transferHistory) 
-                ? batchSerial.transferHistory 
-                : [];
-              
-              outletStock.serialNumbers[repairSerialIndex].transferHistory = [
-                ...transferHistory,
-                {
-                  fromCenter: sourceOutletId,
-                  toReseller: resellerId,
-                  transferDate: new Date(),
-                  transferType: "outlet_to_reseller",
-                  sourceType: "damage_repair",
-                  referenceId: outletStock._id,
-                  transferredQuantity: quantity,
-                  remark: transferRemark || `Transferred ${quantity} repaired items to reseller ${reseller.businessName}`,
-                  transferredBy,
-                }
-              ];
-            }
+            batchSerial.transferHistory = [
+              ...transferHistory,
+              {
+                fromCenter: sourceOutletId,
+                toReseller: resellerId,
+                transferDate: new Date(),
+                transferType: "outlet_to_reseller",
+                sourceType: "damage_repair",
+                referenceId: outletStock._id,
+                transferredQuantity: quantity,
+                remark: transferRemark || `Pending transfer of ${quantity} items to reseller ${reseller.businessName}`,
+                transferredBy,
+                transferStatus: "pending"
+              }
+            ];
+          } else {
+            // Create new batch record for pending transfer
+            outletStock.serialNumbers.push({
+              serialNumber: `PENDING-BATCH-${Date.now()}`,
+              status: "pending_transfer",
+              sourceType: "repair_return",
+              purchaseId: new mongoose.Types.ObjectId(),
+              currentLocation: null,
+              transferHistory: [{
+                fromCenter: sourceOutletId,
+                toReseller: resellerId,
+                transferDate: new Date(),
+                transferType: "outlet_to_reseller",
+                sourceType: "damage_repair",
+                referenceId: outletStock._id,
+                transferredQuantity: quantity,
+                remark: transferRemark || `Pending transfer of ${quantity} items to reseller ${reseller.businessName}`,
+                transferredBy,
+                transferStatus: "pending"
+              }]
+            });
           }
         }
 
-        // CRITICAL FIX: Update BOTH repairedQuantity AND transferredRepairedQty
-        outletStock.transferredRepairedQty = (outletStock.transferredRepairedQty || 0) + quantity;
-        // ALSO reduce repairedQuantity since items are leaving
-        outletStock.repairedQuantity = Math.max(0, (outletStock.repairedQuantity || 0) - quantity);
+        // Track pending transfer
+        outletStock.pendingTransferToReseller = (outletStock.pendingTransferToReseller || 0) + quantity;
+        
+        // Add to pendingTransfers array
+        if (!outletStock.pendingTransfers) {
+          outletStock.pendingTransfers = [];
+        }
+        
+        const pendingTransferDetail = {
+          resellerId: resellerId,
+          quantity: quantity,
+          transferDate: new Date(),
+          transferredBy: transferredBy,
+          transferRemark: transferRemark || `Pending transfer to reseller`,
+          status: "pending",
+          ...(productDoc.trackSerialNumber === "Yes" && {
+            serialNumbers: validatedSerials.map(s => ({
+              serialNumber: s.serialNumber,
+              status: s.status
+            }))
+          })
+        };
+        
+        outletStock.pendingTransfers.push(pendingTransferDetail);
         
         console.log(`OutletStock AFTER update:`);
-        console.log(`- transferredRepairedQty: ${outletStock.transferredRepairedQty} (+${quantity})`);
-        console.log(`- repairedQuantity: ${outletStock.repairedQuantity} (-${quantity})`);
-        console.log(`- availableQuantity: ${outletStock.availableQuantity}`);
-        console.log(`- totalQuantity: ${outletStock.totalQuantity}`);
+        console.log(`- availableQuantity: ${outletStock.availableQuantity} (-${quantity})`);
+        console.log(`- pendingTransferToReseller: ${outletStock.pendingTransferToReseller} (+${quantity})`);
 
         await outletStock.save();
-        console.log(`✓ Updated OutletStock`);
+        console.log(`✓ Updated OutletStock with pending transfer`);
 
-        // 2. ADD / UPDATE RESELLER STOCK - MISSING LOGIC ADDED HERE
-        console.log(`\n=== UPDATING RESELLER STOCK ===`);
+        // 2. ADD / UPDATE RESELLER STOCK - Create pending transfer record
+        console.log(`\n=== CREATING PENDING TRANSFER IN RESELLER STOCK ===`);
         
-        // Find or create reseller stock
         let resellerStock = await ResellerStock.findOne({
           reseller: resellerId,
           product: productId
         });
 
         const transferRecord = {
-          fromCenter: sourceOutletId,
-          toReseller: resellerId,
+          outletId: sourceOutletId,
+          quantity: quantity,
           transferDate: new Date(),
-          transferType: "outlet_to_reseller",
-          sourceType: "damage_repair",
-          referenceId: outletStock._id,
-          remark: transferRemark || `Transferred repaired items from outlet`,
-          transferredBy: transferredBy
+          transferredBy: transferredBy,
+          transferRemark: transferRemark || `Pending transfer from outlet`,
+          status: "pending",
+          ...(productDoc.trackSerialNumber === "Yes" && {
+            serialNumbers: serialsToTransfer.map(sn => ({
+              serialNumber: sn,
+              originalSerialNumber: sn,
+              status: "pending"
+            }))
+          })
         };
 
         if (!resellerStock) {
-          // Create new reseller stock
+          // Create new reseller stock with pending transfer only
           resellerStock = new ResellerStock({
             reseller: resellerId,
             product: productId,
-            availableQuantity: quantity,
-            totalQuantity: quantity,
+            availableQuantity: 0,
+            totalQuantity: 0,
+            pendingIncomingQuantity: quantity,
+            pendingTransfers: [transferRecord],
             sourceBreakdown: {
-              damageRepairQuantity: quantity
+              damageRepairQuantity: 0
             }
           });
 
-          if (productDoc.trackSerialNumber === "Yes") {
-            // Add serials for serialized products
-            resellerStock.serialNumbers = serialsToTransfer.map(sn => ({
-              serialNumber: sn,
-              status: "available",
-              currentLocation: null,
-              transferHistory: [transferRecord]
-            }));
-          } else {
-            // Add batch record for non-serialized
-            resellerStock.serialNumbers = [{
-              serialNumber: `REPAIR-BATCH-${Date.now()}`,
-              status: "available",
-              currentLocation: null,
-              transferHistory: [transferRecord]
-            }];
-          }
-
-          console.log(`Created new ResellerStock for ${reseller.businessName}`);
+          console.log(`Created new ResellerStock with pending transfer for ${reseller.businessName}`);
         } else {
-          // Update existing reseller stock
-          resellerStock.availableQuantity += quantity;
-          resellerStock.totalQuantity += quantity;
-          resellerStock.sourceBreakdown.damageRepairQuantity = 
-            (resellerStock.sourceBreakdown.damageRepairQuantity || 0) + quantity;
+          // Update existing reseller stock with pending transfer
+          resellerStock.pendingIncomingQuantity = (resellerStock.pendingIncomingQuantity || 0) + quantity;
           
-          if (productDoc.trackSerialNumber === "Yes") {
-            // Add serials for serialized products
-            for (const serialNumber of serialsToTransfer) {
-              const existingSerial = resellerStock.serialNumbers.find(
-                sn => sn.serialNumber === serialNumber
-              );
-              
-              if (!existingSerial) {
-                resellerStock.serialNumbers.push({
-                  serialNumber: serialNumber,
-                  status: "available",
-                  currentLocation: null,
-                  transferHistory: [transferRecord]
-                });
-              } else {
-                // Update existing serial
-                existingSerial.status = "available";
-                if (!Array.isArray(existingSerial.transferHistory)) {
-                  existingSerial.transferHistory = [];
-                }
-                existingSerial.transferHistory.push(transferRecord);
-              }
-            }
-          } else {
-            // For non-serialized, add or update batch record
-            const existingBatch = resellerStock.serialNumbers.find(
-              sn => sn.serialNumber.startsWith("REPAIR-BATCH-")
-            );
-            
-            if (!existingBatch) {
-              resellerStock.serialNumbers.push({
-                serialNumber: `REPAIR-BATCH-${Date.now()}`,
-                status: "available",
-                currentLocation: null,
-                transferHistory: [transferRecord]
-              });
-            } else {
-              if (!Array.isArray(existingBatch.transferHistory)) {
-                existingBatch.transferHistory = [];
-              }
-              existingBatch.transferHistory.push(transferRecord);
-            }
+          if (!resellerStock.pendingTransfers) {
+            resellerStock.pendingTransfers = [];
           }
           
-          console.log(`Updated existing ResellerStock for ${reseller.businessName}`);
+          resellerStock.pendingTransfers.push(transferRecord);
+          
+          console.log(`Updated existing ResellerStock with pending transfer for ${reseller.businessName}`);
         }
 
         resellerStock.lastUpdated = new Date();
         await resellerStock.save();
-        console.log(`✓ Updated ResellerStock - Available: ${resellerStock.availableQuantity}, Total: ${resellerStock.totalQuantity}`);
+        console.log(`✓ Updated ResellerStock - Pending Incoming: ${resellerStock.pendingIncomingQuantity}`);
 
-        // 3. UPDATE FAULTY STOCK STATUS (FIXED VERSION)
-        console.log(`\n=== UPDATING FAULTY STOCK ===`);
+        // 3. UPDATE REPAIR TRANSFER - Mark as pending_transfer
+        console.log(`\n=== UPDATING REPAIR TRANSFER STATUS ===`);
         
         if (productDoc.trackSerialNumber === "Yes") {
-          // SERIALIZED: Find FaultyStock by serial numbers
-          const faultyStock = await FaultyStock.findOne({
-            product: productId,
-            isSerialized: true,
-            "serialNumbers.serialNumber": { $in: serialsToTransfer },
-            "serialNumbers.status": "repaired"
-          });
-          
-          if (faultyStock) {
-            console.log(`✓ Found FaultyStock: ${faultyStock._id}`);
+          // For serialized products, update RepairTransfer
+          for (const serialNumber of serialsToTransfer) {
+            const repairTransfer = await RepairTransfer.findOne({
+              product: productId,
+              "serialNumbers.serialNumber": serialNumber,
+              "serialNumbers.status": { $in: ["repaired", "pending_transfer"] }
+            });
             
-            // Update each serial in FaultyStock
-            for (const serialNumber of serialsToTransfer) {
-              for (let i = 0; i < faultyStock.serialNumbers.length; i++) {
-                if (faultyStock.serialNumbers[i].serialNumber === serialNumber && 
-                    faultyStock.serialNumbers[i].status === "repaired") {
+            if (repairTransfer) {
+              repairTransfer.serialNumbers = repairTransfer.serialNumbers.map(sn => {
+                if (sn.serialNumber === serialNumber && 
+                    (sn.status === "repaired" || sn.status === "pending_transfer")) {
                   
-                  faultyStock.serialNumbers[i].status = "transferred";
+                  const repairHistory = Array.isArray(sn.repairHistory) ? sn.repairHistory : [];
                   
-                  // Add repair history
-                  if (!faultyStock.serialNumbers[i].repairHistory) {
-                    faultyStock.serialNumbers[i].repairHistory = [];
-                  }
-                  faultyStock.serialNumbers[i].repairHistory.push({
-                    date: new Date(),
-                    status: "transferred",
-                    remark: `Transferred to reseller ${reseller.businessName}`,
-                    quantity: 1,
-                    repairedQty: 0,
-                    irrepairedQty: 0,
-                    updatedBy: transferredBy
-                  });
-                  
-                  console.log(`Updated serial ${serialNumber} to "transferred" in FaultyStock`);
+                  return {
+                    ...sn.toObject(),
+                    status: "pending_transfer",
+                    repairHistory: [
+                      ...repairHistory,
+                      {
+                        date: new Date(),
+                        status: "pending_transfer",
+                        remark: `Pending transfer to reseller ${reseller.businessName}`,
+                        quantity: 1,
+                        repairedQty: 0,
+                        irrepairedQty: 0,
+                        updatedBy: transferredBy,
+                        transferStatus: "pending",
+                        destinationReseller: resellerId
+                      }
+                    ]
+                  };
                 }
-              }
-            }
-            
-            // Update quantities
-            const transferredCount = faultyStock.serialNumbers.filter(sn => sn.status === "transferred").length;
-            const repairedCount = faultyStock.serialNumbers.filter(sn => sn.status === "repaired").length;
-            
-            faultyStock.transferredQty = transferredCount;
-            faultyStock.repairedQty = repairedCount;
-            
-            // Update overall status
-            if (faultyStock.transferredQty === faultyStock.quantity) {
-              faultyStock.overallStatus = "transferred";
-            } else if (faultyStock.transferredQty > 0) {
-              faultyStock.overallStatus = "partially_repaired";
-            }
-            
-            faultyStock.lastRepairUpdate = new Date();
-            await faultyStock.save();
-            
-            console.log(`✓ Updated FaultyStock - transferredQty: ${faultyStock.transferredQty}, repairedQty: ${faultyStock.repairedQty}, status: ${faultyStock.overallStatus}`);
-          } else {
-            console.log(`⚠ Could not find FaultyStock for serialized product`);
-          }
-        } else {
-          // NON-SERIALIZED: Find FaultyStock with repaired items
-          const faultyStock = await FaultyStock.findOne({
-            product: productId,
-            isSerialized: false,
-            repairedQty: { $gte: quantity },
-            $or: [
-              { toCenter: sourceOutletId },
-              { center: sourceOutletId }
-            ]
-          }).sort({ createdAt: -1 });
-
-          if (faultyStock) {
-            console.log(`✓ Found FaultyStock: ${faultyStock._id}`);
-            console.log(`Before update - Total: ${faultyStock.quantity}, Repaired: ${faultyStock.repairedQty}, Transferred: ${faultyStock.transferredQty}, Damage: ${faultyStock.damageQty}`);
-            
-            // Validate we have enough repaired items
-            if ((faultyStock.repairedQty || 0) < quantity) {
-              console.log(`⚠ Not enough repaired items. Available: ${faultyStock.repairedQty}, Requested: ${quantity}`);
-            } else {
-              // Update FaultyStock - reduce repairedQty and increase transferredQty
-              faultyStock.repairedQty = Math.max(0, (faultyStock.repairedQty || 0) - quantity);
-              faultyStock.transferredQty = (faultyStock.transferredQty || 0) + quantity;
-              
-              // IMPORTANT: DO NOT reduce the main quantity field
-              // The quantity field should remain the total count of damaged items reported
-              
-              // Add repair history for the transfer
-              if (!faultyStock.repairHistory) {
-                faultyStock.repairHistory = [];
-              }
-              
-              faultyStock.repairHistory.push({
-                date: new Date(),
-                action: "transfer_to_reseller",
-                remark: `Transferred ${quantity} repaired items to reseller ${reseller.businessName}`,
-                quantity: quantity,
-                previousRepairedQty: faultyStock.repairedQty + quantity,
-                newRepairedQty: faultyStock.repairedQty,
-                previousTransferredQty: faultyStock.transferredQty - quantity,
-                newTransferredQty: faultyStock.transferredQty,
-                updatedBy: transferredBy
+                return sn;
               });
               
-              // Update overall status using the model's method if available
-              if (faultyStock.updateQuantitiesAndStatus) {
-                faultyStock.updateQuantitiesAndStatus();
-              } else {
-                // Manual status update
-                const totalProcessed = (faultyStock.repairedQty || 0) + 
-                                      (faultyStock.irrepairedQty || 0) + 
-                                      (faultyStock.transferredQty || 0) + 
-                                      (faultyStock.underRepairQty || 0);
-                
-                const totalQuantity = faultyStock.quantity || 0;
-                
-                if (faultyStock.transferredQty === totalQuantity) {
-                  faultyStock.overallStatus = "transferred";
-                } else if (faultyStock.transferredQty > 0 && totalProcessed < totalQuantity) {
-                  faultyStock.overallStatus = "partially_repaired";
-                } else if (faultyStock.repairedQty === totalQuantity) {
-                  faultyStock.overallStatus = "repaired";
-                } else if (faultyStock.repairedQty > 0) {
-                  faultyStock.overallStatus = "partially_repaired";
-                } else if (faultyStock.damageQty > 0) {
-                  faultyStock.overallStatus = "damaged";
-                }
-              }
-              
-              faultyStock.lastRepairUpdate = new Date();
-              await faultyStock.save();
-              
-              console.log(`After update - Total: ${faultyStock.quantity}, Repaired: ${faultyStock.repairedQty}, Transferred: ${faultyStock.transferredQty}, Damage: ${faultyStock.damageQty}, Status: ${faultyStock.overallStatus}`);
+              // Update RepairTransfer status
+              repairTransfer.updateStatusAndQuantities();
+              await repairTransfer.save();
+              console.log(`✓ Updated RepairTransfer for serial ${serialNumber}`);
             }
-          } else {
-            console.log(`⚠ Could not find FaultyStock for non-serialized product ${productDoc.productTitle}`);
+          }
+        } else {
+          // For non-serialized products
+          const repairTransfer = await RepairTransfer.findOne({
+            product: productId,
+            toCenter: sourceOutletId,
+            repairedQty: { $gte: quantity },
+            status: { $in: ["repaired", "pending_transfer"] }
+          });
+          
+          if (repairTransfer) {
+            // Update pending transfer quantity
+            repairTransfer.pendingTransferQty = (repairTransfer.pendingTransferQty || 0) + quantity;
+            repairTransfer.repairedQty = Math.max(0, (repairTransfer.repairedQty || 0) - quantity);
+            
+            // Add to pendingTransferDetails
+            if (!repairTransfer.pendingTransferDetails) {
+              repairTransfer.pendingTransferDetails = [];
+            }
+            
+            repairTransfer.pendingTransferDetails.push({
+              outletId: sourceOutletId,
+              resellerId: resellerId,
+              quantity: quantity,
+              transferredBy: transferredBy,
+              transferredAt: new Date(),
+              remark: `Pending transfer to reseller ${reseller.businessName}`,
+              status: "pending"
+            });
+            
+            // Update status
+            repairTransfer.updateStatusAndQuantities();
+            await repairTransfer.save();
+            console.log(`✓ Updated RepairTransfer - PendingTransferQty: ${repairTransfer.pendingTransferQty}`);
           }
         }
 
+        // NOTE: FaultyStock is NOT updated here - will be updated after acceptance
+        
         transferResults.push({
           productId: productId,
           productName: productDoc.productTitle,
           quantity: quantity,
-          serialNumbers: serialsToTransfer,
+          serialNumbers: productDoc.trackSerialNumber === "Yes" ? serialsToTransfer : [],
           fromOutlet: sourceOutletId,
           toReseller: resellerId,
           resellerName: reseller.businessName,
           outletStockId: outletStock._id,
-          resellerStockId: resellerStock._id, // NOW DEFINED
+          resellerStockId: resellerStock._id,
           sourceType: "damage_repair",
+          currentStatus: "pending",
           outletStockUpdate: {
-            newRepairedQuantity: outletStock.repairedQuantity,
-            newTransferredRepairedQty: outletStock.transferredRepairedQty,
             newAvailableQuantity: outletStock.availableQuantity,
-            newTotalQuantity: outletStock.totalQuantity
+            newPendingTransferToReseller: outletStock.pendingTransferToReseller
           },
           resellerStockUpdate: {
-            newAvailableQuantity: resellerStock.availableQuantity,
-            newTotalQuantity: resellerStock.totalQuantity,
-            newDamageRepairQuantity: resellerStock.sourceBreakdown.damageRepairQuantity
+            newPendingIncomingQuantity: resellerStock.pendingIncomingQuantity
           },
-          status: "success",
-          message: `Transferred ${quantity} repaired ${productDoc.trackSerialNumber === "Yes" ? "serialized" : "non-serialized"} items to reseller`
+          note: "Transfer is pending acceptance by reseller",
+          message: `Created pending transfer of ${quantity} items to reseller ${reseller.businessName}`
         });
 
-        console.log(`✅ Successfully transferred ${quantity} items to reseller`);
+        console.log(`✅ Successfully created pending transfer to reseller`);
 
       } catch (error) {
-        console.error(`Error transferring item:`, error);
-        errors.push(`Error transferring ${item.productId || "item"}: ${error.message}`);
+        console.error(`Error creating pending transfer:`, error);
+        errors.push(`Error creating pending transfer for ${item.productId || "item"}: ${error.message}`);
       }
     }
 
     const response = {
       success: transferResults.length > 0,
       message: transferResults.length > 0 
-        ? `Transferred ${transferResults.length} items to reseller` 
-        : "No items transferred",
+        ? `Created ${transferResults.length} pending transfers to reseller` 
+        : "No pending transfers created",
       data: { 
-        transferred: transferResults, 
-        errors: errors.length > 0 ? errors : undefined 
+        transfers: transferResults,
+        note: "Transfers are pending acceptance by reseller",
+        requiresAcceptance: true 
       }
     };
 
     if (errors.length > 0) {
+      response.data.errors = errors;
       response.partialSuccess = transferResults.length > 0;
     }
 
@@ -5269,610 +5181,361 @@ export const transferRepairedToResellerStock = async (req, res) => {
     console.error("Transfer to reseller error:", error);
     res.status(500).json({
       success: false,
-      message: error.message || "Failed to transfer to reseller stock",
+      message: error.message || "Failed to create pending transfer",
     });
   }
 };
 
-
-
-// export const transferRepairedToResellerStock = async (req, res) => {
+// export const getRepairedProductsInOutletStock = async (req, res) => {
 //   try {
-//     const { items, transferRemark } = req.body;
-//     const transferredBy = req.user.id;
-//     const sourceOutletId = req.user.center;
+//     const { hasAccess } = checkStockUsagePermissions(
+//       req,
+//       ["view_usage_own_center", "view_usage_all_center"]
+//     );
 
-//     if (!items || !Array.isArray(items) || items.length === 0) {
-//       return res.status(400).json({
+//     if (!hasAccess) {
+//       return res.status(403).json({
 //         success: false,
-//         message: "Items array is required",
+//         message: "Access denied.",
 //       });
 //     }
 
-//     // Import models
-//     const Product = mongoose.model("Product");
 //     const OutletStock = mongoose.model("OutletStock");
-//     const ResellerStock = mongoose.model("ResellerStock");
 //     const RepairTransfer = mongoose.model("RepairTransfer");
-//     const FaultyStock = mongoose.model("FaultyStock");
-//     const Reseller = mongoose.model("Reseller");
-//     const Center = mongoose.model("Center");
+//     const Product = mongoose.model("Product");
 
-//     const transferResults = [];
-//     const errors = [];
+//     const outletStocks = await OutletStock.find({
+//       $or: [
+//         { 
+//           "serialNumbers.sourceType": "repair_return",
+//           "serialNumbers.status": "available"
+//         },
+//         {
+//           repairedQuantity: { $gt: 0 }
+//         }
+//       ]
+//     })
+//     .populate({
+//       path: "outlet",
+//       select: "_id centerName centerCode centerType" 
+//     })
+//     .populate({
+//       path: "product",
+//       select: "_id productTitle productCode trackSerialNumber"
+//     });
 
-//     for (const item of items) {
-//       try {
-//         const { outletStockId, productId, quantity, serialNumbers, resellerId } = item;
+//     console.log(`Found ${outletStocks.length} outlet stocks with repaired items`);
+
+//     const result = [];
+
+//     for (const outletStock of outletStocks) {
+//       const isSerialized = outletStock.product.trackSerialNumber === "Yes";
+      
+//       console.log(`\n=== Processing ${outletStock.product.productTitle} ===`);
+//       console.log(`Product type: ${isSerialized ? 'Serialized' : 'Non-serialized'}`);
+//       console.log(`Repaired quantity in outlet stock: ${outletStock.repairedQuantity || 0}`);
+
+//       // For serialized products: get available repaired serials
+//       // For non-serialized products: we'll use repairedQuantity
+//       let availableRepairedSerials = [];
+//       let totalRepairedQuantity = 0;
+      
+//       if (isSerialized) {
+//         // SERIALIZED: Get serials with sourceType = repair_return and status = available
+//         availableRepairedSerials = outletStock.serialNumbers.filter(
+//           sn => sn.sourceType === "repair_return" && sn.status === "available"
+//         );
+//         totalRepairedQuantity = availableRepairedSerials.length;
         
-//         if (!resellerId) {
-//           errors.push(`Reseller ID is required for item: ${productId}`);
+//         console.log(`- Available repaired serials: ${availableRepairedSerials.length}`);
+//         console.log(`- Serial numbers: ${availableRepairedSerials.map(s => s.serialNumber).join(', ')}`);
+//       } else {
+//         // NON-SERIALIZED: Use repairedQuantity field
+//         totalRepairedQuantity = outletStock.repairedQuantity || 0;
+        
+//         console.log(`- Repaired quantity: ${totalRepairedQuantity}`);
+//         console.log(`- Note: Non-serialized products don't track individual serials`);
+//       }
+
+//       if (totalRepairedQuantity === 0) {
+//         console.log(`No repaired items available for ${outletStock.product.productTitle}`);
+//         continue;
+//       }
+
+//       let repairTransfers = [];
+//       let serialNumbers = availableRepairedSerials.map(sn => sn.serialNumber);
+      
+//       if (isSerialized) {
+//         // Find repair transfers for serialized products
+//         repairTransfers = await RepairTransfer.find({
+//           product: outletStock.product._id,
+//           "serialNumbers.serialNumber": { $in: serialNumbers }
+//         })
+//         .populate({
+//           path: 'faultyStock',
+//           populate: [
+//             {
+//               path: 'center',
+//               select: '_id centerName centerCode',
+//               populate: {
+//                 path: 'reseller',
+//                 select: '_id businessName'
+//               }
+//             }
+//           ]
+//         });
+//       } else {
+//         // Find repair transfers for non-serialized products
+//         // Look for transfers that were marked as repaired and transferred to this outlet
+//         repairTransfers = await RepairTransfer.find({
+//           product: outletStock.product._id,
+//           status: "repaired", // Or "returned" if all items were transferred
+//           repairedQty: { $gt: 0 }
+//         })
+//         .populate({
+//           path: 'faultyStock',
+//           populate: [
+//             {
+//               path: 'center',
+//               select: '_id centerName centerCode',
+//               populate: {
+//                 path: 'reseller',
+//                 select: '_id businessName'
+//               }
+//             }
+//           ]
+//         });
+        
+//         // Also try finding by remark containing outlet name
+//         if (repairTransfers.length === 0) {
+//           repairTransfers = await RepairTransfer.find({
+//             product: outletStock.product._id,
+//             "repairUpdates.status": "transferred",
+//             "repairUpdates.remark": { 
+//               $regex: outletStock.outlet.centerName, 
+//               $options: 'i' 
+//             }
+//           })
+//           .populate({
+//             path: 'faultyStock',
+//             populate: [
+//               {
+//                 path: 'center',
+//                 select: '_id centerName centerCode',
+//                 populate: {
+//                   path: 'reseller',
+//                   select: '_id businessName'
+//                 }
+//               }
+//             ]
+//           });
+//         }
+//       }
+
+//       console.log(`Found ${repairTransfers.length} repair transfers`);
+
+//       if (repairTransfers.length === 0) {
+//         console.log(`No repair transfers found for ${outletStock.product.productTitle}`);
+//         continue;
+//       }
+
+//       // Group by center and reseller
+//       const groups = {};
+//       let calculatedTotalRepaired = 0;
+      
+//       for (const transfer of repairTransfers) {
+//         if (!transfer.faultyStock || !transfer.faultyStock.center) {
 //           continue;
 //         }
-
-//         // Validate reseller exists
-//         const reseller = await Reseller.findById(resellerId);
+        
+//         const center = transfer.faultyStock.center;
+//         const reseller = center.reseller;
+        
 //         if (!reseller) {
-//           errors.push(`Reseller not found: ${resellerId}`);
 //           continue;
 //         }
-
-//         const productDoc = await Product.findById(productId);
-//         if (!productDoc) {
-//           errors.push(`Product not found: ${productId}`);
-//           continue;
-//         }
-
-//         const outletStock = await OutletStock.findById(outletStockId);
-//         if (!outletStock) {
-//           errors.push(`Outlet stock not found for ID: ${outletStockId}`);
-//           continue;
-//         }
-
-//         console.log(`\n=== Processing ${productDoc.productTitle} ===`);
-//         console.log(`Source Outlet: ${sourceOutletId}`);
-//         console.log(`Destination Reseller: ${resellerId} (${reseller.businessName})`);
-//         console.log(`Requested quantity: ${quantity}`);
-
-//         // CRITICAL: Find which CENTER originally sent these items for repair
-//         // We need to find the original center from the serial numbers' history
-//         let originalCenterId = null;
-//         let originalFaultyStockId = null;
-//         let sourceType = "damage_repair";
-
-//         // First, check if we can find the original center from OutletStock serial history
-//         if (productDoc.trackSerialNumber === "Yes" && serialNumbers && serialNumbers.length > 0) {
-//           // Find first serial to get its history
-//           const firstSerial = outletStock.serialNumbers.find(
-//             sn => sn.serialNumber === serialNumbers[0]
-//           );
-          
-//           if (firstSerial) {
-//             // Look for "repair_transfer" in transfer history to find original center
-//             const repairTransfer = firstSerial.transferHistory?.find(
-//               th => th.transferType === "repair_transfer" || th.source === "repair_return"
-//             );
-            
-//             if (repairTransfer?.fromCenter) {
-//               originalCenterId = repairTransfer.fromCenter;
-//               console.log(`Found original center from serial history: ${originalCenterId}`);
-//             }
-//           }
-//         }
-
-//         // If no center found from serial history, check RepairTransfer
-//         if (!originalCenterId) {
-//           try {
-//             // Find RepairTransfer for this product
-//             const repairTransfer = await RepairTransfer.findOne({
-//               product: productId,
-//               toCenter: sourceOutletId,
-//               $or: [
-//                 { repairedQty: { $gt: 0 } },
-//                 { returnedQty: { $gt: 0 } }
-//               ]
-//             }).sort({ createdAt: -1 });
-
-//             if (repairTransfer) {
-//               originalCenterId = repairTransfer.fromCenter;
-//               originalFaultyStockId = repairTransfer.faultyStockId;
-//               console.log(`Found original center from RepairTransfer: ${originalCenterId}`);
-//             }
-//           } catch (err) {
-//             console.log(`Could not find RepairTransfer: ${err.message}`);
-//           }
-//         }
-
-//         // If still no center, use the source outlet as default
-//         if (!originalCenterId) {
-//           originalCenterId = sourceOutletId;
-//           console.log(`Using source outlet as original center: ${sourceOutletId}`);
-//         }
-
-//         console.log(`Original center for these repaired items: ${originalCenterId}`);
-
-//         // Check if enough repaired items are available for transfer
-//         const availableRepaired = outletStock.repairedQuantity || 0;
-//         console.log(`Available repaired in outlet: ${availableRepaired}`);
         
-//         if (availableRepaired < quantity) {
-//           errors.push(`Insufficient repaired items available for transfer. Available: ${availableRepaired}, Requested: ${quantity}`);
-//           continue;
-//         }
-
-//         let serialsToTransfer = [];
-//         let serialsWithSourceInfo = [];
-
-//         if (productDoc.trackSerialNumber === "Yes") {
-//           // SERIALIZED PRODUCTS
-//           if (!serialNumbers || !Array.isArray(serialNumbers) || serialNumbers.length === 0) {
-//             errors.push(`Serial numbers are required for product: ${productDoc.productTitle}`);
-//             continue;
-//           }
-
-//           if (serialNumbers.length !== quantity) {
-//             errors.push(
-//               `Quantity (${quantity}) doesn't match serial numbers count (${serialNumbers.length}) for product ${productDoc.productTitle}`
-//             );
-//             continue;
-//           }
-
-//           // Validate serials are from repair_return and available
-//           const availableRepairedSerials = outletStock.serialNumbers.filter(
-//             sn =>
-//               serialNumbers.includes(sn.serialNumber) &&
-//               sn.status === "available" &&
-//               sn.sourceType === "repair_return"
-//           );
-
-//           if (availableRepairedSerials.length !== quantity) {
-//             const missingSerials = serialNumbers.filter(
-//               sn => !availableRepairedSerials.map(as => as.serialNumber).includes(sn)
-//             );
-//             errors.push(
-//               `Some serials are not available or not from repair stock: ${missingSerials.join(", ")}`
-//             );
-//             continue;
-//           }
-
-//           serialsToTransfer = serialNumbers;
-          
-//           // Get source info for each serial
-//           serialsWithSourceInfo = serialsToTransfer.map(serialNumber => {
-//             const serial = outletStock.serialNumbers.find(sn => sn.serialNumber === serialNumber);
-//             return {
-//               serialNumber,
-//               sourceCenter: originalCenterId,
-//               sourceType: "damage_repair",
-//               transferHistory: serial?.transferHistory || []
-//             };
-//           });
-          
-//           console.log(`Processing ${serialsToTransfer.length} serial numbers with source center: ${originalCenterId}`);
-//         } else {
-//           // NON-SERIALIZED PRODUCTS
-//           console.log(`Processing non-serialized product: ${productDoc.productTitle}`);
-          
-//           if (quantity > availableRepaired) {
-//             errors.push(`Insufficient repaired stock. Available: ${availableRepaired}, Requested: ${quantity}`);
-//             continue;
-//           }
-          
-//           // Create a batch ID for non-serialized
-//           const batchId = `REPAIR-BATCH-${Date.now()}`;
-//           serialsToTransfer = [batchId];
-          
-//           serialsWithSourceInfo = [{
-//             serialNumber: batchId,
-//             sourceCenter: originalCenterId,
-//             sourceType: "damage_repair",
-//             batchQuantity: quantity,
-//             transferHistory: []
-//           }];
-          
-//           console.log(`Non-serialized transfer of ${quantity} items from center: ${originalCenterId}`);
-//         }
-
-//         // 1. UPDATE OUTLET STOCK
-//         if (productDoc.trackSerialNumber === "Yes") {
-//           // Update serial status and transfer history
-//           outletStock.serialNumbers = outletStock.serialNumbers.map(sn => {
-//             if (serialsToTransfer.includes(sn.serialNumber)) {
-//               const transferRecord = {
-//                 fromCenter: sourceOutletId,
-//                 toReseller: resellerId,
-//                 sourceCenter: originalCenterId, // Track original center
-//                 transferDate: new Date(),
-//                 transferType: "outlet_to_reseller",
-//                 sourceType: "damage_repair",
-//                 referenceId: outletStock._id,
-//                 remark: transferRemark || `Transferred repaired item to reseller ${reseller.businessName}`,
-//                 transferredBy: transferredBy
-//               };
-
-//               const transferHistory = Array.isArray(sn.transferHistory) ? sn.transferHistory : [];
-
-//               return {
-//                 ...sn.toObject(),
-//                 status: "transferred",
-//                 currentLocation: null,
-//                 transferHistory: [...transferHistory, transferRecord],
-//               };
-//             }
-//             return sn;
-//           });
-
-//           // Update quantities
-//           outletStock.availableQuantity -= quantity;
-//           outletStock.totalQuantity -= quantity;
-          
-//         } else {
-//           // NON-SERIALIZED PRODUCTS
-//           // Update quantities only (no serials to update)
-//           outletStock.availableQuantity -= quantity;
-//           outletStock.totalQuantity -= quantity;
-          
-//           // Find and update batch serial if it exists
-//           const batchSerialIndex = outletStock.serialNumbers.findIndex(
-//             sn => sn.serialNumber.startsWith("REPAIR-BATCH-") && 
-//                  sn.sourceType === "repair_return" && 
-//                  sn.status === "available"
-//           );
-          
-//           if (batchSerialIndex !== -1) {
-//             const batchSerial = outletStock.serialNumbers[batchSerialIndex];
-//             const batchQty = batchSerial.batchQuantity || 1;
-            
-//             if (quantity >= batchQty) {
-//               // Transfer entire batch
-//               outletStock.serialNumbers[batchSerialIndex].status = "transferred";
-              
-//               // Add transfer history
-//               const transferHistory = Array.isArray(batchSerial.transferHistory) 
-//                 ? batchSerial.transferHistory 
-//                 : [];
-              
-//               outletStock.serialNumbers[batchSerialIndex].transferHistory = [
-//                 ...transferHistory,
-//                 {
-//                   fromCenter: sourceOutletId,
-//                   toReseller: resellerId,
-//                   sourceCenter: originalCenterId, // Track original center
-//                   transferDate: new Date(),
-//                   transferType: "outlet_to_reseller",
-//                   sourceType: "damage_repair",
-//                   referenceId: outletStock._id,
-//                   transferredQuantity: quantity,
-//                   remark: transferRemark || `Transferred ${quantity} repaired items to reseller ${reseller.businessName}`,
-//                   transferredBy,
-//                 }
-//               ];
-//             } else {
-//               // Partial transfer - update batch quantity
-//               outletStock.serialNumbers[batchSerialIndex].batchQuantity = batchQty - quantity;
-              
-//               // Add transfer history for the transferred portion
-//               const transferHistory = Array.isArray(batchSerial.transferHistory) 
-//                 ? batchSerial.transferHistory 
-//                 : [];
-              
-//               outletStock.serialNumbers[batchSerialIndex].transferHistory = [
-//                 ...transferHistory,
-//                 {
-//                   fromCenter: sourceOutletId,
-//                   toReseller: resellerId,
-//                   sourceCenter: originalCenterId, // Track original center
-//                   transferDate: new Date(),
-//                   transferType: "outlet_to_reseller",
-//                   sourceType: "damage_repair",
-//                   referenceId: outletStock._id,
-//                   transferredQuantity: quantity,
-//                   remark: transferRemark || `Transferred ${quantity} of ${batchQty} repaired items to reseller ${reseller.businessName}`,
-//                   transferredBy,
-//                 }
-//               ];
-//             }
-//           }
-//         }
-
-//         // Update repaired quantity in outlet
-//         outletStock.transferredRepairedQty = (outletStock.transferredRepairedQty || 0) + quantity;
-//         outletStock.repairedQuantity = Math.max(0, (outletStock.repairedQuantity || 0) - quantity);
+//         const key = `${center._id}-${reseller._id}`;
         
-//         console.log(`OutletStock AFTER update:`);
-//         console.log(`- transferredRepairedQty: ${outletStock.transferredRepairedQty} (+${quantity})`);
-//         console.log(`- repairedQuantity: ${outletStock.repairedQuantity} (-${quantity})`);
-//         console.log(`- availableQuantity: ${outletStock.availableQuantity}`);
-//         console.log(`- totalQuantity: ${outletStock.totalQuantity}`);
-
-//         await outletStock.save();
-//         console.log(`✓ Updated OutletStock`);
-
-//         // 2. ADD / UPDATE RESELLER STOCK WITH PROPER SOURCE TRACKING
-//         console.log(`\n=== UPDATING RESELLER STOCK ===`);
-        
-//         // Find or create reseller stock
-//         let resellerStock = await ResellerStock.findOne({
-//           reseller: resellerId,
-//           product: productId
-//         });
-
-//         const transferRecord = {
-//           fromCenter: sourceOutletId,
-//           toReseller: resellerId,
-//           sourceCenter: originalCenterId, // Track original center
-//           transferDate: new Date(),
-//           transferType: "outlet_to_reseller",
-//           sourceType: "damage_repair",
-//           referenceId: outletStock._id,
-//           remark: transferRemark || `Transferred repaired items from outlet`,
-//           transferredBy: transferredBy
-//         };
-
-//         if (!resellerStock) {
-//           // Create new reseller stock
-//           resellerStock = new ResellerStock({
-//             reseller: resellerId,
-//             product: productId,
-//             availableQuantity: quantity,
-//             totalQuantity: quantity,
-//             consumedQuantity: 0,
-//             damagedQuantity: 0,
-//             repairQuantity: 0,
-//             sourceBreakdown: {
-//               damageRepairQuantity: quantity,
-//               centerReturnQuantity: 0,
-//               directPurchaseQuantity: 0,
-//               // Track which center it came from
-//               damageRepairFromCenters: [{
-//                 center: originalCenterId,
-//                 quantity: quantity
-//               }],
-//               centerReturnFromCenters: []
+//         if (!groups[key]) {
+//           groups[key] = {
+//             center: {
+//               _id: center._id,
+//               centerName: center.centerName,
+//               centerCode: center.centerCode
 //             },
-//             serialNumbers: []
-//           });
+//             reseller: {
+//               _id: reseller._id,
+//               resellerName: reseller.businessName
+//             },
+//             quantity: 0,
+//             transferIds: [],
+//             serials: []
+//           };
+//         }
 
-//           if (productDoc.trackSerialNumber === "Yes") {
-//             // Add serials for serialized products with source tracking
-//             resellerStock.serialNumbers = serialsWithSourceInfo.map(info => ({
-//               serialNumber: info.serialNumber,
-//               status: "available",
-//               sourceCenter: info.sourceCenter, // Track original center
-//               sourceType: info.sourceType,
-//               currentLocation: null,
-//               transferHistory: [{
-//                 ...transferRecord,
-//                 transferredQuantity: 1
-//               }]
-//             }));
-//           } else {
-//             // Add batch record for non-serialized
-//             resellerStock.serialNumbers = [{
-//               serialNumber: `REPAIR-BATCH-${Date.now()}`,
-//               status: "available",
-//               sourceCenter: originalCenterId, // Track original center
-//               sourceType: "damage_repair",
-//               batchQuantity: quantity,
-//               currentLocation: null,
-//               transferHistory: [transferRecord]
-//             }];
-//           }
-
-//           console.log(`Created new ResellerStock for ${reseller.businessName}`);
-//         } else {
-//           // Update existing reseller stock
-//           resellerStock.availableQuantity += quantity;
-//           resellerStock.totalQuantity += quantity;
+//         if (isSerialized) {
+//           // SERIALIZED: Count matching serials
+//           const matchingSerials = [];
           
-//           // Update source breakdown
-//           const existingDamageRepair = resellerStock.sourceBreakdown.damageRepairFromCenters.find(
-//             entry => entry.center.toString() === originalCenterId.toString()
-//           );
-          
-//           if (existingDamageRepair) {
-//             existingDamageRepair.quantity += quantity;
-//           } else {
-//             resellerStock.sourceBreakdown.damageRepairFromCenters.push({
-//               center: originalCenterId,
-//               quantity: quantity
-//             });
-//           }
-          
-//           resellerStock.sourceBreakdown.damageRepairQuantity = 
-//             (resellerStock.sourceBreakdown.damageRepairQuantity || 0) + quantity;
-          
-//           if (productDoc.trackSerialNumber === "Yes") {
-//             // Add serials for serialized products
-//             for (const serialInfo of serialsWithSourceInfo) {
-//               const existingSerial = resellerStock.serialNumbers.find(
-//                 sn => sn.serialNumber === serialInfo.serialNumber
-//               );
-              
-//               if (!existingSerial) {
-//                 resellerStock.serialNumbers.push({
-//                   serialNumber: serialInfo.serialNumber,
-//                   status: "available",
-//                   sourceCenter: serialInfo.sourceCenter, // Track original center
-//                   sourceType: serialInfo.sourceType,
-//                   currentLocation: null,
-//                   transferHistory: [{
-//                     ...transferRecord,
-//                     transferredQuantity: 1
-//                   }]
-//                 });
-//               } else {
-//                 // Update existing serial
-//                 existingSerial.status = "available";
-//                 existingSerial.sourceCenter = serialInfo.sourceCenter;
-//                 existingSerial.sourceType = serialInfo.sourceType;
-                
-//                 if (!Array.isArray(existingSerial.transferHistory)) {
-//                   existingSerial.transferHistory = [];
-//                 }
-//                 existingSerial.transferHistory.push({
-//                   ...transferRecord,
-//                   transferredQuantity: 1
-//                 });
-//               }
-//             }
-//           } else {
-//             // For non-serialized, add or update batch record
-//             const existingBatch = resellerStock.serialNumbers.find(
-//               sn => sn.serialNumber.startsWith("REPAIR-BATCH-") && 
-//                    sn.sourceCenter?.toString() === originalCenterId.toString()
+//           for (const serialNumber of serialNumbers) {
+//             const serialInTransfer = transfer.serialNumbers.find(
+//               sn => sn.serialNumber === serialNumber
 //             );
             
-//             if (!existingBatch) {
-//               resellerStock.serialNumbers.push({
-//                 serialNumber: `REPAIR-BATCH-${Date.now()}`,
-//                 status: "available",
-//                 sourceCenter: originalCenterId,
-//                 sourceType: "damage_repair",
-//                 batchQuantity: quantity,
-//                 currentLocation: null,
-//                 transferHistory: [transferRecord]
-//               });
-//             } else {
-//               existingBatch.batchQuantity = (existingBatch.batchQuantity || 0) + quantity;
-              
-//               if (!Array.isArray(existingBatch.transferHistory)) {
-//                 existingBatch.transferHistory = [];
-//               }
-//               existingBatch.transferHistory.push(transferRecord);
+//             if (serialInTransfer) {
+//               matchingSerials.push(serialNumber);
 //             }
 //           }
           
-//           console.log(`Updated existing ResellerStock for ${reseller.businessName}`);
-//         }
-
-//         resellerStock.lastUpdated = new Date();
-//         await resellerStock.save();
-//         console.log(`✓ Updated ResellerStock - Available: ${resellerStock.availableQuantity}, Total: ${resellerStock.totalQuantity}`);
-//         console.log(`✓ Source breakdown - Damage Repair: ${resellerStock.sourceBreakdown.damageRepairQuantity} from center: ${originalCenterId}`);
-
-//         // 3. UPDATE FAULTY STOCK STATUS (optional - depends on your business logic)
-//         // If you want to update FaultyStock to mark items as transferred
-//         console.log(`\n=== UPDATING FAULTY STOCK ===`);
-        
-//         if (originalFaultyStockId) {
-//           try {
-//             const faultyStock = await FaultyStock.findById(originalFaultyStockId);
-//             if (faultyStock) {
-//               console.log(`✓ Found original FaultyStock: ${faultyStock._id}`);
-              
-//               if (productDoc.trackSerialNumber === "Yes") {
-//                 // Update serialized items
-//                 const transferredSerials = faultyStock.serialNumbers.filter(
-//                   sn => serialsToTransfer.includes(sn.serialNumber)
-//                 );
-                
-//                 for (const serial of transferredSerials) {
-//                   if (serial.status === "repaired") {
-//                     serial.status = "transferred";
-                    
-//                     if (!Array.isArray(serial.repairHistory)) {
-//                       serial.repairHistory = [];
-//                     }
-                    
-//                     serial.repairHistory.push({
-//                       date: new Date(),
-//                       status: "transferred",
-//                       remark: `Transferred to reseller ${reseller.businessName}`,
-//                       quantity: 1,
-//                       repairedQty: 0,
-//                       irrepairedQty: 0,
-//                       updatedBy: transferredBy
-//                     });
-//                   }
-//                 }
-//               } else {
-//                 // Update non-serialized items
-//                 faultyStock.transferredQty = (faultyStock.transferredQty || 0) + quantity;
-//                 faultyStock.repairedQty = Math.max(0, (faultyStock.repairedQty || 0) - quantity);
-                
-//                 // Add repair history
-//                 if (!Array.isArray(faultyStock.repairHistory)) {
-//                   faultyStock.repairHistory = [];
-//                 }
-                
-//                 faultyStock.repairHistory.push({
-//                   date: new Date(),
-//                   status: "transferred",
-//                   remark: `Transferred ${quantity} items to reseller ${reseller.businessName}`,
-//                   quantity: quantity,
-//                   repairedQty: 0,
-//                   irrepairedQty: 0,
-//                   updatedBy: transferredBy
-//                 });
-//               }
-              
-//               // Update overall status
-//               await faultyStock.updateQuantitiesAndStatus?.();
-//               await faultyStock.save();
-//               console.log(`✓ Updated FaultyStock status: ${faultyStock.overallStatus}`);
-//             }
-//           } catch (faultyError) {
-//             console.log(`⚠ Could not update FaultyStock: ${faultyError.message}`);
+//           if (matchingSerials.length > 0) {
+//             groups[key].serials.push(...matchingSerials);
+//             groups[key].quantity += matchingSerials.length;
+//             groups[key].transferIds.push(transfer._id);
+//             calculatedTotalRepaired += matchingSerials.length;
+            
+//             console.log(`Transfer ${transfer._id} contributed ${matchingSerials.length} serials`);
 //           }
 //         } else {
-//           console.log(`⚠ No FaultyStock ID found, skipping FaultyStock update`);
+//           // NON-SERIALIZED: Use repairedQty from transfer
+//           // We need to estimate how much of this transfer went to this outlet
+//           let transferredToThisOutlet = 0;
+          
+//           // Method 1: Check repairUpdates for transfers to this outlet
+//           if (transfer.repairUpdates && transfer.repairUpdates.length > 0) {
+//             const transfersToOutlet = transfer.repairUpdates.filter(update => 
+//               update.status === "transferred" && 
+//               update.remark && 
+//               update.remark.includes(outletStock.outlet.centerName)
+//             );
+            
+//             transferredToThisOutlet = transfersToOutlet.reduce((sum, update) => 
+//               sum + (update.quantity || 0), 0
+//             );
+//           }
+          
+//           // Method 2: If no specific record, use repairedQty as estimate
+//           if (transferredToThisOutlet === 0 && transfer.repairedQty > 0) {
+//             transferredToThisOutlet = transfer.repairedQty;
+//           }
+          
+//           if (transferredToThisOutlet > 0) {
+//             groups[key].quantity += transferredToThisOutlet;
+//             groups[key].transferIds.push(transfer._id);
+//             calculatedTotalRepaired += transferredToThisOutlet;
+            
+//             console.log(`Transfer ${transfer._id} contributed ${transferredToThisOutlet} non-serialized items`);
+//           }
 //         }
-
-//         // Get center name for response
-//         const originalCenter = await Center.findById(originalCenterId).select("centerName");
-//         const centerName = originalCenter ? originalCenter.centerName : "Unknown Center";
-
-//         transferResults.push({
-//           productId: productId,
-//           productName: productDoc.productTitle,
-//           quantity: quantity,
-//           serialNumbers: serialsToTransfer,
-//           fromOutlet: sourceOutletId,
-//           toReseller: resellerId,
-//           resellerName: reseller.businessName,
-//           originalCenterId: originalCenterId,
-//           originalCenterName: centerName,
-//           sourceType: "damage_repair",
-//           outletStockId: outletStock._id,
-//           resellerStockId: resellerStock._id,
-//           status: "success",
-//           message: `Transferred ${quantity} repaired items from ${centerName} to reseller ${reseller.businessName}`
-//         });
-
-//         console.log(`✅ Successfully transferred ${quantity} items to reseller`);
-
-//       } catch (error) {
-//         console.error(`Error transferring item:`, error);
-//         errors.push(`Error transferring ${item.productId || "item"}: ${error.message}`);
 //       }
+
+//       const resellerGroups = Object.values(groups);
+
+//       if (resellerGroups.length === 0) {
+//         console.log(`No reseller groups found for ${outletStock.product.productTitle}`);
+//         continue;
+//       }
+
+//       console.log(`Total repaired quantity calculated: ${calculatedTotalRepaired}`);
+//       console.log(`Total reseller groups: ${resellerGroups.length}`);
+
+//       // Prepare response
+//       const repairedSerialsForResponse = isSerialized 
+//         ? availableRepairedSerials.map(serial => ({
+//             serialNumber: serial.serialNumber,
+//             status: serial.status,
+//             sourceType: serial.sourceType,
+//             quantity: 1,
+//             purchaseId: serial.purchaseId,
+//             currentLocation: serial.currentLocation
+//           }))
+//         : []; // Empty for non-serialized
+
+//       // Create result entry
+//       const resultEntry = {
+//         outlet: {
+//           _id: outletStock.outlet._id,
+//           centerName: outletStock.outlet.centerName,
+//           centerCode: outletStock.outlet.centerCode,
+//           centerType: outletStock.outlet.centerType
+//         },
+//         product: {
+//           _id: outletStock.product._id,
+//           productTitle: outletStock.product.productTitle,
+//           productCode: outletStock.product.productCode,
+//           trackSerialNumber: outletStock.product.trackSerialNumber
+//         },
+//         totalRepairedQuantity: isSerialized ? availableRepairedSerials.length : outletStock.repairedQuantity,
+//         availableRepairedQuantity: isSerialized ? availableRepairedSerials.length : (outletStock.repairedQuantity - (outletStock.transferredRepairedQty || 0)),
+//         repairedSerials: repairedSerialsForResponse,
+//         resellerGroups: resellerGroups.map(group => ({
+//           center: group.center,
+//           reseller: group.reseller,
+//           quantity: group.quantity,
+//           transferIds: group.transferIds,
+//           serials: group.serials || []
+//         })),
+//         center: resellerGroups[0]?.center || null,
+//         reseller: resellerGroups[0]?.reseller || null,
+//         outletStockId: outletStock._id,
+//         lastUpdated: outletStock.updatedAt,
+//         outletStockQuantity: {
+//           total: outletStock.totalQuantity,
+//           available: outletStock.availableQuantity,
+//           inTransit: outletStock.inTransitQuantity,
+//           repaired: outletStock.repairedQuantity || 0,
+//           transferredRepaired: outletStock.transferredRepairedQty || 0
+//         },
+//         isNonSerialized: !isSerialized,
+//         note: !isSerialized 
+//           ? "Non-serialized product. Quantity represents total repaired items available." 
+//           : null
+//       };
+
+//       result.push(resultEntry);
+//       console.log(`✓ Added ${outletStock.product.productTitle} to results`);
 //     }
 
-//     const response = {
-//       success: transferResults.length > 0,
-//       message: transferResults.length > 0 
-//         ? `Transferred ${transferResults.length} items to reseller` 
-//         : "No items transferred",
-//       data: { 
-//         transferred: transferResults, 
-//         errors: errors.length > 0 ? errors : undefined 
+//     // Calculate summary statistics
+//     const serializedCount = result.filter(item => !item.isNonSerialized).length;
+//     const nonSerializedCount = result.filter(item => item.isNonSerialized).length;
+//     const totalRepairedQty = result.reduce((sum, item) => sum + item.totalRepairedQuantity, 0);
+//     const totalAvailableRepaired = result.reduce((sum, item) => sum + item.availableRepairedQuantity, 0);
+
+//     console.log(`\n=== FINAL SUMMARY ===`);
+//     console.log(`Total products: ${result.length}`);
+//     console.log(`Serialized: ${serializedCount}, Non-serialized: ${nonSerializedCount}`);
+//     console.log(`Total repaired quantity: ${totalRepairedQty}`);
+//     console.log(`Total available for transfer: ${totalAvailableRepaired}`);
+
+//     res.json({
+//       success: true,
+//       data: {
+//         repairedProducts: result,
+//         totalItems: result.length,
+//         totalRepairedQuantity: totalRepairedQty,
+//         totalAvailableRepaired: totalAvailableRepaired,
+//         summary: {
+//           serialized: serializedCount,
+//           nonSerialized: nonSerializedCount,
+//           totalProducts: result.length,
+//           totalOutlets: [...new Set(result.map(item => item.outlet._id.toString()))].length,
+//           totalAvailableForTransfer: totalAvailableRepaired
+//         }
 //       }
-//     };
-
-//     if (errors.length > 0) {
-//       response.partialSuccess = transferResults.length > 0;
-//     }
-
-//     res.status(200).json(response);
+//     });
 
 //   } catch (error) {
-//     console.error("Transfer to reseller error:", error);
+//     console.error("Get repaired products error:", error);
 //     res.status(500).json({
 //       success: false,
-//       message: error.message || "Failed to transfer to reseller stock",
+//       message: error.message || "Failed to fetch repaired products in outlet stock",
+//       error: process.env.NODE_ENV === "development" ? error.stack : undefined
 //     });
 //   }
 // };
+
+
 
 export const getRepairedProductsInOutletStock = async (req, res) => {
   try {
@@ -5892,17 +5555,17 @@ export const getRepairedProductsInOutletStock = async (req, res) => {
     const RepairTransfer = mongoose.model("RepairTransfer");
     const Product = mongoose.model("Product");
     
-    // FIXED QUERY: Find outlet stocks that have either:
-    // 1. Serialized products with repair_return serials, OR
-    // 2. Non-serialized products with repairedQuantity > 0
+    // Get all outlet stocks for the current user's outlet
     const outletStocks = await OutletStock.find({
       $or: [
         { 
-          "serialNumbers.sourceType": "repair_return",
-          "serialNumbers.status": "available"
+          "serialNumbers.sourceType": "repair_return"
         },
         {
           repairedQuantity: { $gt: 0 }
+        },
+        {
+          pendingRepairedQty: { $gt: 0 }
         }
       ]
     })
@@ -5925,42 +5588,59 @@ export const getRepairedProductsInOutletStock = async (req, res) => {
       console.log(`\n=== Processing ${outletStock.product.productTitle} ===`);
       console.log(`Product type: ${isSerialized ? 'Serialized' : 'Non-serialized'}`);
       console.log(`Repaired quantity in outlet stock: ${outletStock.repairedQuantity || 0}`);
+      console.log(`Pending repaired quantity: ${outletStock.pendingRepairedQty || 0}`);
 
-      // For serialized products: get available repaired serials
-      // For non-serialized products: we'll use repairedQuantity
-      let availableRepairedSerials = [];
-      let totalRepairedQuantity = 0;
+      // Get pending approval items
+      let pendingRepairedSerials = [];
+      let pendingRepairedQuantity = 0;
       
       if (isSerialized) {
-        // SERIALIZED: Get serials with sourceType = repair_return and status = available
+        // SERIALIZED: Get serials with pending_approval status
+        pendingRepairedSerials = outletStock.serialNumbers.filter(
+          sn => sn.sourceType === "repair_return" && sn.status === "pending_approval"
+        );
+        pendingRepairedQuantity = pendingRepairedSerials.length;
+        
+        console.log(`- Pending approval serials: ${pendingRepairedSerials.length}`);
+        console.log(`- Pending serial numbers: ${pendingRepairedSerials.map(s => s.serialNumber).join(', ')}`);
+      } else {
+        // NON-SERIALIZED: Use pendingRepairedQty field
+        pendingRepairedQuantity = outletStock.pendingRepairedQty || 0;
+        
+        console.log(`- Pending repaired quantity: ${pendingRepairedQuantity}`);
+      }
+
+      // Get available (accepted) repaired items
+      let availableRepairedSerials = [];
+      let availableRepairedQuantity = 0;
+      
+      if (isSerialized) {
         availableRepairedSerials = outletStock.serialNumbers.filter(
           sn => sn.sourceType === "repair_return" && sn.status === "available"
         );
-        totalRepairedQuantity = availableRepairedSerials.length;
-        
-        console.log(`- Available repaired serials: ${availableRepairedSerials.length}`);
-        console.log(`- Serial numbers: ${availableRepairedSerials.map(s => s.serialNumber).join(', ')}`);
+        availableRepairedQuantity = availableRepairedSerials.length;
       } else {
-        // NON-SERIALIZED: Use repairedQuantity field
-        totalRepairedQuantity = outletStock.repairedQuantity || 0;
-        
-        console.log(`- Repaired quantity: ${totalRepairedQuantity}`);
-        console.log(`- Note: Non-serialized products don't track individual serials`);
+        availableRepairedQuantity = outletStock.repairedQuantity || 0;
       }
 
-      if (totalRepairedQuantity === 0) {
-        console.log(`No repaired items available for ${outletStock.product.productTitle}`);
+      // If no repaired items at all, skip
+      if (pendingRepairedQuantity === 0 && availableRepairedQuantity === 0) {
+        console.log(`No repaired items found for ${outletStock.product.productTitle}`);
         continue;
       }
 
+      // Find repair transfers for this product
       let repairTransfers = [];
-      let serialNumbers = availableRepairedSerials.map(sn => sn.serialNumber);
+      const allSerials = [...pendingRepairedSerials.map(s => s.serialNumber), ...availableRepairedSerials.map(s => s.serialNumber)];
       
       if (isSerialized) {
         // Find repair transfers for serialized products
         repairTransfers = await RepairTransfer.find({
           product: outletStock.product._id,
-          "serialNumbers.serialNumber": { $in: serialNumbers }
+          $or: [
+            { "serialNumbers.serialNumber": { $in: allSerials } },
+            { status: "repaired" }
+          ]
         })
         .populate({
           path: 'faultyStock',
@@ -5977,11 +5657,13 @@ export const getRepairedProductsInOutletStock = async (req, res) => {
         });
       } else {
         // Find repair transfers for non-serialized products
-        // Look for transfers that were marked as repaired and transferred to this outlet
         repairTransfers = await RepairTransfer.find({
           product: outletStock.product._id,
-          status: "repaired", // Or "returned" if all items were transferred
-          repairedQty: { $gt: 0 }
+          $or: [
+            { repairedQty: { $gt: 0 } },
+            { pendingTransferQty: { $gt: 0 } },
+            { "repairUpdates.destinationOutlet": outletStock.outlet._id }
+          ]
         })
         .populate({
           path: 'faultyStock',
@@ -5996,43 +5678,12 @@ export const getRepairedProductsInOutletStock = async (req, res) => {
             }
           ]
         });
-        
-        // Also try finding by remark containing outlet name
-        if (repairTransfers.length === 0) {
-          repairTransfers = await RepairTransfer.find({
-            product: outletStock.product._id,
-            "repairUpdates.status": "transferred",
-            "repairUpdates.remark": { 
-              $regex: outletStock.outlet.centerName, 
-              $options: 'i' 
-            }
-          })
-          .populate({
-            path: 'faultyStock',
-            populate: [
-              {
-                path: 'center',
-                select: '_id centerName centerCode',
-                populate: {
-                  path: 'reseller',
-                  select: '_id businessName'
-                }
-              }
-            ]
-          });
-        }
       }
 
       console.log(`Found ${repairTransfers.length} repair transfers`);
 
-      if (repairTransfers.length === 0) {
-        console.log(`No repair transfers found for ${outletStock.product.productTitle}`);
-        continue;
-      }
-
       // Group by center and reseller
       const groups = {};
-      let calculatedTotalRepaired = 0;
       
       for (const transfer of repairTransfers) {
         if (!transfer.faultyStock || !transfer.faultyStock.center) {
@@ -6059,79 +5710,67 @@ export const getRepairedProductsInOutletStock = async (req, res) => {
               _id: reseller._id,
               resellerName: reseller.businessName
             },
-            quantity: 0,
+            pendingQuantity: 0,
+            availableQuantity: 0,
             transferIds: [],
             serials: []
           };
         }
 
         if (isSerialized) {
-          // SERIALIZED: Count matching serials
-          const matchingSerials = [];
+          // Count matching pending and available serials
+          const pendingMatchingSerials = pendingRepairedSerials.filter(serial => 
+            transfer.serialNumbers.some(sn => sn.serialNumber === serial.serialNumber)
+          );
           
-          for (const serialNumber of serialNumbers) {
-            const serialInTransfer = transfer.serialNumbers.find(
-              sn => sn.serialNumber === serialNumber
+          const availableMatchingSerials = availableRepairedSerials.filter(serial => 
+            transfer.serialNumbers.some(sn => sn.serialNumber === serial.serialNumber)
+          );
+          
+          groups[key].pendingQuantity += pendingMatchingSerials.length;
+          groups[key].availableQuantity += availableMatchingSerials.length;
+          groups[key].transferIds.push(transfer._id);
+          groups[key].serials.push(...pendingMatchingSerials.map(s => s.serialNumber));
+          groups[key].serials.push(...availableMatchingSerials.map(s => s.serialNumber));
+          
+        } else {
+          // For non-serialized, track pending transfer quantities
+          if (transfer.pendingTransferQty && transfer.pendingTransferQty > 0) {
+            // Check if this pending transfer is for this outlet
+            const pendingForThisOutlet = transfer.pendingTransferDetails?.find(
+              detail => detail.outletId?.toString() === outletStock.outlet._id.toString()
             );
             
-            if (serialInTransfer) {
-              matchingSerials.push(serialNumber);
+            if (pendingForThisOutlet) {
+              groups[key].pendingQuantity += pendingForThisOutlet.quantity || 0;
             }
           }
           
-          if (matchingSerials.length > 0) {
-            groups[key].serials.push(...matchingSerials);
-            groups[key].quantity += matchingSerials.length;
-            groups[key].transferIds.push(transfer._id);
-            calculatedTotalRepaired += matchingSerials.length;
-            
-            console.log(`Transfer ${transfer._id} contributed ${matchingSerials.length} serials`);
-          }
-        } else {
-          // NON-SERIALIZED: Use repairedQty from transfer
-          // We need to estimate how much of this transfer went to this outlet
-          let transferredToThisOutlet = 0;
-          
-          // Method 1: Check repairUpdates for transfers to this outlet
-          if (transfer.repairUpdates && transfer.repairUpdates.length > 0) {
-            const transfersToOutlet = transfer.repairUpdates.filter(update => 
-              update.status === "transferred" && 
-              update.remark && 
-              update.remark.includes(outletStock.outlet.centerName)
-            );
-            
-            transferredToThisOutlet = transfersToOutlet.reduce((sum, update) => 
-              sum + (update.quantity || 0), 0
-            );
-          }
-          
-          // Method 2: If no specific record, use repairedQty as estimate
-          if (transferredToThisOutlet === 0 && transfer.repairedQty > 0) {
-            transferredToThisOutlet = transfer.repairedQty;
-          }
-          
-          if (transferredToThisOutlet > 0) {
-            groups[key].quantity += transferredToThisOutlet;
-            groups[key].transferIds.push(transfer._id);
-            calculatedTotalRepaired += transferredToThisOutlet;
-            
-            console.log(`Transfer ${transfer._id} contributed ${transferredToThisOutlet} non-serialized items`);
-          }
+          // Add repaired quantity that's already available
+          groups[key].availableQuantity += transfer.repairedQty || 0;
+          groups[key].transferIds.push(transfer._id);
         }
       }
 
       const resellerGroups = Object.values(groups);
 
-      if (resellerGroups.length === 0) {
-        console.log(`No reseller groups found for ${outletStock.product.productTitle}`);
+      if (resellerGroups.length === 0 && pendingRepairedQuantity === 0 && availableRepairedQuantity === 0) {
         continue;
       }
 
-      console.log(`Total repaired quantity calculated: ${calculatedTotalRepaired}`);
-      console.log(`Total reseller groups: ${resellerGroups.length}`);
-
       // Prepare response
-      const repairedSerialsForResponse = isSerialized 
+      const pendingSerialsForResponse = isSerialized 
+        ? pendingRepairedSerials.map(serial => ({
+            serialNumber: serial.serialNumber,
+            status: serial.status,
+            sourceType: serial.sourceType,
+            quantity: 1,
+            purchaseId: serial.purchaseId,
+            currentLocation: serial.currentLocation
+          }))
+        : [];
+
+      const availableSerialsForResponse = isSerialized 
         ? availableRepairedSerials.map(serial => ({
             serialNumber: serial.serialNumber,
             status: serial.status,
@@ -6140,7 +5779,7 @@ export const getRepairedProductsInOutletStock = async (req, res) => {
             purchaseId: serial.purchaseId,
             currentLocation: serial.currentLocation
           }))
-        : []; // Empty for non-serialized
+        : [];
 
       // Create result entry
       const resultEntry = {
@@ -6156,31 +5795,27 @@ export const getRepairedProductsInOutletStock = async (req, res) => {
           productCode: outletStock.product.productCode,
           trackSerialNumber: outletStock.product.trackSerialNumber
         },
-        totalRepairedQuantity: isSerialized ? availableRepairedSerials.length : outletStock.repairedQuantity,
-        availableRepairedQuantity: isSerialized ? availableRepairedSerials.length : (outletStock.repairedQuantity - (outletStock.transferredRepairedQty || 0)),
-        repairedSerials: repairedSerialsForResponse,
-        resellerGroups: resellerGroups.map(group => ({
-          center: group.center,
-          reseller: group.reseller,
-          quantity: group.quantity,
-          transferIds: group.transferIds,
-          serials: group.serials || []
-        })),
-        center: resellerGroups[0]?.center || null,
-        reseller: resellerGroups[0]?.reseller || null,
+        isSerialized: isSerialized,
+        // Pending items (waiting for acceptance)
+        pendingRepairedQuantity: pendingRepairedQuantity,
+        pendingRepairedSerials: pendingSerialsForResponse,
+        // Available items (already accepted)
+        availableRepairedQuantity: availableRepairedQuantity,
+        availableRepairedSerials: availableSerialsForResponse,
+        // Total repaired (pending + available)
+        totalRepairedQuantity: pendingRepairedQuantity + availableRepairedQuantity,
+        // Reseller groups
+        resellerGroups: resellerGroups,
         outletStockId: outletStock._id,
-        lastUpdated: outletStock.updatedAt,
-        outletStockQuantity: {
+        outletStockDetails: {
           total: outletStock.totalQuantity,
           available: outletStock.availableQuantity,
           inTransit: outletStock.inTransitQuantity,
           repaired: outletStock.repairedQuantity || 0,
+          pendingRepaired: outletStock.pendingRepairedQty || 0,
           transferredRepaired: outletStock.transferredRepairedQty || 0
         },
-        isNonSerialized: !isSerialized,
-        note: !isSerialized 
-          ? "Non-serialized product. Quantity represents total repaired items available." 
-          : null
+        lastUpdated: outletStock.updatedAt
       };
 
       result.push(resultEntry);
@@ -6188,30 +5823,29 @@ export const getRepairedProductsInOutletStock = async (req, res) => {
     }
 
     // Calculate summary statistics
-    const serializedCount = result.filter(item => !item.isNonSerialized).length;
-    const nonSerializedCount = result.filter(item => item.isNonSerialized).length;
-    const totalRepairedQty = result.reduce((sum, item) => sum + item.totalRepairedQuantity, 0);
-    const totalAvailableRepaired = result.reduce((sum, item) => sum + item.availableRepairedQuantity, 0);
+    const serializedCount = result.filter(item => item.isSerialized).length;
+    const nonSerializedCount = result.filter(item => !item.isSerialized).length;
+    const totalPendingQty = result.reduce((sum, item) => sum + item.pendingRepairedQuantity, 0);
+    const totalAvailableQty = result.reduce((sum, item) => sum + item.availableRepairedQuantity, 0);
 
     console.log(`\n=== FINAL SUMMARY ===`);
     console.log(`Total products: ${result.length}`);
     console.log(`Serialized: ${serializedCount}, Non-serialized: ${nonSerializedCount}`);
-    console.log(`Total repaired quantity: ${totalRepairedQty}`);
-    console.log(`Total available for transfer: ${totalAvailableRepaired}`);
+    console.log(`Total pending quantity: ${totalPendingQty}`);
+    console.log(`Total available quantity: ${totalAvailableQty}`);
 
     res.json({
       success: true,
       data: {
         repairedProducts: result,
         totalItems: result.length,
-        totalRepairedQuantity: totalRepairedQty,
-        totalAvailableRepaired: totalAvailableRepaired,
         summary: {
           serialized: serializedCount,
           nonSerialized: nonSerializedCount,
           totalProducts: result.length,
-          totalOutlets: [...new Set(result.map(item => item.outlet._id.toString()))].length,
-          totalAvailableForTransfer: totalAvailableRepaired
+          totalPending: totalPendingQty,
+          totalAvailable: totalAvailableQty,
+          totalOutlets: [...new Set(result.map(item => item.outlet._id.toString()))].length
         }
       }
     });
@@ -6225,188 +5859,6 @@ export const getRepairedProductsInOutletStock = async (req, res) => {
     });
   }
 };
-
-
-// export const getAllFaultyStockForWarehouse = async (req, res) => {
-//   try {
-//     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
-//       req,
-//       ["view_usage_own_center", "view_usage_all_center"]
-//     );
-
-//     if (!hasAccess) {
-//       return res.status(403).json({
-//         success: false,
-//         message:
-//           "Access denied. view_usage_own_center or view_usage_all_center permission required.",
-//       });
-//     }
-
-//     const {
-//       center,
-//       startDate,
-//       endDate,
-//       status,
-//       product,
-//       usageType,
-//       page = 1,
-//       limit = 100,
-//       sortBy = "date",
-//       sortOrder = "desc",
-//       search,
-//     } = req.query;
-
-//     const filter = {};
-    
-//     // Apply center filter based on permissions
-//     if (
-//       permissions.view_usage_own_center &&
-//       !permissions.view_usage_all_center &&
-//       userCenter
-//     ) {
-//       // For users with only own center access, show only records where toCenter matches their center
-//       filter.toCenter = userCenter._id || userCenter;
-//     } else if (permissions.view_usage_all_center) {
-//       // Users with all center access can see all records
-//       if (center) {
-//         filter.toCenter = center;
-//       }
-//       // If no center specified, show all records
-//     }
-    
-//     // Additional filters
-//     if (startDate || endDate) {
-//       filter.date = {};
-//       if (startDate) filter.date.$gte = new Date(startDate);
-//       if (endDate) filter.date.$lte = new Date(endDate);
-//     }
-    
-//     if (status && status !== "all") {
-//       filter.status = status;
-//     }
-    
-//     if (product) {
-//       filter.product = product;
-//     }
-    
-//     if (usageType && usageType !== "all") {
-//       filter.usageType = usageType;
-//     }
-
-//     const pageNum = parseInt(page);
-//     const limitNum = parseInt(limit);
-//     const skip = (pageNum - 1) * limitNum;
-
-//     const sort = {};
-//     sort[sortBy] = sortOrder === "desc" ? -1 : 1;
-    
-//     let FaultyStock;
-//     try {
-//       FaultyStock = mongoose.model("FaultyStock");
-//     } catch (error) {
-//       return res.status(500).json({
-//         success: false,
-//         message: "FaultyStock model not available",
-//       });
-//     }
-
-//     const faultyStockRecords = await FaultyStock.find(filter)
-//       .populate("center", "centerName centerType")
-//       .populate("toCenter", "centerName centerType") // Populate toCenter for display
-//       .populate("product", "productTitle productPrice salePrice")
-//       .populate("usageReference", "usageType")
-//       .populate("reportedBy", "name email")
-//       .sort(sort)
-//       .skip(skip)
-//       .limit(limitNum);
-
-//     const total = await FaultyStock.countDocuments(filter);
-//     const totalPages = Math.ceil(total / limitNum);
-    
-//     const stats = await FaultyStock.aggregate([
-//       { $match: filter },
-//       {
-//         $group: {
-//           _id: null,
-//           totalItems: { $sum: "$quantity" },
-//           totalValue: { 
-//             $sum: { 
-//               $multiply: ["$quantity", "$productDetails.productPrice"] 
-//             } 
-//           },
-//           uniqueProducts: { $addToSet: "$product" }
-//         }
-//       },
-//       {
-//         $project: {
-//           totalItems: 1,
-//           totalValue: 1,
-//           uniqueProductCount: { $size: "$uniqueProducts" }
-//         }
-//       }
-//     ]);
-    
-//     const statusStats = await FaultyStock.aggregate([
-//       { $match: filter },
-//       {
-//         $group: {
-//           _id: "$status",
-//           count: { $sum: 1 },
-//           totalQuantity: { $sum: "$quantity" }
-//         }
-//       }
-//     ]);
-    
-//     const usageTypeStats = await FaultyStock.aggregate([
-//       { $match: filter },
-//       {
-//         $group: {
-//           _id: "$usageType",
-//           count: { $sum: 1 },
-//           totalQuantity: { $sum: "$quantity" }
-//         }
-//       }
-//     ]);
-
-//     res.json({
-//       success: true,
-//       data: faultyStockRecords,
-//       statistics: {
-//         totalRecords: total,
-//         totalItems: stats[0]?.totalItems || 0,
-//         totalValue: stats[0]?.totalValue || 0,
-//         uniqueProducts: stats[0]?.uniqueProductCount || 0,
-//         statusDistribution: statusStats,
-//         usageTypeDistribution: usageTypeStats
-//       },
-//       pagination: {
-//         currentPage: pageNum,
-//         totalPages,
-//         totalRecords: total,
-//         hasNext: pageNum < totalPages,
-//         hasPrev: pageNum > 1,
-//         limit: limitNum
-//       },
-//       filters: {
-//         center: center || "all",
-//         startDate: startDate || null,
-//         endDate: endDate || null,
-//         status: status || "all",
-//         product: product || "all",
-//         usageType: usageType || "all",
-//         search: search || ""
-//       }
-//     });
-//   } catch (error) {
-//     console.error("Get all faulty stock error:", error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Failed to fetch faulty stock records",
-//     });
-//   }
-// };
-
-
 
 export const getAllFaultyStockForWarehouse = async (req, res) => {
   try {

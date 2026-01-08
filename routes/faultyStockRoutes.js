@@ -2,7 +2,7 @@ import express from "express";
 import { protect } from "../middlewares/authMiddleware.js";
 
 import { getAllFaultyStockForWarehouse, getDamageAndUnderRepairProduct, getDamagedAndUnderRepairSerials, getRepairedProducts, getRepairedProductsInOutletStock, getRepairTransfersForCenter, markAsRepairedOrIrreparable, returnFromRepairCenter,transferRepairedToMainWarehouse,transferRepairedToResellerStock,transferToRepairCenter} from "../controllers/faultyStockController.js";
-import { acceptDamageItems, rejectDamageItems } from "../controllers/acceptDamageController.js";
+import { acceptDamageItems, acceptRepairTransfer, rejectDamageItems } from "../controllers/acceptDamageController.js";
 
 const router = express.Router();
 
@@ -28,5 +28,7 @@ router.post('/transfer-repaired-to-warehouse', protect, transferRepairedToMainWa
 router.post('/transfer-to-reseller-center', protect, transferRepairedToResellerStock);
 router.post('/accept-damage',protect,acceptDamageItems);
 router.post('/reject-damage',protect,rejectDamageItems);
+router.post('/accept-repair-transfer',protect, acceptRepairTransfer)
+
 
 export default router;

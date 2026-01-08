@@ -705,7 +705,7 @@ export const register = async (req, res) => {
     const existingUser = await User.findOne({
       $or: [
         { email: email.toLowerCase() }, 
-        { mobile },
+        // { mobile },
         { username: username.toLowerCase() }
       ],
     });

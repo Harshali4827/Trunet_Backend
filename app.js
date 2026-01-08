@@ -35,6 +35,8 @@ import raisePORoutes from './routes/raisePORoutes.js';
 import faultyStockRoutes from './routes/faultyStockRoutes.js';
 import centerReturnRoutes from './routes/centerReturnRoutes.js';
 import repairedCostRoutes from './routes/repairedCostRoutes.js';
+import acceptRoutes from './routes/acceptRoutes.js';
+import testingRoutes from './routes/testingMaterialRoutes.js';
 import "./models/EntityStockUsage.js";
 dotenv.config();
 connectDB();
@@ -84,6 +86,8 @@ app.use("/api/raisePO", raisePORoutes);
 app.use("/api/faulty-stock", faultyStockRoutes);
 app.use("/api/center-return", centerReturnRoutes);
 app.use("/api/repaired-cost", repairedCostRoutes);
+app.use("/api", acceptRoutes);
+app.use("/api/testing-material", testingRoutes);
 app.use(errorHandler);
 
 export default app;
