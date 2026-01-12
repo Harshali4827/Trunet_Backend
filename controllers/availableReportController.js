@@ -683,6 +683,607 @@ const buildAvailableProductsFilter = (query, permissions, userCenter) => {
   return filter;
 };
 
+// export const getAllAvailableProductsWithStock = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } =
+//       checkAvailableStockPermissions(req, [
+//         "available_stock_own_center",
+//         "available_stock_all_center",
+//       ]);
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. available_stock_own_center or available_stock_all_center permission required.",
+//       });
+//     }
+
+//     const {
+//       page = 1,
+//       limit = 100,
+//       search,
+//       category,
+//       centerId,
+//       center,
+//       product,
+//       sortBy = "productName",
+//       sortOrder = "asc",
+//       ...filterParams
+//     } = req.query;
+
+//     const user = await User.findById(req.user._id).populate(
+//       "center",
+//       "centerName centerCode centerType"
+//     );
+
+//     if (!user || !user.center) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User center information not found",
+//       });
+//     }
+
+//     const defaultCenterId = user.center._id;
+//     const centerType = user.center.centerType;
+//     const filter = buildAvailableProductsFilter(
+//       { centerId, center, product, search, category, ...filterParams },
+//       permissions,
+//       userCenter
+//     );
+//     const targetCenterId = filter.center ? filter.center : defaultCenterId;
+//     const targetCenter = await Center.findById(targetCenterId).select(
+//       "_id centerName centerCode centerType"
+//     );
+
+//     if (!targetCenter) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Center not found",
+//       });
+//     }
+
+//     const productFilter = {};
+
+//     if (search) {
+//       productFilter.$or = [
+//         { productTitle: { $regex: search, $options: "i" } },
+//         { productCode: { $regex: search, $options: "i" } },
+//         { description: { $regex: search, $options: "i" } },
+//         { "productCategory.productCategory": { $regex: search, $options: "i" } },
+//       ];
+//     }
+
+//     if (category) {
+//       const categoryId = await getCategoryId(category);
+//       if (categoryId) {
+//         productFilter.productCategory = categoryId;
+//       }
+//     }
+
+//     if (product) {
+//       const productFilterObj = buildArrayFilter(product);
+//       if (productFilterObj) {
+//         productFilter._id = productFilterObj;
+//       }
+//     }
+
+//     const pageNum = parseInt(page);
+//     const limitNum = parseInt(limit);
+//     const skip = (pageNum - 1) * limitNum;
+    
+//     const [products, totalProducts] = await Promise.all([
+//       Product.find(productFilter)
+//         .populate("productCategory", "productCategory categoryCode")
+//         .select(
+//           "productTitle productCode description productCategory productPrice trackSerialNumber productImage"
+//         )
+//         .sort({ productTitle: 1 })
+//         .limit(limitNum)
+//         .skip(skip)
+//         .lean(),
+
+//       Product.countDocuments(productFilter),
+//     ]);
+
+//     if (products.length === 0) {
+//       return res.status(200).json({
+//         success: true,
+//         message: "No products found",
+//         data: {
+//           stock: [],
+//           summary: {
+//             totalProducts: 0,
+//             totalQuantity: 0,
+//             totalAvailable: 0,
+//             totalInTransit: 0,
+//             totalConsumed: 0,
+//             totalDamaged: 0,
+//             totalDamageReturn: 0,
+//             totalEffectiveAvailable: 0,
+//             lowStockItems: 0,
+//             outOfStockItems: 0,
+//             inStockItems: 0,
+//           },
+//           center: targetCenter,
+//           filters: {
+//             center: targetCenterId,
+//             product: product || "all",
+//             search: search || "",
+//             category: category || "all",
+//           },
+//           pagination: {
+//             currentPage: pageNum,
+//             totalPages: 0,
+//             totalItems: 0,
+//             itemsPerPage: limitNum,
+//             hasNext: false,
+//             hasPrev: false,
+//           },
+//           permissions: {
+//             canViewAllCenters: permissions.available_stock_all_center,
+//             canViewOwnCenter: permissions.available_stock_own_center,
+//           },
+//         },
+//       });
+//     }
+
+//     const productIds = products.map((product) => product._id);
+//     let stockData = [];
+    
+//     const damageReturnData = await DamageReturn.aggregate([
+//       {
+//         $match: {
+//           center: new mongoose.Types.ObjectId(targetCenterId), 
+//           status: "approved",
+//           product: { $in: productIds }
+//         }
+//       },
+//       {
+//         $group: {
+//           _id: "$product",
+//           damageReturnQuantity: { $sum: "$quantity" },
+//           damageReturnEntries: { $sum: 1 }
+//         }
+//       }
+//     ]);
+
+//     const damageReturnMap = new Map();
+//     damageReturnData.forEach(item => {
+//       damageReturnMap.set(item._id.toString(), {
+//         damageReturnQuantity: item.damageReturnQuantity,
+//         damageReturnEntries: item.damageReturnEntries
+//       });
+//     });
+
+//     if (targetCenter.centerType === "Outlet") {
+//       const [outletStockData, purchaseData] = await Promise.all([
+//         OutletStock.find({
+//           outlet: targetCenterId,
+//           product: { $in: productIds },
+//         }).select(
+//           "product totalQuantity availableQuantity inTransitQuantity serialNumbers"
+//         ).lean(),
+
+//         StockPurchase.aggregate([
+//           {
+//             $match: {
+//               outlet: targetCenterId,
+//               "products.product": { $in: productIds },
+//             },
+//           },
+//           {
+//             $unwind: "$products",
+//           },
+//           {
+//             $match: {
+//               "products.product": { $in: productIds },
+//             },
+//           },
+//           {
+//             $group: {
+//               _id: "$products.product",
+//               totalPurchased: { $sum: "$products.purchasedQuantity" },
+//               totalAvailable: { $sum: "$products.availableQuantity" },
+//               purchaseCount: { $sum: 1 },
+//             },
+//           },
+//         ]),
+//       ]);
+
+//       const outletStockMap = new Map();
+//       outletStockData.forEach((item) => {
+//         const damagedQuantity = item.serialNumbers.filter(
+//           (sn) => sn.status === "damaged"
+//         ).length;
+//         const damageReturnInfo = damageReturnMap.get(item.product.toString());
+
+//         outletStockMap.set(item.product.toString(), {
+//           currentTotalQuantity: item.totalQuantity,
+//           currentAvailableQuantity: item.availableQuantity,
+//           currentInTransitQuantity: item.inTransitQuantity,
+//           serialNumbersCount: item.serialNumbers.length,
+//           hasSerialNumbers: item.serialNumbers.length > 0,
+//           damagedQuantity: damagedQuantity,
+//           damageReturnQuantity: damageReturnInfo?.damageReturnQuantity || 0,
+//           damageReturnEntries: damageReturnInfo?.damageReturnEntries || 0,
+//           effectiveAvailableQuantity: Math.max(
+//             0,
+//             item.availableQuantity - damagedQuantity
+//           ),
+//         });
+//       });
+
+//       const purchaseMap = new Map();
+//       purchaseData.forEach((item) => {
+//         purchaseMap.set(item._id.toString(), {
+//           totalPurchased: item.totalPurchased,
+//           totalAvailable: item.totalAvailable,
+//           purchaseCount: item.purchaseCount,
+//         });
+//       });
+
+//       stockData = productIds.map((productId) => {
+//         const outletStock = outletStockMap.get(productId.toString());
+//         const purchaseInfo = purchaseMap.get(productId.toString());
+
+//         return {
+//           _id: productId,
+//           totalPurchased: purchaseInfo?.totalPurchased || 0,
+//           totalAvailable: purchaseInfo?.totalAvailable || 0,
+//           purchaseCount: purchaseInfo?.purchaseCount || 0,
+//           currentTotalQuantity: outletStock?.currentTotalQuantity || 0,
+//           currentAvailableQuantity: outletStock?.currentAvailableQuantity || 0,
+//           currentInTransitQuantity: outletStock?.currentInTransitQuantity || 0,
+//           serialNumbersCount: outletStock?.serialNumbersCount || 0,
+//           hasSerialNumbers: outletStock?.hasSerialNumbers || false,
+//           damagedQuantity: outletStock?.damagedQuantity || 0,
+//           damageReturnQuantity: outletStock?.damageReturnQuantity || 0,
+//           damageReturnEntries: outletStock?.damageReturnEntries || 0,
+//           effectiveAvailableQuantity:
+//             outletStock?.effectiveAvailableQuantity || 0,
+//         };
+//       });
+//     } else if (targetCenter.centerType === "Center") {
+//       const centerStockData = await CenterStock.aggregate([
+//         {
+//           $match: {
+//             center: new mongoose.Types.ObjectId(targetCenterId),
+//             product: { $in: productIds },
+//           },
+//         },
+//         {
+//           $addFields: {
+//             damagedQuantity: {
+//               $size: {
+//                 $filter: {
+//                   input: "$serialNumbers",
+//                   as: "serial",
+//                   cond: { $eq: ["$$serial.status", "damaged"] },
+//                 },
+//               },
+//             },
+//             availableSerialsCount: {
+//               $size: {
+//                 $filter: {
+//                   input: "$serialNumbers",
+//                   as: "serial",
+//                   cond: { $eq: ["$$serial.status", "available"] },
+//                 },
+//               },
+//             },
+//           },
+//         },
+//         {
+//           $lookup: {
+//             from: "products",
+//             localField: "product",
+//             foreignField: "_id",
+//             as: "productDetails",
+//           },
+//         },
+//         {
+//           $unwind: {
+//             path: "$productDetails",
+//             preserveNullAndEmptyArrays: true,
+//           },
+//         },
+//         {
+//           $group: {
+//             _id: "$product",
+//             totalQuantity: { $sum: "$totalQuantity" },
+//             availableQuantity: { $sum: "$availableQuantity" },
+//             inTransitQuantity: { $sum: "$inTransitQuantity" },
+//             damagedQuantity: { $sum: "$damagedQuantity" },
+//             availableSerialsCount: { $sum: "$availableSerialsCount" },
+//             stockEntries: { $sum: 1 },
+//             trackSerialNumber: { $first: "$productDetails.trackSerialNumber" },
+//           },
+//         },
+//         {
+//           $project: {
+//             totalQuantity: 1,
+//             availableQuantity: 1,
+//             inTransitQuantity: 1,
+//             damagedQuantity: 1,
+//             availableSerialsCount: 1,
+//             stockEntries: 1,
+//             trackSerialNumber: 1,
+//             effectiveAvailableQuantity: {
+//               $cond: {
+//                 if: { $eq: ["$trackSerialNumber", "Yes"] },
+//                 then: "$availableSerialsCount",
+//                 else: {
+//                   $max: [
+//                     0,
+//                     { $subtract: ["$availableQuantity", "$damagedQuantity"] },
+//                   ],
+//                 },
+//               },
+//             },
+//           },
+//         },
+//       ]);
+
+//       // Combine center stock data with damage return data
+//       stockData = centerStockData.map(item => {
+//         const damageReturnInfo = damageReturnMap.get(item._id.toString());
+//         return {
+//           ...item,
+//           damageReturnQuantity: damageReturnInfo?.damageReturnQuantity || 0,
+//           damageReturnEntries: damageReturnInfo?.damageReturnEntries || 0
+//         };
+//       });
+
+//       // Handle products that have damage returns but no center stock
+//       const existingProductIds = new Set(centerStockData.map(item => item._id.toString()));
+//       const missingProducts = productIds.filter(id => !existingProductIds.has(id.toString()));
+      
+//       for (const productId of missingProducts) {
+//         const damageReturnInfo = damageReturnMap.get(productId.toString());
+//         if (damageReturnInfo && damageReturnInfo.damageReturnQuantity > 0) {
+//           stockData.push({
+//             _id: productId,
+//             totalQuantity: 0,
+//             availableQuantity: 0,
+//             inTransitQuantity: 0,
+//             damagedQuantity: 0,
+//             availableSerialsCount: 0,
+//             stockEntries: 0,
+//             trackSerialNumber: "No",
+//             effectiveAvailableQuantity: 0,
+//             damageReturnQuantity: damageReturnInfo.damageReturnQuantity,
+//             damageReturnEntries: damageReturnInfo.damageReturnEntries
+//           });
+//         }
+//       }
+//     } else {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid center type",
+//       });
+//     }
+
+//     const stockMap = new Map();
+//     stockData.forEach((item) => {
+//       if (targetCenter.centerType === "Outlet") {
+//         stockMap.set(item._id.toString(), {
+//           totalPurchased: item.totalPurchased,
+//           totalAvailable: item.totalAvailable,
+//           purchaseCount: item.purchaseCount,
+//           currentTotalQuantity: item.currentTotalQuantity,
+//           currentAvailableQuantity: item.currentAvailableQuantity,
+//           currentInTransitQuantity: item.currentInTransitQuantity,
+//           serialNumbersCount: item.serialNumbersCount,
+//           hasSerialNumbers: item.hasSerialNumbers,
+//           damagedQuantity: item.damagedQuantity,
+//           damageReturnQuantity: item.damageReturnQuantity,
+//           damageReturnEntries: item.damageReturnEntries,
+//           effectiveAvailableQuantity: item.effectiveAvailableQuantity,
+//         });
+//       } else {
+//         stockMap.set(item._id.toString(), {
+//           totalQuantity: item.totalQuantity,
+//           availableQuantity: item.availableQuantity,
+//           inTransitQuantity: item.inTransitQuantity,
+//           damagedQuantity: item.damagedQuantity,
+//           damageReturnQuantity: item.damageReturnQuantity,
+//           damageReturnEntries: item.damageReturnEntries,
+//           availableSerialsCount: item.availableSerialsCount,
+//           stockEntries: item.stockEntries,
+//           effectiveAvailableQuantity: item.effectiveAvailableQuantity,
+//         });
+//       }
+//     });
+
+//     const formattedProducts = products.map((product) => {
+//       const productId = product._id.toString();
+//       const productCategory = product.productCategory
+//         ? {
+//             _id: product.productCategory._id,
+//             name: product.productCategory.productCategory,
+//             code: product.productCategory.categoryCode,
+//           }
+//         : null;
+
+//       let stockInfo = {};
+
+//       if (targetCenter.centerType === "Outlet") {
+//         const stockData = stockMap.get(productId) || {
+//           currentTotalQuantity: 0,
+//           currentAvailableQuantity: 0,
+//           currentInTransitQuantity: 0,
+//           serialNumbersCount: 0,
+//           hasSerialNumbers: false,
+//           damagedQuantity: 0,
+//           damageReturnQuantity: 0,
+//           damageReturnEntries: 0,
+//           effectiveAvailableQuantity: 0,
+//         };
+
+//         stockInfo = {
+//           totalQuantity: stockData.currentTotalQuantity,
+//           availableQuantity: stockData.currentAvailableQuantity,
+//           inTransitQuantity: stockData.currentInTransitQuantity,
+//           consumedQuantity: 0,
+//           damagedQuantity: stockData.damagedQuantity,
+//           damageReturnQuantity: stockData.damageReturnQuantity,
+//           damageReturnEntries: stockData.damageReturnEntries,
+//           availableSerialsCount: stockData.serialNumbersCount,
+//           consumedSerialsCount: 0,
+//           inTransitSerialsCount: 0,
+//           transferredSerialsCount: 0,
+//           effectiveAvailableQuantity: stockData.effectiveAvailableQuantity,
+//         };
+//       } else {
+//         const stockData = stockMap.get(productId) || {
+//           totalQuantity: 0,
+//           availableQuantity: 0,
+//           inTransitQuantity: 0,
+//           damagedQuantity: 0,
+//           damageReturnQuantity: 0,
+//           damageReturnEntries: 0,
+//           availableSerialsCount: 0,
+//           stockEntries: 0,
+//           effectiveAvailableQuantity: 0,
+//         };
+
+//         stockInfo = {
+//           totalQuantity: stockData.totalQuantity,
+//           availableQuantity: stockData.availableQuantity,
+//           inTransitQuantity: stockData.inTransitQuantity,
+//           consumedQuantity: 0,
+//           damagedQuantity: stockData.damagedQuantity,
+//           damageReturnQuantity: stockData.damageReturnQuantity,
+//           damageReturnEntries: stockData.damageReturnEntries,
+//           availableSerialsCount: stockData.availableSerialsCount,
+//           consumedSerialsCount: 0,
+//           inTransitSerialsCount: 0,
+//           transferredSerialsCount: 0,
+//           effectiveAvailableQuantity: stockData.effectiveAvailableQuantity,
+//         };
+//       }
+
+//       const stockStatus =
+//         stockInfo.effectiveAvailableQuantity === 0
+//           ? "out_of_stock"
+//           : stockInfo.effectiveAvailableQuantity < 10
+//           ? "low_stock"
+//           : "in_stock";
+
+//       return {
+//         _id: product._id,
+//         product: product._id,
+//         productName: product.productTitle,
+//         productCode: product.productCode,
+//         productDescription: product.description,
+//         productPrice: product.productPrice,
+//         productImage: product.productImage,
+//         productCategory: productCategory,
+//         trackSerialNumber: product.trackSerialNumber,
+//         center: targetCenterId,
+//         centerName: targetCenter.centerName,
+//         centerCode: targetCenter.centerCode,
+//         centerType: targetCenter.centerType,
+//         ...stockInfo,
+//         stockStatus: stockStatus,
+//         lastUpdated: new Date().toISOString(),
+//         serialNumbers: [],
+//       };
+//     });
+
+//     const validSortFields = [
+//       "productName", "productCode", "effectiveAvailableQuantity", 
+//       "stockStatus", "totalQuantity", "availableQuantity", "damageReturnQuantity"
+//     ];
+//     const actualSortBy = validSortFields.includes(sortBy) ? sortBy : "productName";
+    
+//     formattedProducts.sort((a, b) => {
+//       const aValue = a[actualSortBy];
+//       const bValue = b[actualSortBy];
+//       const multiplier = sortOrder === "desc" ? -1 : 1;
+      
+//       if (aValue < bValue) return -1 * multiplier;
+//       if (aValue > bValue) return 1 * multiplier;
+//       return 0;
+//     });
+
+//     const summary = {
+//       totalProducts: formattedProducts.length,
+//       totalQuantity: formattedProducts.reduce(
+//         (sum, product) => sum + product.totalQuantity,
+//         0
+//       ),
+//       totalAvailable: formattedProducts.reduce(
+//         (sum, product) => sum + product.availableQuantity,
+//         0
+//       ),
+//       totalInTransit: formattedProducts.reduce(
+//         (sum, product) => sum + product.inTransitQuantity,
+//         0
+//       ),
+//       totalConsumed: formattedProducts.reduce(
+//         (sum, product) => sum + product.consumedQuantity,
+//         0
+//       ),
+//       totalDamaged: formattedProducts.reduce(
+//         (sum, product) => sum + product.damagedQuantity,
+//         0
+//       ),
+//       totalDamageReturn: formattedProducts.reduce(
+//         (sum, product) => sum + product.damageReturnQuantity,
+//         0
+//       ),
+//       totalEffectiveAvailable: formattedProducts.reduce(
+//         (sum, product) => sum + product.effectiveAvailableQuantity,
+//         0
+//       ),
+//       lowStockItems: formattedProducts.filter(
+//         (product) => product.stockStatus === "low_stock"
+//       ).length,
+//       outOfStockItems: formattedProducts.filter(
+//         (product) => product.stockStatus === "out_of_stock"
+//       ).length,
+//       inStockItems: formattedProducts.filter(
+//         (product) => product.stockStatus === "in_stock"
+//       ).length,
+//     };
+
+//     res.status(200).json({
+//       success: true,
+//       message: `Products with stock information retrieved successfully for ${targetCenter.centerType.toLowerCase()}`,
+//       data: {
+//         stock: formattedProducts,
+//         summary: summary,
+//         center: targetCenter,
+//         filters: {
+//           center: targetCenterId,
+//           product: product || "all",
+//           search: search || "",
+//           category: category || "all",
+//         },
+//         pagination: {
+//           currentPage: pageNum,
+//           totalPages: Math.ceil(totalProducts / limitNum),
+//           totalItems: totalProducts,
+//           itemsPerPage: limitNum,
+//           hasNext: pageNum < Math.ceil(totalProducts / limitNum),
+//           hasPrev: pageNum > 1,
+//         },
+//         permissions: {
+//           canViewAllCenters: permissions.available_stock_all_center,
+//           canViewOwnCenter: permissions.available_stock_own_center,
+//         },
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error retrieving products with stock:", error);
+//     handleControllerError(error, res);
+//   }
+// };
+
+
+
 export const getAllAvailableProductsWithStock = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } =
@@ -709,6 +1310,7 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
       product,
       sortBy = "productName",
       sortOrder = "asc",
+      export: isExport = false,
       ...filterParams
     } = req.query;
 
@@ -770,24 +1372,41 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
+
+    let products, totalProducts;
     
-    const [products, totalProducts] = await Promise.all([
-      Product.find(productFilter)
+    if (isExport) {
+      // For export, get ALL products without pagination
+      products = await Product.find(productFilter)
         .populate("productCategory", "productCategory categoryCode")
         .select(
           "productTitle productCode description productCategory productPrice trackSerialNumber productImage"
         )
         .sort({ productTitle: 1 })
-        .limit(limitNum)
-        .skip(skip)
-        .lean(),
+        .lean();
 
-      Product.countDocuments(productFilter),
-    ]);
+      totalProducts = products.length;
+    } else {
+      // For normal requests, apply pagination
+      const skip = (pageNum - 1) * limitNum;
+      
+      [products, totalProducts] = await Promise.all([
+        Product.find(productFilter)
+          .populate("productCategory", "productCategory categoryCode")
+          .select(
+            "productTitle productCode description productCategory productPrice trackSerialNumber productImage"
+          )
+          .sort({ productTitle: 1 })
+          .limit(limitNum)
+          .skip(skip)
+          .lean(),
 
-    if (products.length === 0) {
-      return res.status(200).json({
+        Product.countDocuments(productFilter),
+      ]);
+    }
+
+    if (!products || products.length === 0) {
+      const responseData = {
         success: true,
         message: "No products found",
         data: {
@@ -812,20 +1431,26 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
             search: search || "",
             category: category || "all",
           },
-          pagination: {
-            currentPage: pageNum,
-            totalPages: 0,
-            totalItems: 0,
-            itemsPerPage: limitNum,
-            hasNext: false,
-            hasPrev: false,
-          },
           permissions: {
             canViewAllCenters: permissions.available_stock_all_center,
             canViewOwnCenter: permissions.available_stock_own_center,
           },
         },
-      });
+      };
+
+      // Only include pagination for non-export requests
+      if (!isExport) {
+        responseData.data.pagination = {
+          currentPage: pageNum,
+          totalPages: 0,
+          totalItems: 0,
+          itemsPerPage: limitNum,
+          hasNext: false,
+          hasPrev: false,
+        };
+      }
+
+      return res.status(200).json(responseData);
     }
 
     const productIds = products.map((product) => product._id);
@@ -1025,7 +1650,6 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
         },
       ]);
 
-      // Combine center stock data with damage return data
       stockData = centerStockData.map(item => {
         const damageReturnInfo = damageReturnMap.get(item._id.toString());
         return {
@@ -1034,8 +1658,6 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           damageReturnEntries: damageReturnInfo?.damageReturnEntries || 0
         };
       });
-
-      // Handle products that have damage returns but no center stock
       const existingProductIds = new Set(centerStockData.map(item => item._id.toString()));
       const missingProducts = productIds.filter(id => !existingProductIds.has(id.toString()));
       
@@ -1249,7 +1871,7 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
       ).length,
     };
 
-    res.status(200).json({
+    const responseData = {
       success: true,
       message: `Products with stock information retrieved successfully for ${targetCenter.centerType.toLowerCase()}`,
       data: {
@@ -1262,26 +1884,31 @@ export const getAllAvailableProductsWithStock = async (req, res) => {
           search: search || "",
           category: category || "all",
         },
-        pagination: {
-          currentPage: pageNum,
-          totalPages: Math.ceil(totalProducts / limitNum),
-          totalItems: totalProducts,
-          itemsPerPage: limitNum,
-          hasNext: pageNum < Math.ceil(totalProducts / limitNum),
-          hasPrev: pageNum > 1,
-        },
         permissions: {
           canViewAllCenters: permissions.available_stock_all_center,
           canViewOwnCenter: permissions.available_stock_own_center,
         },
       },
-    });
+    };
+
+    // Only include pagination for non-export requests
+    if (!isExport) {
+      responseData.data.pagination = {
+        currentPage: pageNum,
+        totalPages: Math.ceil(totalProducts / limitNum),
+        totalItems: totalProducts,
+        itemsPerPage: limitNum,
+        hasNext: pageNum < Math.ceil(totalProducts / limitNum),
+        hasPrev: pageNum > 1,
+      };
+    }
+
+    res.status(200).json(responseData);
   } catch (error) {
     console.error("Error retrieving products with stock:", error);
     handleControllerError(error, res);
   }
 };
-
 
 const buildArrayFilterStockUsage = (value) => {
   if (!value) return null;

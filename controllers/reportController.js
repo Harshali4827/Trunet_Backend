@@ -800,6 +800,395 @@ export const getAllStockRequestsReports = async (req, res) => {
   }
 };
 
+// export const getMonthlyStockRequestsSummary = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkReportPermissions(req, [
+//       "view_own_report",
+//       "view_all_report",
+//     ]);
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. view_own_report or view_all_report permission required.",
+//       });
+//     }
+
+//     const {
+//       month,
+//       year,
+//       center,
+//       centerId,
+//       warehouse,
+//       product,
+//       productId,
+//       startDate,
+//       endDate,
+//       page = 1,
+//       limit = 50,
+//     } = req.query;
+
+//     console.log('Received query params:', {
+//       center, centerId, product, productId, startDate, endDate, month, year, warehouse
+//     });
+//     let dateFilter = {};
+//     const currentDate = new Date();
+    
+//     if (startDate || endDate) {
+//       dateFilter = {};
+//       if (startDate) {
+//         const start = new Date(startDate);
+//         start.setHours(0, 0, 0, 0);
+//         dateFilter.$gte = start;
+//       }
+//       if (endDate) {
+//         const end = new Date(endDate);
+//         end.setHours(23, 59, 59, 999);
+//         dateFilter.$lte = end;
+//       }
+//     } else {
+//       const currentMonth = month ? parseInt(month) : currentDate.getMonth() + 1;
+//       const currentYear = year ? parseInt(year) : currentDate.getFullYear();
+
+//       if (currentMonth < 1 || currentMonth > 12) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "Month must be between 1 and 12",
+//         });
+//       }
+
+//       if (currentYear < 2000 || currentYear > 2100) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "Year must be between 2000 and 2100",
+//         });
+//       }
+
+//       dateFilter = {
+//         $gte: new Date(currentYear, currentMonth - 1, 1),
+//         $lte: new Date(currentYear, currentMonth, 0, 23, 59, 59, 999)
+//       };
+//     }
+//     const baseFilter = {
+//       createdAt: dateFilter,
+//     };
+
+//     if (permissions.view_own_report && !permissions.view_all_report) {
+//       const userCenterId = userCenter?._id || userCenter;
+//       if (userCenterId) {
+//         baseFilter.center = mongoose.Types.ObjectId.isValid(userCenterId) 
+//           ? new mongoose.Types.ObjectId(userCenterId)
+//           : userCenterId;
+//       }
+//     } else if (permissions.view_all_report && (center || centerId)) {
+//       const centerFilterValue = center || centerId;
+//       baseFilter.center = mongoose.Types.ObjectId.isValid(centerFilterValue) 
+//         ? new mongoose.Types.ObjectId(centerFilterValue)
+//         : centerFilterValue;
+//     }
+//     if (warehouse) {
+//       baseFilter.warehouse = mongoose.Types.ObjectId.isValid(warehouse) 
+//         ? new mongoose.Types.ObjectId(warehouse)
+//         : warehouse;
+//     }
+
+//     console.log('Base filter:', JSON.stringify(baseFilter, null, 2));
+
+//     const aggregationPipeline = [
+//       { $match: baseFilter },
+//       { $unwind: "$products" }
+//     ];
+
+//     const productFilterValue = product || productId;
+//     if (productFilterValue) {
+//       aggregationPipeline.push({
+//         $match: {
+//           "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
+//             ? new mongoose.Types.ObjectId(productFilterValue)
+//             : productFilterValue
+//         }
+//       });
+//     }
+//     aggregationPipeline.push(
+//       {
+//         $lookup: {
+//           from: "centers",
+//           localField: "center",
+//           foreignField: "_id",
+//           as: "centerDetails",
+//         },
+//       },
+//       {
+//         $lookup: {
+//           from: "centers",
+//           localField: "warehouse",
+//           foreignField: "_id",
+//           as: "warehouseDetails",
+//         },
+//       },
+//       {
+//         $lookup: {
+//           from: "products",
+//           localField: "products.product",
+//           foreignField: "_id",
+//           as: "productDetails",
+//         },
+//       },
+//       {
+//         $project: {
+//           center: { $arrayElemAt: ["$centerDetails.centerName", 0] },
+//           centerId: "$center",
+//           parentCenter: { $arrayElemAt: ["$warehouseDetails.centerName", 0] },
+//           parentCenterId: "$warehouse",
+//           product: { $arrayElemAt: ["$productDetails.productTitle", 0] },
+//           productId: "$products.product",
+//           productCode: { $arrayElemAt: ["$productDetails.productCode", 0] },
+//           quantity: "$products.quantity",
+//           approvedQuantity: "$products.approvedQuantity",
+//           receivedQuantity: "$products.receivedQuantity",
+//           orderNumber: 1,
+//           status: 1,
+//           date: 1,
+//           createdAt: 1,
+//         },
+//       },
+//       {
+//         $group: {
+//           _id: {
+//             center: "$center",
+//             centerId: "$centerId",
+//             parentCenter: "$parentCenter",
+//             parentCenterId: "$parentCenterId",
+//             product: "$product",
+//             productId: "$productId",
+//             productCode: "$productCode",
+//           },
+//           totalQty: { $sum: "$quantity" },
+//           totalApproved: { $sum: "$approvedQuantity" },
+//           totalReceived: { $sum: "$receivedQuantity" },
+//           requestCount: { $sum: 1 },
+//           orderNumbers: { $push: "$orderNumber" },
+//           statuses: { $push: "$status" },
+//           dates: { $push: "$date" },
+//         },
+//       },
+//       {
+//         $project: {
+//           _id: 0,
+//           center: "$_id.center",
+//           centerId: "$_id.centerId",
+//           parentCenter: "$_id.parentCenter",
+//           parentCenterId: "$_id.parentCenterId",
+//           product: "$_id.product",
+//           productId: "$_id.productId",
+//           productCode: "$_id.productCode",
+//           totalQty: 1,
+//           totalApproved: 1,
+//           totalReceived: 1,
+//           requestCount: 1,
+//           orderNumbers: 1,
+//           pendingQuantity: { $subtract: ["$totalQty", "$totalReceived"] },
+//           approvalRate: {
+//             $cond: {
+//               if: { $gt: ["$totalQty", 0] },
+//               then: { $multiply: [{ $divide: ["$totalApproved", "$totalQty"] }, 100] },
+//               else: 0
+//             }
+//           },
+//           fulfillmentRate: {
+//             $cond: {
+//               if: { $gt: ["$totalQty", 0] },
+//               then: { $multiply: [{ $divide: ["$totalReceived", "$totalQty"] }, 100] },
+//               else: 0
+//             }
+//           },
+//           statusBreakdown: {
+//             $arrayToObject: {
+//               $map: {
+//                 input: "$statuses",
+//                 as: "status",
+//                 in: {
+//                   k: "$$status",
+//                   v: {
+//                     $size: {
+//                       $filter: {
+//                         input: "$statuses",
+//                         as: "s",
+//                         cond: { $eq: ["$$s", "$$status"] },
+//                       },
+//                     },
+//                   },
+//                 },
+//               },
+//             },
+//           },
+//         },
+//       },
+//       {
+//         $sort: {
+//           center: 1,
+//           parentCenter: 1,
+//           product: 1,
+//         },
+//       }
+//     );
+
+//     const pageNum = parseInt(page);
+//     const limitNum = parseInt(limit);
+//     const skip = (pageNum - 1) * limitNum;
+//     const paginatedPipeline = [...aggregationPipeline, { $skip: skip }, { $limit: limitNum }];
+
+//     const monthlySummary = await StockRequest.aggregate(paginatedPipeline);
+//     const countPipeline = [
+//       { $match: baseFilter },
+//       { $unwind: "$products" }
+//     ];
+
+//     if (productFilterValue) {
+//       countPipeline.push({
+//         $match: {
+//           "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
+//             ? new mongoose.Types.ObjectId(productFilterValue)
+//             : productFilterValue
+//         }
+//       });
+//     }
+
+//     countPipeline.push({
+//       $group: {
+//         _id: {
+//           center: "$center",
+//           warehouse: "$warehouse",
+//           product: "$products.product",
+//         },
+//       },
+//     },
+//     { $count: "total" });
+
+//     const totalResult = await StockRequest.aggregate(countPipeline);
+//     const total = totalResult.length > 0 ? totalResult[0].total : 0;
+
+//     const statsPipeline = [
+//       { $match: baseFilter },
+//       { $unwind: "$products" }
+//     ];
+
+//     if (productFilterValue) {
+//       statsPipeline.push({
+//         $match: {
+//           "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
+//             ? new mongoose.Types.ObjectId(productFilterValue)
+//             : productFilterValue
+//         }
+//       });
+//     }
+
+//     statsPipeline.push({
+//       $group: {
+//         _id: null,
+//         totalProductsRequested: { $sum: "$products.quantity" },
+//         totalApproved: { $sum: "$products.approvedQuantity" },
+//         totalReceived: { $sum: "$products.receivedQuantity" },
+//         totalRequests: { $sum: 1 },
+//         uniqueProducts: { $addToSet: "$products.product" },
+//         uniqueCenters: { $addToSet: "$center" },
+//         uniqueWarehouses: { $addToSet: "$warehouse" },
+//       },
+//     },
+//     {
+//       $project: {
+//         totalProductsRequested: 1,
+//         totalApproved: 1,
+//         totalReceived: 1,
+//         totalRequests: 1,
+//         uniqueProductsCount: { $size: "$uniqueProducts" },
+//         uniqueCentersCount: { $size: "$uniqueCenters" },
+//         uniqueWarehousesCount: { $size: "$uniqueWarehouses" },
+//         pendingQuantity: { $subtract: ["$totalProductsRequested", "$totalReceived"] },
+//         overallApprovalRate: {
+//           $cond: {
+//             if: { $gt: ["$totalProductsRequested", 0] },
+//             then: { $multiply: [{ $divide: ["$totalApproved", "$totalProductsRequested"] }, 100] },
+//             else: 0
+//           }
+//         },
+//         overallFulfillmentRate: {
+//           $cond: {
+//             if: { $gt: ["$totalProductsRequested", 0] },
+//             then: { $multiply: [{ $divide: ["$totalReceived", "$totalProductsRequested"] }, 100] },
+//             else: 0
+//           }
+//         },
+//       },
+//     });
+
+//     const statsResult = await StockRequest.aggregate(statsPipeline);
+//     const stats = statsResult.length > 0 ? statsResult[0] : {
+//       totalProductsRequested: 0,
+//       totalApproved: 0,
+//       totalReceived: 0,
+//       totalRequests: 0,
+//       uniqueProductsCount: 0,
+//       uniqueCentersCount: 0,
+//       uniqueWarehousesCount: 0,
+//       pendingQuantity: 0,
+//       overallApprovalRate: 0,
+//       overallFulfillmentRate: 0,
+//     };
+//     let periodDisplay = '';
+//     if (startDate && endDate) {
+//       periodDisplay = `${new Date(startDate).toLocaleDateString()} - ${new Date(endDate).toLocaleDateString()}`;
+//     } else {
+//       const currentMonth = month ? parseInt(month) : currentDate.getMonth() + 1;
+//       const currentYear = year ? parseInt(year) : currentDate.getFullYear();
+//       periodDisplay = `${currentMonth}/${currentYear}`;
+//     }
+
+//     const response = {
+//       success: true,
+//       message: `Monthly stock requests summary for ${periodDisplay} retrieved successfully`,
+//       data: monthlySummary,
+//       summary: {
+//         period: periodDisplay,
+//         dateRange: dateFilter,
+//         totalProductsRequested: stats.totalProductsRequested,
+//         totalApproved: stats.totalApproved,
+//         totalReceived: stats.totalReceived,
+//         totalRequests: stats.totalRequests,
+//         pendingQuantity: stats.pendingQuantity,
+//         uniqueProducts: stats.uniqueProductsCount,
+//         uniqueCenters: stats.uniqueCentersCount,
+//         uniqueWarehouses: stats.uniqueWarehousesCount,
+//         overallApprovalRate: Math.round(stats.overallApprovalRate * 100) / 100,
+//         overallFulfillmentRate: Math.round(stats.overallFulfillmentRate * 100) / 100,
+//       },
+//       filters: {
+//         center: center || centerId || "all",
+//         product: product || productId || "all",
+//         warehouse: warehouse || "all",
+//         startDate: startDate || "auto",
+//         endDate: endDate || "auto",
+//         month: month || "current",
+//         year: year || "current",
+//       },
+//       pagination: {
+//         currentPage: pageNum,
+//         totalPages: Math.ceil(total / limitNum),
+//         totalItems: total,
+//         itemsPerPage: limitNum,
+//       },
+//     };
+
+//     res.status(200).json(response);
+//   } catch (error) {
+//     console.error("Error fetching monthly stock requests summary:", error);
+//     handleControllerError(error, res);
+//   }
+// };
+
+
+
 export const getMonthlyStockRequestsSummary = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkReportPermissions(req, [
@@ -827,11 +1216,13 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
       endDate,
       page = 1,
       limit = 50,
+      export: isExport = false, // Add export flag
     } = req.query;
 
     console.log('Received query params:', {
-      center, centerId, product, productId, startDate, endDate, month, year, warehouse
+      center, centerId, product, productId, startDate, endDate, month, year, warehouse, isExport
     });
+    
     let dateFilter = {};
     const currentDate = new Date();
     
@@ -870,6 +1261,7 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
         $lte: new Date(currentYear, currentMonth, 0, 23, 59, 59, 999)
       };
     }
+    
     const baseFilter = {
       createdAt: dateFilter,
     };
@@ -887,6 +1279,7 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
         ? new mongoose.Types.ObjectId(centerFilterValue)
         : centerFilterValue;
     }
+    
     if (warehouse) {
       baseFilter.warehouse = mongoose.Types.ObjectId.isValid(warehouse) 
         ? new mongoose.Types.ObjectId(warehouse)
@@ -910,6 +1303,7 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
         }
       });
     }
+    
     aggregationPipeline.push(
       {
         $lookup: {
@@ -1036,38 +1430,83 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
-    const paginatedPipeline = [...aggregationPipeline, { $skip: skip }, { $limit: limitNum }];
+    
+    let monthlySummary, total;
+    
+    if (isExport) {
+      // For export, get ALL data without pagination
+      monthlySummary = await StockRequest.aggregate(aggregationPipeline);
+      
+      // For export, get total count
+      const countPipeline = [
+        { $match: baseFilter },
+        { $unwind: "$products" }
+      ];
 
-    const monthlySummary = await StockRequest.aggregate(paginatedPipeline);
-    const countPipeline = [
-      { $match: baseFilter },
-      { $unwind: "$products" }
-    ];
+      if (productFilterValue) {
+        countPipeline.push({
+          $match: {
+            "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
+              ? new mongoose.Types.ObjectId(productFilterValue)
+              : productFilterValue
+          }
+        });
+      }
 
-    if (productFilterValue) {
       countPipeline.push({
-        $match: {
-          "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
-            ? new mongoose.Types.ObjectId(productFilterValue)
-            : productFilterValue
-        }
-      });
-    }
-
-    countPipeline.push({
-      $group: {
-        _id: {
-          center: "$center",
-          warehouse: "$warehouse",
-          product: "$products.product",
+        $group: {
+          _id: {
+            center: "$center",
+            warehouse: "$warehouse",
+            product: "$products.product",
+          },
         },
       },
-    },
-    { $count: "total" });
+      { $count: "total" });
 
-    const totalResult = await StockRequest.aggregate(countPipeline);
-    const total = totalResult.length > 0 ? totalResult[0].total : 0;
+      const totalResult = await StockRequest.aggregate(countPipeline);
+      total = totalResult.length > 0 ? totalResult[0].total : 0;
+    } else {
+      // For normal requests, apply pagination
+      const skip = (pageNum - 1) * limitNum;
+      const paginatedPipeline = [
+        ...aggregationPipeline, 
+        { $skip: skip }, 
+        { $limit: limitNum }
+      ];
+
+      monthlySummary = await StockRequest.aggregate(paginatedPipeline);
+      
+      // Get total count for pagination
+      const countPipeline = [
+        { $match: baseFilter },
+        { $unwind: "$products" }
+      ];
+
+      if (productFilterValue) {
+        countPipeline.push({
+          $match: {
+            "products.product": mongoose.Types.ObjectId.isValid(productFilterValue) 
+              ? new mongoose.Types.ObjectId(productFilterValue)
+              : productFilterValue
+          }
+        });
+      }
+
+      countPipeline.push({
+        $group: {
+          _id: {
+            center: "$center",
+            warehouse: "$warehouse",
+            product: "$products.product",
+          },
+        },
+      },
+      { $count: "total" });
+
+      const totalResult = await StockRequest.aggregate(countPipeline);
+      total = totalResult.length > 0 ? totalResult[0].total : 0;
+    }
 
     const statsPipeline = [
       { $match: baseFilter },
@@ -1136,6 +1575,7 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
       overallApprovalRate: 0,
       overallFulfillmentRate: 0,
     };
+    
     let periodDisplay = '';
     if (startDate && endDate) {
       periodDisplay = `${new Date(startDate).toLocaleDateString()} - ${new Date(endDate).toLocaleDateString()}`;
@@ -1172,13 +1612,15 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
         month: month || "current",
         year: year || "current",
       },
-      pagination: {
+    };
+    if (!isExport) {
+      response.pagination = {
         currentPage: pageNum,
         totalPages: Math.ceil(total / limitNum),
         totalItems: total,
         itemsPerPage: limitNum,
-      },
-    };
+      };
+    }
 
     res.status(200).json(response);
   } catch (error) {

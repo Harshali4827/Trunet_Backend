@@ -1,3 +1,5 @@
+
+import mongoose  from "mongoose"
 export const acceptDamageItems = async (req, res) => {
     try {
       const { faultyStockId, acceptedQuantities } = req.body;
