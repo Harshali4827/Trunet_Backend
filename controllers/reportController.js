@@ -33,63 +33,6 @@ const checkReportPermissions = (req, requiredPermissions = []) => {
   };
 };
 
-const checkStockCenterAccess = async (userId, targetCenterId, permissions) => {
-  if (!userId) {
-    throw new Error("User authentication required");
-  }
-
-  const user = await User.findById(userId).populate(
-    "center",
-    "centerName centerCode centerType"
-  );
-
-  if (!user) {
-    throw new Error("User not found");
-  }
-
-  if (!user.center) {
-    throw new Error("User is not associated with any center");
-  }
-
-  if (permissions.view_all_report) {
-    return targetCenterId || user.center._id;
-  }
-
-  if (permissions.view_own_report) {
-    const userCenterId = user.center._id || user.center;
-
-    if (
-      targetCenterId &&
-      targetCenterId.toString() !== userCenterId.toString()
-    ) {
-      throw new Error(
-        "Access denied. You can only access your own center's stock data."
-      );
-    }
-
-    return userCenterId;
-  }
-
-  throw new Error("Insufficient permissions to access stock data");
-};
-
-const validateUserOutletAccess = async (userId) => {
-  if (!userId) {
-    throw new Error("User ID is required");
-  }
-
-  const user = await User.findById(userId).populate("center");
-
-  if (!user) {
-    throw new Error("User not found");
-  }
-
-  if (!user.center) {
-    throw new Error("User center information not found");
-  }
-
-  return user.center._id || user.center;
-};
 
 const handleControllerError = (error, res) => {
   console.error("Controller Error:", error);
@@ -1215,8 +1158,8 @@ export const getMonthlyStockRequestsSummary = async (req, res) => {
       startDate,
       endDate,
       page = 1,
-      limit = 50,
-      export: isExport = false, // Add export flag
+      limit = 100,
+      export: isExport = false,
     } = req.query;
 
     console.log('Received query params:', {
@@ -4145,6 +4088,7 @@ export const getAllStolenStockReports = async (req, res) => {
 };
 
 
+
 // export const getProductDetailsBySerialNumber = async (req, res) => {
 //   try {
 //     const { hasAccess, permissions, userCenter } = checkReportPermissions(req, [
@@ -4162,7 +4106,7 @@ export const getAllStolenStockReports = async (req, res) => {
 
 //     const {
 //       page = 1,
-//       limit = 50,
+//       limit = 100,
 //       serialNumber,
 //       center,
 //       product,
@@ -4170,18 +4114,28 @@ export const getAllStolenStockReports = async (req, res) => {
 //       startDate,
 //       endDate,
 //       search,
-//       sortBy = "lastUpdated",
-//       sortOrder = "desc",
 //     } = req.query;
 
 //     const filter = {};
-
+    
+//     if (status === "Own Product") {
+//       if (req.user && req.user.center) {
+//         const userCenterId = req.user.center._id || req.user.center;
+//         if (userCenterId) {
+//           filter.center = userCenterId;
+//         }
+//       }
+//     } else if (status === "Not in Use") {
+//       filter["serialNumbers.status"] = { $nin: ["consumed", "damaged"] };
+//     } else if (status && status !== "all") {
+//       filter["serialNumbers.status"] = status;
+//     }
 //     if (permissions.view_own_report && !permissions.view_all_report) {
 //       const userCenterId = userCenter?._id || userCenter;
 //       if (userCenterId) {
 //         filter.center = userCenterId;
 //       }
-//     } else if (permissions.view_all_report && center) {
+//     } else if (permissions.view_all_report && center && status !== "Own Product") {
 //       filter.center = center;
 //     }
 
@@ -4207,60 +4161,78 @@ export const getAllStolenStockReports = async (req, res) => {
 //       filter["serialNumbers.serialNumber"] = serialNumber;
 //     }
 
-//     if (status) {
-//       filter["serialNumbers.status"] = status;
-//     }
-
-//     const populateOptions = [
-//       {
-//         path: "center",
-//         select: "_id centerName centerCode centerType address phone",
-//       },
-//       {
-//         path: "product",
-//         select:
-//           "_id productTitle productCode productPrice productImage productCategory trackSerialNumber",
-//       },
-//       {
-//         path: "serialNumbers.purchaseId",
-//         select: "_id invoiceNo purchaseDate vendor",
-//         populate: {
-//           path: "vendor",
-//           select: "_id name",
-//         },
-//       },
-//       {
-//         path: "serialNumbers.originalOutlet",
-//         select: "_id centerName centerCode centerType",
-//       },
-//       {
-//         path: "serialNumbers.currentLocation",
-//         select: "_id centerName centerCode centerType",
-//       },
-//       {
-//         path: "serialNumbers.consumedBy",
-//         select: "_id fullName email",
-//       },
+//     const totalCountPipeline = [
+//       { $match: filter },
+//       { $unwind: "$serialNumbers" },
 //     ];
 
-//     const sort = {};
-//     const validSortFields = ["lastUpdated", "createdAt", "center", "product"];
-//     const actualSortBy = validSortFields.includes(sortBy)
-//       ? sortBy
-//       : "lastUpdated";
-//     sort[actualSortBy] = sortOrder === "desc" ? -1 : 1;
+//     if (serialNumber) {
+//       totalCountPipeline.push({
+//         $match: { "serialNumbers.serialNumber": serialNumber },
+//       });
+//     }
+  
+//     if (status && status !== "all" && status !== "Own Product" && status !== "Not in Use") {
+//       totalCountPipeline.push({
+//         $match: { "serialNumbers.status": status },
+//       });
+//     }
+    
+//     if (status === "Not in Use") {
+//       totalCountPipeline.push({
+//         $match: { "serialNumbers.status": { $nin: ["consumed", "damaged"] } }
+//       });
+//     }
+    
+//     if (search) {
+//       totalCountPipeline.push({
+//         $match: {
+//           "serialNumbers.serialNumber": { $regex: search, $options: "i" },
+//         },
+//       });
+//     }
 
-//     const options = {
-//       page: parseInt(page),
-//       limit: parseInt(limit),
-//       sort,
-//     };
+//     totalCountPipeline.push({ $count: "total" });
+
+//     const totalResult = await CenterStock.aggregate(totalCountPipeline);
+//     const total = totalResult.length > 0 ? totalResult[0].total : 0;
+
+//     const currentPage = parseInt(page);
+//     const itemsPerPage = parseInt(limit);
+//     const totalPages = Math.ceil(total / itemsPerPage);
+//     const skip = (currentPage - 1) * itemsPerPage;
 
 //     const centerStocks = await CenterStock.find(filter)
-//       .sort(sort)
-//       .skip((options.page - 1) * options.limit)
-//       .limit(options.limit)
-//       .populate(populateOptions)
+//       .populate([
+//         {
+//           path: "center",
+//           select: "_id centerName centerCode centerType address phone",
+//         },
+//         {
+//           path: "product",
+//           select: "_id productTitle productCode productPrice productImage productCategory trackSerialNumber",
+//         },
+//         {
+//           path: "serialNumbers.purchaseId",
+//           select: "_id invoiceNo purchaseDate vendor",
+//           populate: {
+//             path: "vendor",
+//             select: "_id name",
+//           },
+//         },
+//         {
+//           path: "serialNumbers.originalOutlet",
+//           select: "_id centerName centerCode centerType",
+//         },
+//         {
+//           path: "serialNumbers.currentLocation",
+//           select: "_id centerName centerCode centerType",
+//         },
+//         {
+//           path: "serialNumbers.consumedBy",
+//           select: "_id fullName email",
+//         },
+//       ])
 //       .lean();
 
 //     const serialDetails = [];
@@ -4270,13 +4242,16 @@ export const getAllStolenStockReports = async (req, res) => {
 //         if (serialNumber && serial.serialNumber !== serialNumber) {
 //           continue;
 //         }
-//         if (status && serial.status !== status) {
+
+//         if (status && status !== "all" && status !== "Own Product" && status !== "Not in Use" && serial.status !== status) {
 //           continue;
 //         }
-//         if (
-//           search &&
-//           !serial.serialNumber.toLowerCase().includes(search.toLowerCase())
-//         ) {
+        
+//         if (status === "Not in Use" && (serial.status === "consumed" || serial.status === "damaged")) {
+//           continue;
+//         }
+        
+//         if (search && !serial.serialNumber.toLowerCase().includes(search.toLowerCase())) {
 //           continue;
 //         }
 
@@ -4285,10 +4260,9 @@ export const getAllStolenStockReports = async (req, res) => {
 //           consumptionDetails = await getConsumptionDetails(serial.serialNumber);
 //         }
 
-//         const latestTransfer =
-//           serial.transferHistory && serial.transferHistory.length > 0
-//             ? serial.transferHistory[serial.transferHistory.length - 1]
-//             : null;
+//         const latestTransfer = serial.transferHistory && serial.transferHistory.length > 0
+//           ? serial.transferHistory[serial.transferHistory.length - 1]
+//           : null;
 
 //         let actionAt = "";
 //         let actionType = "";
@@ -4296,9 +4270,7 @@ export const getAllStolenStockReports = async (req, res) => {
 
 //         if (latestTransfer) {
 //           actionAt = latestTransfer.toCenter
-//             ? `${latestTransfer.fromCenter?.centerName || "Unknown"} → ${
-//                 latestTransfer.toCenter?.centerName || "Unknown"
-//               }`
+//             ? `${latestTransfer.fromCenter?.centerName || "Unknown"} → ${latestTransfer.toCenter?.centerName || "Unknown"}`
 //             : `${latestTransfer.fromCenter?.centerName || "Unknown"}`;
 //           actionType = latestTransfer.transferType || "transfer";
 //           actionDate = latestTransfer.transferDate || centerStock.lastUpdated;
@@ -4339,8 +4311,8 @@ export const getAllStolenStockReports = async (req, res) => {
 //                 price: centerStock.product.productPrice,
 //               }
 //             : null,
-//           ProductCode: centerStock.product.productCode,
-//           ProductPrice: centerStock.product.productPrice,
+//           ProductCode: centerStock.product?.productCode,
+//           ProductPrice: centerStock.product?.productPrice,
 //           Status: serial.status,
 //           CurrentLocation: serial.currentLocation
 //             ? {
@@ -4367,7 +4339,6 @@ export const getAllStolenStockReports = async (req, res) => {
 //                   : null,
 //               }
 //             : null,
-
 //           ConsumptionDetails: consumptionDetails,
 //         };
 
@@ -4375,41 +4346,9 @@ export const getAllStolenStockReports = async (req, res) => {
 //       }
 //     }
 
-//     serialDetails.sort(
-//       (a, b) => new Date(b.ActionDate) - new Date(a.ActionDate)
-//     );
+//     serialDetails.sort((a, b) => new Date(b.ActionDate) - new Date(a.ActionDate));
 
-//     const startIndex = (options.page - 1) * options.limit;
-//     const endIndex = startIndex + options.limit;
-//     const paginatedSerialDetails = serialDetails.slice(startIndex, endIndex);
-
-//     const totalCountPipeline = [
-//       { $match: filter },
-//       { $unwind: "$serialNumbers" },
-//     ];
-
-//     if (serialNumber) {
-//       totalCountPipeline.push({
-//         $match: { "serialNumbers.serialNumber": serialNumber },
-//       });
-//     }
-//     if (status) {
-//       totalCountPipeline.push({
-//         $match: { "serialNumbers.status": status },
-//       });
-//     }
-//     if (search) {
-//       totalCountPipeline.push({
-//         $match: {
-//           "serialNumbers.serialNumber": { $regex: search, $options: "i" },
-//         },
-//       });
-//     }
-
-//     totalCountPipeline.push({ $count: "total" });
-
-//     const totalResult = await CenterStock.aggregate(totalCountPipeline);
-//     const total = totalResult.length > 0 ? totalResult[0].total : 0;
+//     const paginatedSerialDetails = serialDetails.slice(skip, skip + itemsPerPage);
 
 //     const statsPipeline = [
 //       { $match: filter },
@@ -4433,10 +4372,10 @@ export const getAllStolenStockReports = async (req, res) => {
 //       message: "Product details by serial number retrieved successfully",
 //       data: paginatedSerialDetails,
 //       pagination: {
-//         currentPage: parseInt(page),
-//         totalPages: Math.ceil(total / options.limit),
+//         currentPage: currentPage,
+//         totalPages: totalPages,
 //         totalItems: total,
-//         itemsPerPage: parseInt(limit),
+//         itemsPerPage: itemsPerPage,
 //       },
 //       statistics: {
 //         totalSerials: total,
@@ -4450,7 +4389,6 @@ export const getAllStolenStockReports = async (req, res) => {
 //     handleControllerError(error, res);
 //   }
 // };
-
 
 
 export const getProductDetailsBySerialNumber = async (req, res) => {
@@ -4470,7 +4408,7 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
 
     const {
       page = 1,
-      limit = 50,
+      limit = 100,
       serialNumber,
       center,
       product,
@@ -4478,6 +4416,7 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
       startDate,
       endDate,
       search,
+      export: isExport = false, 
     } = req.query;
 
     const filter = {};
@@ -4494,6 +4433,7 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
     } else if (status && status !== "all") {
       filter["serialNumbers.status"] = status;
     }
+    
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
@@ -4712,7 +4652,12 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
 
     serialDetails.sort((a, b) => new Date(b.ActionDate) - new Date(a.ActionDate));
 
-    const paginatedSerialDetails = serialDetails.slice(skip, skip + itemsPerPage);
+    let paginatedSerialDetails;
+    if (isExport) {
+      paginatedSerialDetails = serialDetails;
+    } else {
+      paginatedSerialDetails = serialDetails.slice(skip, skip + itemsPerPage);
+    }
 
     const statsPipeline = [
       { $match: filter },
@@ -4735,17 +4680,20 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
       success: true,
       message: "Product details by serial number retrieved successfully",
       data: paginatedSerialDetails,
-      pagination: {
-        currentPage: currentPage,
-        totalPages: totalPages,
-        totalItems: total,
-        itemsPerPage: itemsPerPage,
-      },
       statistics: {
         totalSerials: total,
         statusBreakdown: statusStats,
       },
     };
+
+    if (!isExport) {
+      response.pagination = {
+        currentPage: currentPage,
+        totalPages: totalPages,
+        totalItems: total,
+        itemsPerPage: itemsPerPage,
+      };
+    }
 
     res.status(200).json(response);
   } catch (error) {
@@ -4753,7 +4701,6 @@ export const getProductDetailsBySerialNumber = async (req, res) => {
     handleControllerError(error, res);
   }
 };
-
 
 async function getConsumptionDetails(serialNumber) {
   try {

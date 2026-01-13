@@ -5,8 +5,6 @@ import StockTransfer from "../models/StockTransfer.js";
 import StockClosing from "../models/ReportSubmission.js";
 import DamageReturn from "../models/DamageReturn.js";
 import ReplacementRecord from "../models/ReplacementRecord.js";
-import CenterStock from "../models/CenterStock.js";
-import OutletStock from "../models/OutletStock.js";
 import Center from "../models/Center.js";
 
 export const getUsageSummary = async (req, res) => {
@@ -570,59 +568,15 @@ const getStockClosingData = async (centerId, dateRange, productId) => {
   ]);
 };
 
-// const getOpeningStockData = async (centerId, startDate, productId) => {
-//   const openingDate = new Date(startDate);
-//   openingDate.setDate(openingDate.getDate() - 1);
-  
-//   const centerStockQuery = { center: centerId };
-//   if (productId) {
-//     centerStockQuery.product = productId;
-//   }
- 
-//   const outletStockQuery = { outlet: centerId };
-//   if (productId) {
-//     outletStockQuery.product = productId;
-//   }
-
-//   const [centerStock, outletStock] = await Promise.all([
-//     CenterStock.find(centerStockQuery).populate("product", "productTitle productCode"),
-//     OutletStock.find(outletStockQuery).populate("product", "productTitle productCode")
-//   ]);
-
-//   const openingData = [];
-
-//   centerStock.forEach(stock => {
-//     openingData.push({
-//       product: stock.product._id,
-//       productName: stock.product.productTitle,
-//       quantity: stock.availableQuantity,
-//       stockType: "Center"
-//     });
-//   });
-//   outletStock.forEach(stock => {
-//     openingData.push({
-//       product: stock.product._id,
-//       productName: stock.product.productTitle,
-//       quantity: stock.availableQuantity,
-//       stockType: "Outlet"
-//     });
-//   });
-
-//   return openingData;
-// };
-
-
-
 const getOpeningStockData = async (centerId, startDate, productId) => {
   try {
-    // Calculate previous month's date range
     const currentStartDate = new Date(startDate);
     const previousMonthEnd = new Date(currentStartDate);
-    previousMonthEnd.setDate(0); // Last day of previous month
+    previousMonthEnd.setDate(0); 
     previousMonthEnd.setHours(23, 59, 59, 999);
     
     const previousMonthStart = new Date(previousMonthEnd);
-    previousMonthStart.setDate(1); // First day of previous month
+    previousMonthStart.setDate(1);
     previousMonthStart.setHours(0, 0, 0, 0);
 
     console.log(`Looking for previous month closing stock from ${previousMonthStart} to ${previousMonthEnd} for center ${centerId}`);
@@ -642,8 +596,6 @@ const getOpeningStockData = async (centerId, startDate, productId) => {
     if (productId) {
       matchStage['products.product'] = new mongoose.Types.ObjectId(productId);
     }
-
-    // Get previous month's closing stock
     const previousMonthClosings = await StockClosing.aggregate([
       { $match: matchStage },
       { $unwind: "$products" },
@@ -673,13 +625,11 @@ const getOpeningStockData = async (centerId, startDate, productId) => {
     const openingDataMap = {};
     previousMonthClosings.forEach(closing => {
       const productId = closing.product.toString();
-      
-      // If we haven't seen this product yet, or this is a more recent closing
       if (!openingDataMap[productId] || new Date(closing.date) > new Date(openingDataMap[productId].date)) {
         openingDataMap[productId] = {
           product: closing.product,
           productName: closing.productName,
-          quantity: closing.totalQty, // productQty + damageQty
+          quantity: closing.totalQty,
           date: closing.date,
           stockType: "Previous Month Closing"
         };
@@ -690,8 +640,6 @@ const getOpeningStockData = async (centerId, startDate, productId) => {
 
     console.log(`Found ${openingData.length} products with previous month closing stock`);
 
-    // If no previous month closing found and we're filtering by specific product,
-    // return zero opening for that product
     if (productId && openingData.length === 0) {
       const product = await mongoose.model("Product").findById(productId).select("productTitle");
       if (product) {
@@ -714,6 +662,129 @@ const getOpeningStockData = async (centerId, startDate, productId) => {
 };
 
 
+// const processUsageSummary = (data, centerId, centerDetails, productId) => {
+//   const allData = [
+//     ...data.stockRequests,
+//     ...data.stockTransfers,
+//     ...data.stockUsages,
+//     ...data.damageReturns,
+//     ...data.replacementRecords,
+//     ...data.stockClosings
+//   ];
+
+//   const groupedData = {};
+
+//    data.openingStock.forEach(item => {
+//     if (productId && item.product.toString() !== productId) {
+//       return; 
+//     }
+    
+//     if (!groupedData[item.product]) {
+//       groupedData[item.product] = createEmptyProductSummary(item.productName);
+//     }
+//     groupedData[item.product].opening += item.quantity;
+//   });
+
+//   allData.forEach(item => {
+//     const productIdFromItem = item.product?.toString();
+//     const type = item.type;
+    
+//     if (!productIdFromItem) return;
+
+//     if (productId && productIdFromItem !== productId) {
+//       return;
+//     }
+
+//     if (!groupedData[productIdFromItem]) {
+//       groupedData[productIdFromItem] = createEmptyProductSummary(
+//         item.productName || 'Unknown Product'
+//       );
+//     }
+
+//     const quantity = item.quantity || item.qty || item.productQty || 0;
+//     const damageQty = item.damageQty || 0;
+//     if (item.center && !groupedData[productIdFromItem].center) {
+//       groupedData[productIdFromItem].center = {
+//         id: item.center._id,
+//         name: item.center.centerName,
+//         code: item.center.centerCode,
+//         type: item.center.centerType
+//       };
+//     }
+
+//     switch (type) {
+//       case "Purchase":
+//         groupedData[productIdFromItem].purchase += quantity;
+//         break;
+//       case "Transfer Receive":
+//         groupedData[productIdFromItem].transferReceive += quantity;
+//         break;
+//       case "Transfer Given":
+//         groupedData[productIdFromItem].transferGiven += quantity;
+//         break;
+//       case "Usage":
+//         groupedData[productIdFromItem].usage += quantity;
+//         break;
+//       case "NC":
+//         groupedData[productIdFromItem].nc += quantity;
+//         break;
+//       case "Convert":
+//         groupedData[productIdFromItem].convert += quantity;
+//         break;
+//       case "Shifting":
+//         groupedData[productIdFromItem].shifting += quantity;
+//         break;
+//       case "Building Usage":
+//         groupedData[productIdFromItem].buildingUsage += quantity;
+//         break;
+//       case "Damage":
+//         groupedData[productIdFromItem].damage += quantity;
+//         break;
+//       case "Replace Return":
+//         groupedData[productIdFromItem].replaceReturn += quantity;
+//         break;
+//       case "Replace Damage":
+//         groupedData[productIdFromItem].replaceDamage += quantity;
+//         break;
+//       case "Stolen Center":
+//         groupedData[productIdFromItem].stolenCenter += quantity;
+//         break;
+//       case "Stolen Field":
+//         groupedData[productIdFromItem].stolenField += quantity;
+//         break;
+//       case "Closing":
+//         groupedData[productIdFromItem].closing += (quantity + damageQty);
+//         break;
+//       case "Other":
+//         groupedData[productIdFromItem].other += quantity;
+//         break;
+//       case "Repair":
+//         groupedData[productIdFromItem].repair += quantity;
+//         break;
+//     }
+//   });
+
+//   const result = Object.values(groupedData).map(item => {
+//     if (!item.center && centerDetails) {
+//       item.center = {
+//         id: centerId,
+//         name: centerDetails.centerName,
+//         code: centerDetails.centerCode,
+//         type: centerDetails.centerType
+//       };
+//     }
+//     if (item.calculateUsageAndClosing) {
+//     item.calculateUsageAndClosing();
+//   }
+  
+//     return item;
+//   });
+
+//   return result;
+// };
+
+
+
 const processUsageSummary = (data, centerId, centerDetails, productId) => {
   const allData = [
     ...data.stockRequests,
@@ -726,15 +797,109 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
 
   const groupedData = {};
 
-   data.openingStock.forEach(item => {
-    if (productId && item.product.toString() !== productId) {
-      return; 
+  // Get product IDs from all data sources
+  const allProductIds = new Set();
+  
+  // Collect product IDs from opening stock
+  data.openingStock.forEach(item => {
+    if (item.product) {
+      allProductIds.add(item.product.toString());
+    }
+  });
+  
+  // Collect product IDs from other data
+  allData.forEach(item => {
+    if (item.product) {
+      allProductIds.add(item.product.toString());
+    }
+  });
+
+  // Initialize grouped data for each product
+  for (const productIdFromSet of allProductIds) {
+    if (productId && productIdFromSet !== productId) {
+      continue;
     }
     
-    if (!groupedData[item.product]) {
-      groupedData[item.product] = createEmptyProductSummary(item.productName);
+    // Find product name from any data source
+    let productName = 'Unknown Product';
+    
+    // Try to find product name from opening stock
+    const openingItem = data.openingStock.find(item => 
+      item.product && item.product.toString() === productIdFromSet
+    );
+    if (openingItem) {
+      productName = openingItem.productName;
+    } else {
+      // Try to find product name from other data
+      const otherItem = allData.find(item => 
+        item.product && item.product.toString() === productIdFromSet
+      );
+      if (otherItem) {
+        productName = otherItem.productName;
+      }
     }
-    groupedData[item.product].opening += item.quantity;
+    
+    groupedData[productIdFromSet] = {
+      productId: productIdFromSet, // Add product ID here
+      productName,
+      opening: 0,
+      purchase: 0,
+      distributed: 0,
+      transferReceive: 0,
+      replaceReturn: 0,
+      usage: 0,
+      transferGiven: 0,
+      nc: 0,
+      convert: 0,
+      shifting: 0,
+      buildingUsage: 0,
+      buildingDamage: 0,
+      other: 0,
+      return: 0,
+      repair: 0,
+      damage: 0,
+      replaceDamage: 0,
+      stolenCenter: 0,
+      stolenField: 0,
+      closing: 0,
+      center: null,
+      calculateUsageAndClosing: function() {
+        this.usage = 
+          this.nc +
+          this.convert +
+          this.shifting +
+          this.buildingUsage +
+          this.buildingDamage +
+          this.other +
+          this.return +
+          this.repair +
+          this.replaceDamage +
+          this.stolenCenter +
+          this.stolenField;
+    
+        // Calculate closing stock using previous month's closing as opening
+        this.closing = 
+          this.opening + 
+          this.purchase +
+          this.transferReceive -
+          this.usage -
+          this.transferGiven;
+    
+        return this.closing;
+      }
+    };
+  }
+
+  // Now process the data to populate values
+  data.openingStock.forEach(item => {
+    const productIdFromItem = item.product?.toString();
+    if (productId && productIdFromItem !== productId) {
+      return;
+    }
+    
+    if (groupedData[productIdFromItem]) {
+      groupedData[productIdFromItem].opening += item.quantity;
+    }
   });
 
   allData.forEach(item => {
@@ -747,14 +912,11 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
       return;
     }
 
-    if (!groupedData[productIdFromItem]) {
-      groupedData[productIdFromItem] = createEmptyProductSummary(
-        item.productName || 'Unknown Product'
-      );
-    }
+    if (!groupedData[productIdFromItem]) return;
 
     const quantity = item.quantity || item.qty || item.productQty || 0;
     const damageQty = item.damageQty || 0;
+    
     if (item.center && !groupedData[productIdFromItem].center) {
       groupedData[productIdFromItem].center = {
         id: item.center._id,
@@ -825,69 +987,16 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
         type: centerDetails.centerType
       };
     }
+    
     if (item.calculateUsageAndClosing) {
-    item.calculateUsageAndClosing();
-  }
-  
+      item.calculateUsageAndClosing();
+    }
+    
     return item;
   });
 
   return result;
 };
-
-// const createEmptyProductSummary = (productName) => {
-//   const summary = {
-//     productName,
-//     opening: 0,
-//     purchase: 0,
-//     distributed: 0,
-//     transferReceive: 0,
-//     replaceReturn: 0,
-//     usage: 0,
-//     transferGiven: 0,
-//     nc: 0,
-//     convert: 0,
-//     shifting: 0,
-//     buildingUsage: 0,
-//     buildingDamage: 0,
-//     other: 0,
-//     return: 0,
-//     repair: 0,
-//     damage: 0,
-//     replaceDamage: 0,
-//     stolenCenter: 0,
-//     stolenField: 0,
-//     closing: 0,
-//     center: null
-//   };
-//   summary.calculateUsageAndClosing = function() {
-//     this.usage = 
-//       this.nc +
-//       this.convert +
-//       this.shifting +
-//       this.buildingUsage +
-//       this.buildingDamage +
-//       this.other +
-//       this.return +
-//       this.repair +
-//       this.replaceDamage +
-//       this.stolenCenter +
-//       this.stolenField;
-  
-//       this.closing = 
-//       this.opening +
-//       this.purchase +
-//       this.transferReceive -
-//       this.usage -          
-//       this.transferGiven -
-//       this.damage;     
-  
-//     return this.closing;
-//   };
-
-//   return summary;
-// };
-
 
 const createEmptyProductSummary = (productName) => {
   const summary = {
@@ -916,7 +1025,6 @@ const createEmptyProductSummary = (productName) => {
   };
   
   summary.calculateUsageAndClosing = function() {
-    // Calculate total usage
     this.usage = 
       this.nc +
       this.convert +
