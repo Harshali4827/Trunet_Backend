@@ -246,7 +246,8 @@ const getStockRequestData = async (centerId, dateRange, productId) => {
         warehouse: { $arrayElemAt: ["$warehouseInfo", 0] },
         product: "$products.product",
         productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        quantity: "$products.quantity",
+        // quantity: "$products.quantity",
+        quantity:"$products.approvedQuantity",
         approvedQuantity: "$products.approvedQuantity",
         receivedQuantity: "$products.receivedQuantity",
         status: 1
@@ -315,7 +316,8 @@ const getStockTransferData = async (centerId, dateRange, productId) => {
         toCenter: { $arrayElemAt: ["$toCenterInfo", 0] },
         product: "$products.product",
         productName: { $arrayElemAt: ["$productInfo.productTitle", 0] },
-        quantity: "$products.quantity",
+        // quantity: "$products.quantity",
+        quantity:"$products.approvedQuantity",
         approvedQuantity: "$products.approvedQuantity",
         receivedQuantity: "$products.receivedQuantity",
         status: 1
