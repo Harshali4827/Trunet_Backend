@@ -3681,31 +3681,68 @@ const revertStockDeduction = async (stockTransfer) => {
   }
 };
 
+// export const getMostRecentTransferNumber = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } =
+//       checkStockTransferPermissions(req, [
+//         "stock_transfer_own_center",
+//         "stock_transfer_all_center",
+//       ]);
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. stock_transfer_own_center or stock_transfer_all_center permission required.",
+//       });
+//     }
+
+//     if (
+//       permissions.stock_transfer_own_center &&
+//       !permissions.stock_transfer_all_center &&
+//       userCenter
+//     ) {
+//       const userCenterId = userCenter._id || userCenter;
+//       filter.$or = [{ fromCenter: userCenterId }, { toCenter: userCenterId }];
+//     }
+
+//     const mostRecentTransfer = await StockTransfer.findOne()
+//       .sort({ createdAt: -1 })
+//       .select("transferNumber createdAt")
+//       .lean();
+
+//     if (!mostRecentTransfer) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "No stock transfers found",
+//         data: null,
+//       });
+//     }
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Most recent transfer number retrieved successfully",
+//       data: {
+//         transferNumber: mostRecentTransfer.transferNumber,
+//         createdAt: mostRecentTransfer.createdAt,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error retrieving most recent transfer number:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Error retrieving most recent transfer number",
+//       error:
+//         process.env.NODE_ENV === "development"
+//           ? error.message
+//           : "Internal server error",
+//     });
+//   }
+// };
+
+
 export const getMostRecentTransferNumber = async (req, res) => {
   try {
-    const { hasAccess, permissions, userCenter } =
-      checkStockTransferPermissions(req, [
-        "stock_transfer_own_center",
-        "stock_transfer_all_center",
-      ]);
-
-    if (!hasAccess) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Access denied. stock_transfer_own_center or stock_transfer_all_center permission required.",
-      });
-    }
-
-    if (
-      permissions.stock_transfer_own_center &&
-      !permissions.stock_transfer_all_center &&
-      userCenter
-    ) {
-      const userCenterId = userCenter._id || userCenter;
-      filter.$or = [{ fromCenter: userCenterId }, { toCenter: userCenterId }];
-    }
-
     const mostRecentTransfer = await StockTransfer.findOne()
       .sort({ createdAt: -1 })
       .select("transferNumber createdAt")
@@ -3719,7 +3756,7 @@ export const getMostRecentTransferNumber = async (req, res) => {
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Most recent transfer number retrieved successfully",
       data: {
@@ -3729,7 +3766,7 @@ export const getMostRecentTransferNumber = async (req, res) => {
     });
   } catch (error) {
     console.error("Error retrieving most recent transfer number:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Error retrieving most recent transfer number",
       error:
@@ -3739,6 +3776,7 @@ export const getMostRecentTransferNumber = async (req, res) => {
     });
   }
 };
+
 
 export const updateApprovedQuantities = async (req, res) => {
   try {
