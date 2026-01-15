@@ -1393,9 +1393,6 @@ export const confirmStockTransfer = async (req, res) => {
 
 
 
-
-//resolve double stock added issue for requested center(request is 1 and add is 2 resolve this issue)
-
 export const completeStockTransfer = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } =
@@ -1415,7 +1412,14 @@ export const completeStockTransfer = async (req, res) => {
     const { id } = req.params;
     const { productReceipts } = req.body;
 
-    const stockTransfer = await StockTransfer.findById(id);
+    const stockTransfer = await StockTransfer.findById(id)
+      .populate("fromCenter", "_id centerName centerCode")
+      .populate("toCenter", "_id centerName centerCode")
+      .populate(
+        "products.product",
+        "_id productTitle productCode trackSerialNumber"
+      );
+
     if (!stockTransfer) {
       return res.status(404).json({
         success: false,
@@ -1438,40 +1442,49 @@ export const completeStockTransfer = async (req, res) => {
         message: "User authentication required",
       });
     }
+
+    console.log(`[DEBUG] Starting completeStockTransfer for: ${stockTransfer.transferNumber}`);
+    console.log(`[DEBUG] Current status: ${stockTransfer.status}`);
+    console.log(`[DEBUG] Stock status:`, stockTransfer.stockStatus);
+
+    // Validate received quantities
     if (productReceipts && productReceipts.length > 0) {
       for (const receipt of productReceipts) {
         const productItem = stockTransfer.products.find(
-          (p) => p.product.toString() === receipt.productId.toString()
+          (p) => p.product._id.toString() === receipt.productId.toString()
         );
 
-        if (productItem && receipt.receivedQuantity > productItem.approvedQuantity) {
+        if (!productItem) {
+          return res.status(400).json({
+            success: false,
+            message: `Product ${receipt.productId} not found in transfer`,
+          });
+        }
+
+        if (receipt.receivedQuantity > productItem.approvedQuantity) {
           return res.status(400).json({
             success: false,
             message: `Received quantity (${receipt.receivedQuantity}) cannot exceed approved quantity (${productItem.approvedQuantity}) for product`,
           });
         }
+
+        // Update product with received quantities
+        productItem.receivedQuantity = receipt.receivedQuantity;
+        productItem.receivedRemark = receipt.receivedRemark || "";
       }
-    }
-
-    console.log(`[DEBUG] Complete Stock Transfer - Starting`);
-    console.log(`[DEBUG] Transfer: ${stockTransfer.transferNumber}`);
-    console.log(`[DEBUG] Stock Status:`, stockTransfer.stockStatus);
-    if (productReceipts && productReceipts.length > 0) {
-      stockTransfer.products = stockTransfer.products.map((productItem) => {
-        const receipt = productReceipts.find(
-          (pr) => pr.productId.toString() === productItem.product.toString()
-        );
-
-        if (receipt) {
-          return {
-            ...productItem.toObject(),
-            receivedQuantity: receipt.receivedQuantity,
-            receivedRemark: receipt.receivedRemark || "",
-          };
-        }
-        return productItem;
+    } else {
+      // If no productReceipts provided, use approved quantities
+      stockTransfer.products.forEach((productItem) => {
+        productItem.receivedQuantity = productItem.approvedQuantity || 0;
       });
     }
+
+    // CRITICAL FIX: Don't manually update CenterStock here
+    // Let the model's completeTransfer method handle all stock updates
+    
+    console.log(`[DEBUG] Calling completeTransfer on model...`);
+    
+    // This will handle all stock updates internally
     const completedTransfer = await stockTransfer.completeTransfer(
       userId,
       productReceipts
@@ -1484,7 +1497,7 @@ export const completeStockTransfer = async (req, res) => {
       .populate("toCenter", "_id centerName centerCode")
       .populate(
         "products.product",
-        "_id productTitle productCode trackSerialNumbers"
+        "_id productTitle productCode trackSerialNumber"
       )
       .populate("createdBy", "_id fullName email")
       .populate("receivingInfo.receivedBy", "_id fullName email")
@@ -1502,6 +1515,14 @@ export const completeStockTransfer = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Quantity validation failed",
+        error: error.message,
+      });
+    }
+
+    if (error.message.includes("Insufficient stock")) {
+      return res.status(400).json({
+        success: false,
+        message: "Stock validation failed",
         error: error.message,
       });
     }
@@ -3680,65 +3701,6 @@ const revertStockDeduction = async (stockTransfer) => {
     throw new Error(`Failed to revert stock deduction: ${error.message}`);
   }
 };
-
-// export const getMostRecentTransferNumber = async (req, res) => {
-//   try {
-//     const { hasAccess, permissions, userCenter } =
-//       checkStockTransferPermissions(req, [
-//         "stock_transfer_own_center",
-//         "stock_transfer_all_center",
-//       ]);
-
-//     if (!hasAccess) {
-//       return res.status(403).json({
-//         success: false,
-//         message:
-//           "Access denied. stock_transfer_own_center or stock_transfer_all_center permission required.",
-//       });
-//     }
-
-//     if (
-//       permissions.stock_transfer_own_center &&
-//       !permissions.stock_transfer_all_center &&
-//       userCenter
-//     ) {
-//       const userCenterId = userCenter._id || userCenter;
-//       filter.$or = [{ fromCenter: userCenterId }, { toCenter: userCenterId }];
-//     }
-
-//     const mostRecentTransfer = await StockTransfer.findOne()
-//       .sort({ createdAt: -1 })
-//       .select("transferNumber createdAt")
-//       .lean();
-
-//     if (!mostRecentTransfer) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "No stock transfers found",
-//         data: null,
-//       });
-//     }
-
-//     res.status(200).json({
-//       success: true,
-//       message: "Most recent transfer number retrieved successfully",
-//       data: {
-//         transferNumber: mostRecentTransfer.transferNumber,
-//         createdAt: mostRecentTransfer.createdAt,
-//       },
-//     });
-//   } catch (error) {
-//     console.error("Error retrieving most recent transfer number:", error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Error retrieving most recent transfer number",
-//       error:
-//         process.env.NODE_ENV === "development"
-//           ? error.message
-//           : "Internal server error",
-//     });
-//   }
-// };
 
 
 export const getMostRecentTransferNumber = async (req, res) => {
