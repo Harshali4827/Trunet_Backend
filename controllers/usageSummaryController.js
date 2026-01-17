@@ -885,7 +885,8 @@ const processUsageSummary = (data, centerId, centerDetails, productId) => {
           this.purchase +
           this.transferReceive -
           this.usage -
-          this.transferGiven;
+          this.transferGiven -
+          this.damage;
     
         return this.closing;
       }
@@ -1047,7 +1048,8 @@ const createEmptyProductSummary = (productName) => {
       this.transferReceive -
       // this.replaceReturn -
       this.usage -
-      this.transferGiven;
+      this.transferGiven - 
+      this.damage;
   
     return this.closing;
   };
