@@ -2016,6 +2016,315 @@ const buildStockUsageSortOptions = (sortBy = "date", sortOrder = "desc") => {
 
 
 
+// export const getStockUsageByCenter = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } =
+//       checkAvailableStockPermissions(req, [
+//         "available_stock_own_center",
+//         "available_stock_all_center",
+//       ]);
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. available_stock_own_center or available_stock_all_center permission required.",
+//       });
+//     }
+
+//     const {
+//       page = 1,
+//       limit = 100,
+//       sortBy = "date",
+//       sortOrder = "desc",
+//       ...filterParams
+//     } = req.query;
+
+//     console.log('Received query params:', filterParams);
+//     const filter = buildStockUsageFilter(
+//       filterParams,
+//       permissions,
+//       userCenter
+//     );
+//     if (permissions.available_stock_all_center && !filterParams.centerId && !filterParams.center) {
+//       delete filter.center;
+//     }
+
+//     console.log('Final MongoDB filter:', JSON.stringify(filter, null, 2));
+
+//     const pageNum = parseInt(page);
+//     const limitNum = parseInt(limit);
+//     const skip = (pageNum - 1) * limitNum;
+
+//     const sortOptions = buildStockUsageSortOptions(sortBy, sortOrder);
+//     const [total, stockUsages] = await Promise.all([
+//       StockUsage.countDocuments(filter),
+//       StockUsage.find(filter)
+//         .populate("center", "centerName centerCode centerType")
+//         .populate("customer", "name username mobile")
+//         .populate("fromBuilding", "buildingName displayName")
+//         .populate("toBuilding", "buildingName displayName")
+//         .populate("fromControlRoom", "buildingName displayName")
+//         .populate({
+//           path: "items.product",
+//           select: "productTitle productCode productCategory trackSerialNumber",
+//         })
+//         .populate("createdBy", "name email")
+//         .populate("approvedBy", "name email")
+//         .populate("rejectedBy", "name email")
+//         .sort(sortOptions)
+//         .skip(skip)
+//         .limit(limitNum)
+//         .lean(),
+//     ]);
+
+//     console.log(`Found ${stockUsages.length} records out of ${total} total`);
+//     console.log('Product filter param:', filterParams.product);
+
+//     if (stockUsages.length === 0) {
+//       const centerInfo = filter.center ? 
+//         await Center.findById(filter.center).select("centerName centerCode centerType") : 
+//         null;
+
+//       return res.status(200).json({
+//         success: true,
+//         message: "No stock usage records found",
+//         data: [],
+//         center: centerInfo ? {
+//           id: centerInfo._id,
+//           name: centerInfo.centerName,
+//           code: centerInfo.centerCode,
+//           type: centerInfo.centerType,
+//         } : null,
+//         summary: {
+//           totalRecords: 0,
+//           totalUsage: 0,
+//           totalDamage: 0,
+//           byUsageType: [],
+//         },
+//         permissions: {
+//           canViewAllCenters: permissions.available_stock_all_center,
+//           canViewOwnCenter: permissions.available_stock_own_center,
+//           currentAccess: permissions.available_stock_all_center
+//             ? "all_centers"
+//             : "own_center",
+//         },
+//         pagination: {
+//           total: 0,
+//           page: pageNum,
+//           limit: limitNum,
+//           totalPages: 0,
+//         },
+//         filters: {
+//           center: filterParams.centerId || filterParams.center || "user_center",
+//           usageType: filterParams.usageType || "all",
+//           status: filterParams.status || "all",
+//           product: filterParams.productId || filterParams.product || "all",
+//           createdBy: filterParams.createdBy || "all",
+//           startDate: filterParams.startDate || "all",
+//           endDate: filterParams.endDate || "all",
+//           search: filterParams.search || "",
+//         },
+//       });
+//     }
+
+//     const formattedData = [];
+
+//     // Debug counters
+//     let totalItemsBeforeFilter = 0;
+//     let totalItemsAfterFilter = 0;
+
+//     stockUsages.forEach((usage) => {
+//       totalItemsBeforeFilter += usage.items.length;
+      
+//       // Filter items based on product filter if provided
+//       let itemsToProcess = usage.items;
+      
+//       if (filterParams.product && filterParams.product !== 'all') {
+//         const productFilter = buildArrayFilterStockUsage(filterParams.product);
+//         if (productFilter) {
+//           itemsToProcess = usage.items.filter(item => {
+//             if (!item.product) return false;
+            
+//             const itemProductId = item.product._id ? item.product._id.toString() : item.product.toString();
+            
+//             if (typeof productFilter === 'object' && productFilter.$in) {
+//               return productFilter.$in.some(prodId => 
+//                 itemProductId === prodId.toString()
+//               );
+//             } else {
+//               return itemProductId === productFilter.toString();
+//             }
+//           });
+//         }
+//       }
+      
+//       totalItemsAfterFilter += itemsToProcess.length;
+//       console.log(`Usage ${usage._id}: ${usage.items.length} items before, ${itemsToProcess.length} items after filter`);
+
+//       // Only process if there are items after filtering
+//       if (itemsToProcess.length > 0) {
+//         itemsToProcess.forEach((item) => {
+//           let damageQty = 0;
+//           if (usage.usageType === "Damage" && usage.status === "completed") {
+//             damageQty = item.quantity;
+//           }
+
+//           let entityName = "N/A";
+//           switch (usage.usageType) {
+//             case "Customer":
+//               entityName = usage.customer?.name || "Unknown Customer";
+//               break;
+//             case "Building":
+//               entityName = usage.fromBuilding?.buildingName || "Unknown Building";
+//               break;
+//             case "Building to Building":
+//               entityName = `${usage.fromBuilding?.buildingName || "Unknown"} → ${
+//                 usage.toBuilding?.buildingName || "Unknown"
+//               }`;
+//               break;
+//             case "Control Room":
+//               entityName =
+//                 usage.fromControlRoom?.buildingName || "Unknown Control Room";
+//               break;
+//             default:
+//               entityName = usage.usageType;
+//           }
+
+//           formattedData.push({
+//             _id: usage._id,
+//             Date: usage.date.toISOString().split('T')[0],
+//             Type: usage.usageType,
+//             Center: usage.center?.centerName || "Unknown Center",
+//             Product: item.product?.productTitle || "Unknown Product",
+//             ProductCode: item.product?.productCode || "N/A",
+//             "Old Stock": item.oldStock || 0,
+//             Qty: item.quantity,
+//             "Damage Qty": damageQty,
+//             "New Stock": item.newStock || 0,
+//             Entity: entityName,
+//             Remark: usage.remark || "",
+//             Status: usage.status,
+//             "Created By": usage.createdBy?.name || "Unknown",
+//             "Created At": usage.createdAt.toISOString().split('T')[0],
+//             "Approved By": usage.approvedBy?.name || "N/A",
+//             "Rejected By": usage.rejectedBy?.name || "N/A",
+//           });
+//         });
+//       }
+//     });
+
+//     console.log(`Total: ${totalItemsBeforeFilter} items before filter, ${totalItemsAfterFilter} items after filter`);
+
+//     // Get summary statistics - update to match filtered items
+//     const summaryStatsPipeline = [
+//       { $match: filter },
+//       { $unwind: "$items" }
+//     ];
+
+//     // Add product filter to aggregation if provided
+//     if (filterParams.product && filterParams.product !== 'all') {
+//       const productFilter = buildArrayFilterStockUsage(filterParams.product);
+//       if (productFilter) {
+//         summaryStatsPipeline.push({
+//           $match: {
+//             "items.product": productFilter
+//           }
+//         });
+//       }
+//     }
+
+//     summaryStatsPipeline.push({
+//       $group: {
+//         _id: "$usageType",
+//         totalUsage: { $sum: "$items.quantity" },
+//         totalDamage: {
+//           $sum: {
+//             $cond: [
+//               {
+//                 $and: [
+//                   { $eq: ["$usageType", "Damage"] },
+//                   { $eq: ["$status", "completed"] },
+//                 ],
+//               },
+//               "$items.quantity",
+//               0,
+//             ],
+//           },
+//         },
+//         count: { $sum: 1 },
+//       },
+//     });
+
+//     const summaryStats = await StockUsage.aggregate(summaryStatsPipeline);
+
+//     const totalUsage = formattedData.reduce((sum, item) => sum + item.Qty, 0);
+//     const totalDamage = formattedData.reduce(
+//       (sum, item) => sum + item["Damage Qty"],
+//       0
+//     );
+
+//     // Get center info
+//     let centerInfo = null;
+//     if (filter.center) {
+//       if (typeof filter.center === 'object' && filter.center.$in) {
+//         centerInfo = await Center.findById(filter.center.$in[0]).select("centerName centerCode centerType");
+//       } else {
+//         centerInfo = await Center.findById(filter.center).select("centerName centerCode centerType");
+//       }
+//     }
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Stock usage by center retrieved successfully",
+//       data: formattedData,
+//       center: centerInfo ? {
+//         id: centerInfo._id,
+//         name: centerInfo.centerName,
+//         code: centerInfo.centerCode,
+//         type: centerInfo.centerType,
+//       } : null,
+//       summary: {
+//         totalRecords: total,
+//         totalUsage,
+//         totalDamage,
+//         byUsageType: summaryStats,
+//       },
+//       permissions: {
+//         canViewAllCenters: permissions.available_stock_all_center,
+//         canViewOwnCenter: permissions.available_stock_own_center,
+//         currentAccess: permissions.available_stock_all_center
+//           ? "all_centers"
+//           : "own_center",
+//       },
+//       pagination: {
+//         total,
+//         page: pageNum,
+//         limit: limitNum,
+//         totalPages: Math.ceil(total / limitNum),
+//       },
+//       filters: {
+//         center: filterParams.centerId || filterParams.center || "user_center",
+//         usageType: filterParams.usageType || "all",
+//         status: filterParams.status || "all",
+//         product: filterParams.productId || filterParams.product || "all",
+//         createdBy: filterParams.createdBy || "all",
+//         startDate: filterParams.startDate || "all",
+//         endDate: filterParams.endDate || "all",
+//         search: filterParams.search || "",
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error fetching stock usage by center:", error);
+//     handleControllerError(error, res);
+//   }
+// };
+
+
+
+///////////*************** below is fetch the serial numbers *******/
+
+
 export const getStockUsageByCenter = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } =
@@ -2191,6 +2500,15 @@ export const getStockUsageByCenter = async (req, res) => {
               entityName = usage.usageType;
           }
 
+          // Check if product tracks serial numbers
+          const tracksSerial = item.product?.trackSerialNumber === "Yes";
+          let serialNumbers = [];
+          
+          // Include serial numbers if they exist and product tracks them
+          if (tracksSerial && item.serialNumbers && item.serialNumbers.length > 0) {
+            serialNumbers = item.serialNumbers;
+          }
+
           formattedData.push({
             _id: usage._id,
             Date: usage.date.toISOString().split('T')[0],
@@ -2209,6 +2527,14 @@ export const getStockUsageByCenter = async (req, res) => {
             "Created At": usage.createdAt.toISOString().split('T')[0],
             "Approved By": usage.approvedBy?.name || "N/A",
             "Rejected By": usage.rejectedBy?.name || "N/A",
+            // Add serial number information
+            TrackSerialNumber: item.product?.trackSerialNumber || "No",
+            SerialNumbers: serialNumbers,
+            SerialNumberCount: serialNumbers.length,
+            // Optionally, you can add a formatted string of serial numbers
+            SerialNumbersFormatted: serialNumbers.length > 0 
+              ? serialNumbers.join(', ') 
+              : "N/A"
           });
         });
       }

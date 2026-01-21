@@ -216,6 +216,77 @@ export const createShiftingRequest = async (req, res) => {
   }
 };
 
+// export const getAllShiftingRequests = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkShiftingPermissions(
+//       req,
+//       ["view_shifting_own_center", "view_shifting_all_center"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. view_shifting_own_center or view_shifting_all_center permission required.",
+//       });
+//     }
+
+//     const { search, center, status, page = 1, limit = 100 } = req.query;
+
+//     const query = {};
+//     if (
+//       permissions.view_shifting_own_center &&
+//       !permissions.view_shifting_all_center &&
+//       userCenter
+//     ) {
+//       query.toCenter = userCenter._id || userCenter;
+//     } else if (center && permissions.view_shifting_all_center) {
+//       query.toCenter = center;
+//     }
+//     if (search) {
+//       query.$or = [
+//         { remark: { $regex: search, $options: "i" } },
+//         { status: { $regex: search, $options: "i" } },
+//         { "customer.name": { $regex: search, $options: "i" } },
+//         { "fromCenter.centerName": { $regex: search, $options: "i" } },
+//         { "toCenter.centerName": { $regex: search, $options: "i" } },
+//       ];
+//     }
+//     if (status) {
+//       query.status = status;
+//     }
+
+//     const total = await ShiftingRequest.countDocuments(query);
+//     const skip = (parseInt(page) - 1) * parseInt(limit);
+
+//     const requests = await ShiftingRequest.find(query)
+//       .populate("customer", "name username mobile email center")
+//       .populate("fromCenter", "centerName centerCode")
+//       .populate("toCenter", "centerName centerCode")
+//       .populate("approvedBy", "fullName email")
+//       .populate("rejectedBy", "fullName email")
+//       .sort({ createdAt: -1 })
+//       .skip(skip)
+//       .limit(parseInt(limit));
+
+//     res.status(200).json({
+//       success: true,
+//       data: requests,
+//       pagination: {
+//         total,
+//         page: parseInt(page),
+//         limit: parseInt(limit),
+//         totalPages: Math.ceil(total / limit),
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error fetching shifting requests:", error);
+//     handleControllerError(error, res);
+//   }
+// };
+
+
+
 export const getAllShiftingRequests = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkShiftingPermissions(
@@ -234,24 +305,44 @@ export const getAllShiftingRequests = async (req, res) => {
     const { search, center, status, page = 1, limit = 100 } = req.query;
 
     const query = {};
+    
+    // Handle permission-based filtering
     if (
       permissions.view_shifting_own_center &&
       !permissions.view_shifting_all_center &&
       userCenter
     ) {
-      query.toCenter = userCenter._id || userCenter;
-    } else if (center && permissions.view_shifting_all_center) {
-      query.toCenter = center;
-    }
-    if (search) {
+      // Show requests where user's center is either fromCenter OR toCenter
+      const userCenterId = userCenter._id || userCenter;
       query.$or = [
-        { remark: { $regex: search, $options: "i" } },
-        { status: { $regex: search, $options: "i" } },
-        { "customer.name": { $regex: search, $options: "i" } },
-        { "fromCenter.centerName": { $regex: search, $options: "i" } },
-        { "toCenter.centerName": { $regex: search, $options: "i" } },
+        { fromCenter: userCenterId },
+        { toCenter: userCenterId }
+      ];
+    } else if (center && permissions.view_shifting_all_center) {
+      // If admin wants to filter by specific center
+      query.$or = [
+        { fromCenter: center },
+        { toCenter: center }
       ];
     }
+    // If user has view_shifting_all_center permission and no center filter is provided,
+    // they can see all requests, so no query restriction is added
+    
+    // Search functionality
+    if (search) {
+      query.$and = query.$and || [];
+      query.$and.push({
+        $or: [
+          { remark: { $regex: search, $options: "i" } },
+          { status: { $regex: search, $options: "i" } },
+          { "customer.name": { $regex: search, $options: "i" } },
+          { "fromCenter.centerName": { $regex: search, $options: "i" } },
+          { "toCenter.centerName": { $regex: search, $options: "i" } },
+        ]
+      });
+    }
+    
+    // Status filter
     if (status) {
       query.status = status;
     }
@@ -269,138 +360,46 @@ export const getAllShiftingRequests = async (req, res) => {
       .skip(skip)
       .limit(parseInt(limit));
 
+    // Add a field to indicate the relationship of user's center to the request
+    const requestsWithRelationship = requests.map(request => {
+      const requestObj = request.toObject();
+      const userCenterId = userCenter?._id?.toString() || userCenter?.toString();
+      const fromCenterId = request.fromCenter?._id?.toString();
+      const toCenterId = request.toCenter?._id?.toString();
+      
+      if (userCenterId) {
+        if (fromCenterId === userCenterId && toCenterId === userCenterId) {
+          requestObj.centerRelationship = "both";
+        } else if (fromCenterId === userCenterId) {
+          requestObj.centerRelationship = "from";
+        } else if (toCenterId === userCenterId) {
+          requestObj.centerRelationship = "to";
+        }
+      }
+      
+      return requestObj;
+    });
+
     res.status(200).json({
       success: true,
-      data: requests,
+      data: requestsWithRelationship,
       pagination: {
         total,
         page: parseInt(page),
         limit: parseInt(limit),
         totalPages: Math.ceil(total / limit),
       },
+      permissionInfo: {
+        hasViewAll: permissions.view_shifting_all_center,
+        hasViewOwn: permissions.view_shifting_own_center,
+        userCenter: userCenter?._id || userCenter
+      }
     });
   } catch (error) {
     console.error("Error fetching shifting requests:", error);
     handleControllerError(error, res);
   }
 };
-
-// export const updateShiftingRequestStatus = async (req, res) => {
-//   try {
-//     const { hasAccess, permissions, userCenter } = checkShiftingPermissions(
-//       req,
-//       ["accept_shifting_own_center", "accept_shifting_all_center"]
-//     );
-
-//     if (!hasAccess) {
-//       return res.status(403).json({
-//         success: false,
-//         message:
-//           "Access denied. accept_shifting_own_center or accept_shifting_all_center permission required.",
-//       });
-//     }
-
-//     const { id } = req.params;
-//     const { status, rejectionReason } = req.body;
-//     const user = req.user;
-
-//     if (!["Approve", "Reject"].includes(status)) {
-//       return res.status(400).json({
-//         success: false,
-//         message: 'Invalid status. Must be "Approved" or "Rejected".',
-//       });
-//     }
-
-//     const request = await ShiftingRequest.findById(id)
-//       .populate("customer", "name mobile center")
-//       .populate("fromCenter", "centerName centerCode")
-//       .populate("toCenter", "centerName centerCode");
-
-//     if (!request) {
-//       return res
-//         .status(404)
-//         .json({ success: false, message: "Shifting request not found" });
-//     }
-
-//     const userCenterId = user.center?._id || user.center;
-
-//     if (
-//       permissions.accept_shifting_own_center &&
-//       !permissions.accept_shifting_all_center
-//     ) {
-//       if (String(request.toCenter._id) !== String(userCenterId)) {
-//         return res.status(403).json({
-//           success: false,
-//           message:
-//             "Access denied. You can only approve requests where your center is the destination.",
-//         });
-//       }
-//     } else {
-//     }
-
-//     if (request.status !== "Pending") {
-//       return res.status(400).json({
-//         success: false,
-//         message: `This request is already ${request.status.toLowerCase()}.`,
-//       });
-//     }
-
-//     if (status === "Approve") {
-//       const customer = await Customer.findById(request.customer._id);
-//       if (!customer) {
-//         return res
-//           .status(404)
-//           .json({ success: false, message: "Customer not found" });
-//       }
-
-//       customer.shiftingHistory.push({
-//         fromCenter: request.fromCenter._id,
-//         toCenter: request.toCenter._id,
-//         shiftingRequest: request._id,
-//         shiftedAt: new Date(),
-//         shiftedBy: user._id,
-//       });
-
-//       customer.center = request.toCenter._id;
-//       await customer.save();
-
-//       request.status = "Approve";
-//       request.approvedBy = user._id;
-//       request.approvedAt = new Date();
-//       request.customerCenterUpdated = true;
-//       request.customerCenterUpdatedAt = new Date();
-//     } else if (status === "Reject") {
-//       request.status = "Reject";
-//       request.rejectedBy = user._id;
-//       request.rejectedAt = new Date();
-//       if (rejectionReason) {
-//         request.remark =
-//           request.remark + ` | Rejection Reason: ${rejectionReason}`;
-//       }
-//     }
-
-//     await request.save();
-
-//     const updatedRequest = await ShiftingRequest.findById(id)
-//       .populate("customer", "name username mobile center")
-//       .populate("fromCenter", "centerName centerCode")
-//       .populate("toCenter", "centerName centerCode")
-//       .populate("approvedBy", "fullName email")
-//       .populate("rejectedBy", "fullName email");
-
-//     res.status(200).json({
-//       success: true,
-//       message: `Shifting request ${
-//         status === "Approved" ? "approved" : "rejected"
-//       } successfully`,
-//       data: updatedRequest,
-//     });
-//   } catch (error) {
-//     console.error("Error updating shifting request status:", error);
-//     handleControllerError(error, res);
-//   }
-// };
-
 
 const transferCustomerStockToFilledStock = async (shiftingRequest) => {
   try {

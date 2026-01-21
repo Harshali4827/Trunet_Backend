@@ -20,6 +20,7 @@ import {
   getStockRequestNotifications,
   updateWarehouseChallanApproval,
   updateCenterChallanApproval,
+  markAsInvoiced,
 } from "../controllers/stockRequestController.js";
 import {
   validateCreateStockRequest,
@@ -244,4 +245,13 @@ router.patch(
   updateStockRequestStatus
 );
 
+router.post(
+  "/mark-invoiced",
+  protect,
+  // authorizeAccess(
+  //   MODULE,
+  //   "manage_indent"
+  // ),
+  markAsInvoiced
+);
 export default router;
