@@ -802,7 +802,7 @@ const faultyStockSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ["pending_damage", "damaged", "under_repair", "repaired", "irreparable", "disposed", "returned_to_vendor", "transferred", "partially_repaired","pending_under_repair"],
+      enum: ["pending_damage", "damaged", "under_repair", "repaired", "irreparable", "disposed", "returned_to_vendor", "transferred", "partially_repaired","pending_under_repair","transferred"],
       default: "pending_damage"
     },
     quantity: {
@@ -828,7 +828,7 @@ const faultyStockSchema = new mongoose.Schema({
       },
       status: {
         type: String,
-        enum: ["pending_damage", "damaged", "under_repair", "repaired", "irreparable", "returned", "transferred", "partially_repaired", "rejected"]
+        enum: ["pending_damage", "damaged", "under_repair", "repaired", "irreparable", "returned", "transferred", "partially_repaired", "rejected","transferred"]
       },
       remark: String,
       quantity: {
@@ -904,7 +904,7 @@ const faultyStockSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ["pending_damage", "damaged", "under_repair", "repaired", "irreparable", "returned", "transferred", "rejected","pending_under_repair"]
+      enum: ["pending_damage", "damaged", "under_repair", "repaired", "irreparable", "returned", "transferred", "rejected","pending_under_repair","partially_repaired"]
     },
     remark: String,
     quantity: {

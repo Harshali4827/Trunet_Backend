@@ -5475,7 +5475,7 @@ export const getAllFilledStock = async (req, res) => {
 
     const filledStocks = await FilledStock.find(query)
       .populate("customer", "name username mobile email")
-      .populate("product", "productTitle productCode category")
+      .populate("product", "productTitle productCode trackSerialNumber")
       .populate("center", "centerName centerCode address")
       .populate("shiftingRequestId", "date fromCenter toCenter status")
       .populate("originalUsageId", "date usageType remark")
@@ -5490,6 +5490,7 @@ export const getAllFilledStock = async (req, res) => {
       "CustomerMobile": stock.customer?.mobile || "",
       "ProductName": stock.product?.productTitle || "",
       "ProductCode": stock.product?.productCode || "",
+      "TrackSerialNumber":stock.product?.trackSerialNumber || "",
       "CenterName": stock.center?.centerName || "",
       "CenterCode": stock.center?.centerCode || "",
       "Quantity": stock.quantity,

@@ -77,10 +77,9 @@ import Center from "../models/Center.js";
 
 export const getAllData = async (req, res) => {
   try {
-    // Get user permissions from request
+  
     const userPermissions = req.user.role?.permissions || [];
-    
-    // Check permissions for each module
+  
     const customerModule = userPermissions.find(
       (perm) => perm.module === "Customer"
     );
@@ -91,7 +90,6 @@ export const getAllData = async (req, res) => {
       (perm) => perm.module === "Settings"
     );
 
-    // Check view all permissions
     const canViewAllCustomers = customerModule && 
       customerModule.permissions.includes("view_customer_all_center");
     const canViewOwnCustomers = customerModule && 

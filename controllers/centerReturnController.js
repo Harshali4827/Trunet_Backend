@@ -17,7 +17,6 @@ export const createCenterReturn = async (req, res) => {
   
       const { date, remark, products } = req.body;
   
-      // Get user and their center
       const user = await User.findById(userId).populate("center");
       if (!user || !user.center) {
         return res.status(400).json({
@@ -45,7 +44,6 @@ export const createCenterReturn = async (req, res) => {
   
       const resellerId = center.reseller._id || center.reseller;
   
-      // Validate required fields
       if (!products || !Array.isArray(products) || products.length === 0) {
         return res.status(400).json({
           success: false,
@@ -53,7 +51,6 @@ export const createCenterReturn = async (req, res) => {
         });
       }
   
-      // Validate products
       for (const productItem of products) {
         if (!productItem.product) {
           return res.status(400).json({
@@ -69,7 +66,6 @@ export const createCenterReturn = async (req, res) => {
           });
         }
   
-        // Check if product exists
         const product = await Product.findById(productItem.product);
         if (!product) {
           return res.status(404).json({
@@ -78,7 +74,6 @@ export const createCenterReturn = async (req, res) => {
           });
         }
   
-        // For serialized products, validate serial numbers
         if (product.trackSerialNumber === "Yes") {
           if (!productItem.serialNumbers || !Array.isArray(productItem.serialNumbers) || 
               productItem.serialNumbers.length === 0) {
@@ -94,8 +89,6 @@ export const createCenterReturn = async (req, res) => {
               message: `Number of serial numbers (${productItem.serialNumbers.length}) must match quantity (${productItem.quantity}) for product ${product.productTitle}`,
             });
           }
-  
-          // Check for duplicate serial numbers
           const uniqueSerials = new Set(productItem.serialNumbers);
           if (uniqueSerials.size !== productItem.serialNumbers.length) {
             return res.status(400).json({
@@ -104,7 +97,7 @@ export const createCenterReturn = async (req, res) => {
             });
           }
         } else {
-          // For non-serialized products, serialNumbers should not be provided
+
           if (productItem.serialNumbers && productItem.serialNumbers.length > 0) {
             return res.status(400).json({
               success: false,
@@ -116,16 +109,14 @@ export const createCenterReturn = async (req, res) => {
   
       try {
         const returnDate = date ? new Date(date) : new Date();
-        
-        // Process each product
+
         const processedProducts = [];
         
         for (const productItem of products) {
           const productId = productItem.product;
           const quantity = productItem.quantity;
           const serialNumbers = productItem.serialNumbers || [];
-          
-          // Get center stock
+
           const centerStock = await CenterStock.findOne({
             center: centerId,
             product: productId
@@ -135,7 +126,6 @@ export const createCenterReturn = async (req, res) => {
             throw new Error(`No stock found in center for product ${productId}`);
           }
 
-          // Validate stock availability - check available quantity
           if (centerStock.availableQuantity < quantity) {
             throw new Error(`Insufficient stock available for product ${productId}. Available: ${centerStock.availableQuantity}, Requested: ${quantity}`);
           }
@@ -153,11 +143,9 @@ export const createCenterReturn = async (req, res) => {
           };
 
           if (product.trackSerialNumber === "Yes") {
-            // Process serialized products
             processedItem.serialNumbers = [...serialNumbers];
             
             for (const serialNumber of serialNumbers) {
-              // Find the serial in center stock with AVAILABLE status
               const serialIndex = centerStock.serialNumbers.findIndex(
                 sn => sn.serialNumber === serialNumber && 
                 sn.status === "available" && 
@@ -168,35 +156,27 @@ export const createCenterReturn = async (req, res) => {
                 throw new Error(`Serial number ${serialNumber} not found in center stock or not in available status`);
               }
 
-              // UPDATE: Change status to "transferred" when returning to reseller
               centerStock.serialNumbers[serialIndex].status = "transferred";
-              centerStock.serialNumbers[serialIndex].currentLocation = resellerId; // Set to reseller
+              centerStock.serialNumbers[serialIndex].currentLocation = resellerId; 
               centerStock.serialNumbers[serialIndex].transferredDate = new Date();
               centerStock.serialNumbers[serialIndex].transferredBy = userId;
               
-              // Add transfer history
               centerStock.serialNumbers[serialIndex].transferHistory.push({
                 fromCenter: centerId,
-                toReseller: resellerId, // New: toReseller instead of toCenter
+                toReseller: resellerId,
                 transferDate: new Date(),
                 transferType: "center_to_reseller_return",
                 remark: `Returned to reseller: ${remark || "No remark"}`,
                 transferredBy: userId
               });
             }
-
-            // Update center stock quantities
             centerStock.availableQuantity -= quantity;
-            centerStock.totalQuantity -= quantity; // Also reduce total since it's transferred out
-            
+            centerStock.totalQuantity -= quantity; 
           } else {
-            // Process non-serialized products
-            // Reduce both available and total quantity since it's leaving center
             centerStock.availableQuantity -= quantity;
             centerStock.totalQuantity -= quantity;
           }
 
-          // Save updated center stock
           centerStock.lastUpdated = new Date();
           await centerStock.save();
 
@@ -206,7 +186,6 @@ export const createCenterReturn = async (req, res) => {
             consumedQuantity: centerStock.consumedQuantity
           };
 
-          // Add to reseller stock
           await addToResellerStock(
             resellerId, 
             productId, 
@@ -214,14 +193,13 @@ export const createCenterReturn = async (req, res) => {
             serialNumbers, 
             centerId, 
             userId, 
-            "center_to_reseller_return", // Updated transfer type
+            "center_to_reseller_return",
             remark
           );
 
           processedProducts.push(processedItem);
         }
         
-        // Create return record
         const returnRecord = {
           date: returnDate,
           remark: remark || "",
@@ -288,7 +266,7 @@ export const createCenterReturn = async (req, res) => {
     }
   };
 
-//   async function addToResellerStock(
+// async function addToResellerStock(
 //     resellerId, 
 //     productId, 
 //     quantity, 
@@ -303,9 +281,8 @@ export const createCenterReturn = async (req, res) => {
 //         reseller: resellerId,
 //         product: productId
 //       });
-
+  
 //       if (!resellerStock) {
-//         // Create new reseller stock entry
 //         resellerStock = new ResellerStock({
 //           reseller: resellerId,
 //           product: productId,
@@ -314,52 +291,55 @@ export const createCenterReturn = async (req, res) => {
 //           consumedQuantity: 0,
 //           damagedQuantity: 0,
 //           repairQuantity: 0,
+//           sourceBreakdown: {
+//             damageRepairQuantity: 0,
+//             centerReturnQuantity: 0,
+//             directPurchaseQuantity: 0
+//           },
 //           serialNumbers: []
 //         });
 //       }
-
-//       // Get product details for tracking serial numbers
+  
 //       const product = await Product.findById(productId);
-
+  
 //       if (product.trackSerialNumber === "Yes" && serialNumbers.length > 0) {
-//         // Add serialized products
 //         for (const serialNumber of serialNumbers) {
-//           // Check if serial already exists in reseller stock
 //           const existingSerialIndex = resellerStock.serialNumbers.findIndex(
 //             sn => sn.serialNumber === serialNumber
 //           );
-
+  
 //           if (existingSerialIndex !== -1) {
-//             // Update existing serial - if it was consumed/damaged, make it available
 //             const existingSerial = resellerStock.serialNumbers[existingSerialIndex];
             
 //             if (existingSerial.status === "consumed" || existingSerial.status === "damaged") {
 //               existingSerial.status = "available";
-//               existingSerial.currentLocation = resellerId; // Set to reseller
+//               existingSerial.sourceType = "center_return";
+//               existingSerial.currentLocation = resellerId;
 //             }
             
-//             // Add transfer history
 //             existingSerial.transferHistory.push({
 //               fromCenter: sourceCenter,
 //               toReseller: resellerId,
 //               transferDate: new Date(),
 //               transferType: "center_to_reseller_return",
+//               sourceType: "center_return",
 //               referenceId: null,
 //               remark: `Returned from center: ${remark || "No remark"}`,
 //               transferredBy: userId
 //             });
             
 //           } else {
-//             // Add new serial with status "available" (returned stock is available at reseller)
 //             resellerStock.serialNumbers.push({
 //               serialNumber: serialNumber,
 //               status: "available",
+//               sourceType: "center_return",
 //               currentLocation: resellerId,
 //               transferHistory: [{
 //                 fromCenter: sourceCenter,
 //                 toReseller: resellerId,
 //                 transferDate: new Date(),
 //                 transferType: "center_to_reseller_return",
+//                 sourceType: "center_return",
 //                 referenceId: null,
 //                 remark: `Returned from center - ${sourceType}: ${remark || "No remark"}`,
 //                 transferredBy: userId
@@ -367,20 +347,18 @@ export const createCenterReturn = async (req, res) => {
 //             });
 //           }
 //         }
-
-//         // Update reseller stock quantities
+  
 //         resellerStock.availableQuantity += quantity;
 //         resellerStock.totalQuantity += quantity;
+//         resellerStock.sourceBreakdown.centerReturnQuantity += quantity;
         
 //       } else {
-//         // Add non-serialized products
 //         resellerStock.availableQuantity += quantity;
 //         resellerStock.totalQuantity += quantity;
+//         resellerStock.sourceBreakdown.centerReturnQuantity += quantity; 
 //       }
-
-//       resellerStock.lastUpdated = new Date();
+  
 //       await resellerStock.save();
-
 //       return resellerStock;
 //     } catch (error) {
 //       console.error("Error adding to reseller stock:", error);
@@ -390,107 +368,124 @@ export const createCenterReturn = async (req, res) => {
 
 
 async function addToResellerStock(
-    resellerId, 
-    productId, 
-    quantity, 
-    serialNumbers = [], 
-    sourceCenter, 
-    userId, 
-    sourceType = "center_to_reseller_return", 
-    remark = ""
-  ) {
-    try {
-      let resellerStock = await ResellerStock.findOne({
+  resellerId, 
+  productId, 
+  quantity, 
+  serialNumbers = [], 
+  sourceCenter, 
+  userId, 
+  sourceType = "center_to_reseller_return", 
+  remark = ""
+) {
+  try {
+    let resellerStock = await ResellerStock.findOne({
+      reseller: resellerId,
+      product: productId
+    });
+
+    if (!resellerStock) {
+      resellerStock = new ResellerStock({
         reseller: resellerId,
-        product: productId
+        product: productId,
+        availableQuantity: 0,
+        totalQuantity: 0,
+        consumedQuantity: 0,
+        damagedQuantity: 0,
+        repairQuantity: 0,
+        centerReturns: [],
+        sourceBreakdown: {
+          damageRepairQuantity: 0,
+          centerReturnQuantity: 0,
+          directPurchaseQuantity: 0
+        },
+        serialNumbers: []
       });
-  
-      if (!resellerStock) {
-        resellerStock = new ResellerStock({
-          reseller: resellerId,
-          product: productId,
-          availableQuantity: 0,
-          totalQuantity: 0,
-          consumedQuantity: 0,
-          damagedQuantity: 0,
-          repairQuantity: 0,
-          sourceBreakdown: {
-            damageRepairQuantity: 0,
-            centerReturnQuantity: 0,
-            directPurchaseQuantity: 0
-          },
-          serialNumbers: []
-        });
-      }
-  
-      const product = await Product.findById(productId);
-  
-      if (product.trackSerialNumber === "Yes" && serialNumbers.length > 0) {
-        for (const serialNumber of serialNumbers) {
-          const existingSerialIndex = resellerStock.serialNumbers.findIndex(
-            sn => sn.serialNumber === serialNumber
-          );
-  
-          if (existingSerialIndex !== -1) {
-            const existingSerial = resellerStock.serialNumbers[existingSerialIndex];
-            
-            if (existingSerial.status === "consumed" || existingSerial.status === "damaged") {
-              existingSerial.status = "available";
-              existingSerial.sourceType = "center_return"; // NEW: Mark as center return
-              existingSerial.currentLocation = resellerId;
-            }
-            
-            existingSerial.transferHistory.push({
+    }
+
+    const product = await Product.findById(productId);
+
+    const existingCenterReturn = resellerStock.centerReturns.find(
+      cr => cr.center.toString() === sourceCenter.toString()
+    );
+
+    if (existingCenterReturn) {
+      existingCenterReturn.quantity += quantity;
+      existingCenterReturn.date = new Date();
+      existingCenterReturn.remark = remark || existingCenterReturn.remark;
+    } else {
+      resellerStock.centerReturns.push({
+        center: sourceCenter,
+        quantity: quantity,
+        date: new Date(),
+        sourceType: "center_return",
+        remark: remark || "",
+        addedBy: userId
+      });
+    }
+
+    if (product.trackSerialNumber === "Yes" && serialNumbers.length > 0) {
+      for (const serialNumber of serialNumbers) {
+        const existingSerialIndex = resellerStock.serialNumbers.findIndex(
+          sn => sn.serialNumber === serialNumber
+        );
+
+        if (existingSerialIndex !== -1) {
+          const existingSerial = resellerStock.serialNumbers[existingSerialIndex];
+          
+          if (existingSerial.status === "consumed" || existingSerial.status === "damaged") {
+            existingSerial.status = "available";
+            existingSerial.sourceType = "center_return";
+            existingSerial.currentLocation = resellerId;
+          }
+          
+          existingSerial.transferHistory.push({
+            fromCenter: sourceCenter,
+            toReseller: resellerId,
+            transferDate: new Date(),
+            transferType: "center_to_reseller_return",
+            sourceType: "center_return",
+            referenceId: null,
+            remark: `Returned from center: ${remark || "No remark"}`,
+            transferredBy: userId
+          });
+          
+        } else {
+          resellerStock.serialNumbers.push({
+            serialNumber: serialNumber,
+            status: "available",
+            sourceType: "center_return",
+            currentLocation: resellerId,
+            transferHistory: [{
               fromCenter: sourceCenter,
               toReseller: resellerId,
               transferDate: new Date(),
               transferType: "center_to_reseller_return",
-              sourceType: "center_return", // NEW: Track source
+              sourceType: "center_return",
               referenceId: null,
-              remark: `Returned from center: ${remark || "No remark"}`,
+              remark: `Returned from center - ${sourceType}: ${remark || "No remark"}`,
               transferredBy: userId
-            });
-            
-          } else {
-            resellerStock.serialNumbers.push({
-              serialNumber: serialNumber,
-              status: "available",
-              sourceType: "center_return", // NEW: Mark as center return
-              currentLocation: resellerId,
-              transferHistory: [{
-                fromCenter: sourceCenter,
-                toReseller: resellerId,
-                transferDate: new Date(),
-                transferType: "center_to_reseller_return",
-                sourceType: "center_return", // NEW: Track source
-                referenceId: null,
-                remark: `Returned from center - ${sourceType}: ${remark || "No remark"}`,
-                transferredBy: userId
-              }]
-            });
-          }
+            }]
+          });
         }
-  
-        resellerStock.availableQuantity += quantity;
-        resellerStock.totalQuantity += quantity;
-        resellerStock.sourceBreakdown.centerReturnQuantity += quantity; // NEW: Track center return quantity
-        
-      } else {
-        resellerStock.availableQuantity += quantity;
-        resellerStock.totalQuantity += quantity;
-        resellerStock.sourceBreakdown.centerReturnQuantity += quantity; // NEW: Track center return quantity
       }
-  
-      await resellerStock.save();
-      return resellerStock;
-    } catch (error) {
-      console.error("Error adding to reseller stock:", error);
-      throw error;
+
+      resellerStock.availableQuantity += quantity;
+      resellerStock.totalQuantity += quantity;
+      resellerStock.sourceBreakdown.centerReturnQuantity += quantity;
+      
+    } else {
+      resellerStock.availableQuantity += quantity;
+      resellerStock.totalQuantity += quantity;
+      resellerStock.sourceBreakdown.centerReturnQuantity += quantity;
     }
+
+    await resellerStock.save();
+    return resellerStock;
+  } catch (error) {
+    console.error("Error adding to reseller stock:", error);
+    throw error;
   }
-
-
-
+}
 
   
 

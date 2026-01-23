@@ -428,7 +428,7 @@ const repairTransferSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ["pending_under_repair", "under_repair", "repaired", "irreparable", "returned", "partially_repaired"],
+      enum: ["pending_under_repair", "under_repair", "repaired", "irreparable", "returned", "partially_repaired","transferred"],
       default: "pending_under_repair"
     },
     quantity: {
@@ -454,7 +454,7 @@ const repairTransferSchema = new mongoose.Schema({
       },
       status: {
         type: String,
-        enum: ["pending_under_repair", "under_repair", "repaired", "irreparable", "returned", "partially_repaired"]
+        enum: ["pending_under_repair", "under_repair", "repaired", "irreparable", "returned", "partially_repaired","transferred"]
       },
       remark: String,
       quantity: {
@@ -508,7 +508,7 @@ const repairTransferSchema = new mongoose.Schema({
   completedAt: Date,
   status: {
     type: String,
-    enum: ["pending_under_repair", "partially_accepted", "under_repair", "repaired", "irreparable", "returned", "cancelled", "completed"],
+    enum: ["pending_under_repair", "partially_accepted", "under_repair", "repaired", "irreparable", "returned", "cancelled", "completed","transferred","partially_repaired"],
     default: "pending_under_repair"
   },
   repairUpdates: [{
@@ -518,7 +518,7 @@ const repairTransferSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ["pending_under_repair", "partially_accepted", "under_repair", "repaired", "irreparable", "returned", "cancelled", "completed"]
+      enum: ["pending_under_repair", "partially_accepted", "under_repair", "repaired", "irreparable", "returned", "cancelled", "completed","transferred","partially_repaired"]
     },
     remark: String,
     quantity: {
