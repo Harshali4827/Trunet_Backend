@@ -4819,6 +4819,664 @@ export const markAsIncomplete = async (req, res) => {
 // };
 
 
+// export const completeIncompleteRequest = async (req, res) => {
+//   try {
+//     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
+//       req,
+//       ["manage_indent"]
+//     );
+
+//     if (!hasAccess) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Access denied. manage_indent permission required.",
+//       });
+//     }
+
+//     const { id } = req.params;
+//     const { productApprovals, productReceipts } = req.body;
+
+//     const stockRequest = await StockRequest.findById(id);
+//     if (!stockRequest) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Stock request not found",
+//       });
+//     }
+
+//     if (!checkCenterAccess(stockRequest, userCenter, permissions)) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Access denied. You can only complete incomplete stock requests from your own center.",
+//       });
+//     }
+
+//     if (stockRequest.status !== "Incompleted") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Only incomplete stock requests can be completed",
+//       });
+//     }
+
+//     const userId = req.user?.id;
+//     if (!userId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User authentication required",
+//       });
+//     }
+
+//     if (
+//       (!productApprovals ||
+//         !Array.isArray(productApprovals) ||
+//         productApprovals.length === 0) &&
+//       (!productReceipts ||
+//         !Array.isArray(productReceipts) ||
+//         productReceipts.length === 0)
+//     ) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Either product approvals or product receipts are required",
+//       });
+//     }
+
+//     const Product = mongoose.model("Product");
+
+//     // MODIFIED: Allow approved quantity to exceed original requested quantity for incomplete completion
+//     if (productApprovals && productApprovals.length > 0) {
+//       for (const approval of productApprovals) {
+//         if (!approval.productId) {
+//           return res.status(400).json({
+//             success: false,
+//             message: "Product ID is required for each product approval",
+//           });
+//         }
+
+//         if (
+//           approval.approvedQuantity === undefined ||
+//           approval.approvedQuantity === null
+//         ) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Approved quantity is required for product ${approval.productId}`,
+//           });
+//         }
+
+//         if (
+//           typeof approval.approvedQuantity !== "number" ||
+//           isNaN(approval.approvedQuantity)
+//         ) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Approved quantity must be a valid number for product ${approval.productId}`,
+//           });
+//         }
+
+//         if (approval.approvedQuantity < 0) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Approved quantity cannot be negative for product ${approval.productId}`,
+//           });
+//         }
+
+//         if (!Number.isInteger(approval.approvedQuantity)) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Approved quantity must be an integer for product ${approval.productId}`,
+//           });
+//         }
+
+//         const productItem = stockRequest.products.find(
+//           (p) => p.product.toString() === approval.productId.toString()
+//         );
+
+//         if (!productItem) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Product ${approval.productId} not found in stock request`,
+//           });
+//         }
+
+//         // MODIFIED: For incomplete completion, allow approved quantity to exceed requested quantity
+//         // This handles cases where more was received than originally approved
+//         if (approval.approvedQuantity > productItem.quantity) {
+//           console.log(`[DEBUG] Approved quantity (${approval.approvedQuantity}) exceeds requested quantity (${productItem.quantity}) for product ${approval.productId}. Allowed for incomplete completion.`);
+//           // Don't throw error - allow it for incomplete completion
+//         }
+
+//         if (
+//           approval.approvedQuantity === 0 &&
+//           (!approval.approvedRemark || approval.approvedRemark.trim() === "")
+//         ) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Approval remark is required when approved quantity is zero for product ${approval.productId}`,
+//           });
+//         }
+
+//         const productDoc = await Product.findById(approval.productId);
+//         const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
+
+//         if (tracksSerialNumbers) {
+//           if (approval.approvedQuantity > 0) {
+//             const approvedSerials = approval.approvedSerials || [];
+
+//             if (approvedSerials.length > 0) {
+//               const uniqueSerials = new Set(approvedSerials);
+//               if (uniqueSerials.size !== approvedSerials.length) {
+//                 return res.status(400).json({
+//                   success: false,
+//                   message: `Duplicate serial numbers found for product ${productDoc.productTitle}`,
+//                 });
+//               }
+//             }
+//           } else {
+//             if (
+//               approval.approvedSerials &&
+//               approval.approvedSerials.length > 0
+//             ) {
+//               return res.status(400).json({
+//                 success: false,
+//                 message: `Approved serial numbers should not be provided when approved quantity is zero for product ${productDoc.productTitle}`,
+//               });
+//             }
+//           }
+//         } else {
+//           if (approval.approvedSerials && approval.approvedSerials.length > 0) {
+//             return res.status(400).json({
+//               success: false,
+//               message: `Approved serial numbers should not be provided for product ${productDoc.productTitle} as it does not track serial numbers`,
+//             });
+//           }
+//         }
+//       }
+
+//       const productApprovalsWithQuantity = productApprovals.filter(
+//         (pa) => pa.approvedQuantity > 0
+//       );
+
+//       if (productApprovalsWithQuantity.length > 0) {
+//         const validationResults = await stockRequest.validateSerialNumbersForIncomplete(
+//           productApprovalsWithQuantity
+//         );
+//         const invalidResults = validationResults.filter(
+//           (result) => !result.valid
+//         );
+
+//         if (invalidResults.length > 0) {
+//           return res.status(400).json({
+//             success: false,
+//             message: "Serial number validation failed",
+//             validationErrors: invalidResults,
+//           });
+//         }
+//       }
+//     }
+
+//     // MODIFIED: Remove or modify the received quantity > approved quantity check
+//     if (productReceipts && productReceipts.length > 0) {
+//       for (const receipt of productReceipts) {
+//         if (!receipt.productId) {
+//           return res.status(400).json({
+//             success: false,
+//             message: "Product ID is required for each product receipt",
+//           });
+//         }
+
+//         if (
+//           receipt.receivedQuantity === undefined ||
+//           receipt.receivedQuantity === null
+//         ) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Received quantity is required for product ${receipt.productId}`,
+//           });
+//         }
+
+//         if (
+//           typeof receipt.receivedQuantity !== "number" ||
+//           isNaN(receipt.receivedQuantity)
+//         ) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Received quantity must be a valid number for product ${receipt.productId}`,
+//           });
+//         }
+
+//         if (receipt.receivedQuantity < 0) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Received quantity cannot be negative for product ${receipt.productId}`,
+//           });
+//         }
+
+//         if (!Number.isInteger(receipt.receivedQuantity)) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Received quantity must be an integer for product ${receipt.productId}`,
+//           });
+//         }
+
+//         const productItem = stockRequest.products.find(
+//           (p) => p.product.toString() === receipt.productId.toString()
+//         );
+
+//         if (!productItem) {
+//           return res.status(400).json({
+//             success: false,
+//             message: `Product ${receipt.productId} not found in stock request`,
+//           });
+//         }
+
+//         let currentApprovedQuantity = productItem.approvedQuantity;
+
+//         if (productApprovals && productApprovals.length > 0) {
+//           const approval = productApprovals.find(
+//             (pa) => pa.productId.toString() === receipt.productId.toString()
+//           );
+//           if (approval) {
+//             currentApprovedQuantity = approval.approvedQuantity;
+//           }
+//         }
+
+//         // MODIFIED: Don't check if received quantity exceeds approved quantity
+//         // This allows completing with the quantity that was marked as received during incomplete
+//         console.log(`[DEBUG] Received quantity: ${receipt.receivedQuantity}, Current approved: ${currentApprovedQuantity}`);
+        
+//         // Optional: You can add a warning but not an error
+//         if (receipt.receivedQuantity > currentApprovedQuantity) {
+//           console.log(`[WARNING] Received quantity (${receipt.receivedQuantity}) exceeds approved quantity (${currentApprovedQuantity}) for product ${receipt.productId}. Proceeding anyway.`);
+//         }
+//       }
+//     }
+
+//     const OutletStock = mongoose.model("OutletStock");
+//     const CenterStock = mongoose.model("CenterStock");
+
+//     // Use productReceipts if provided, otherwise use productApprovals
+//     const productsToProcess = productReceipts && productReceipts.length > 0 
+//       ? productReceipts 
+//       : productApprovals.map((approval) => ({
+//           productId: approval.productId,
+//           receivedQuantity: approval.approvedQuantity,
+//           receivedRemark: approval.receivedRemark || approval.approvedRemark || "",
+//         }));
+
+//     for (const receipt of productsToProcess) {
+//       const productItem = stockRequest.products.find(
+//         (p) => p.product.toString() === receipt.productId.toString()
+//       );
+
+//       if (!productItem) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `Product ${receipt.productId} not found in stock request`,
+//         });
+//       }
+
+//       const productDoc = await Product.findById(receipt.productId);
+//       const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
+      
+//       const currentApprovedQuantity = productItem.approvedQuantity || 0;
+//       const receivedQuantity = receipt.receivedQuantity || 0;
+      
+//       const outletStock = await OutletStock.findOne({
+//         outlet: stockRequest.warehouse,
+//         product: receipt.productId,
+//       });
+
+//       if (!outletStock) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `No stock found in outlet for product ${receipt.productId}`,
+//         });
+//       }
+
+//       // Calculate the DIFFERENCE between new approved quantity and current approved quantity
+//       let newApprovedQuantity = currentApprovedQuantity;
+//       if (productApprovals && productApprovals.length > 0) {
+//         const approval = productApprovals.find(
+//           pa => pa.productId.toString() === receipt.productId.toString()
+//         );
+//         if (approval) {
+//           newApprovedQuantity = approval.approvedQuantity;
+//         }
+//       }
+      
+//       const quantityDifference = newApprovedQuantity - currentApprovedQuantity;
+//       const quantityToTransfer = receivedQuantity;
+      
+//       console.log(`[DEBUG] Processing product ${receipt.productId}:`);
+//       console.log(`[DEBUG] Current approved: ${currentApprovedQuantity}`);
+//       console.log(`[DEBUG] New approved: ${newApprovedQuantity}`);
+//       console.log(`[DEBUG] Quantity difference: ${quantityDifference}`);
+//       console.log(`[DEBUG] Received/Transfer quantity: ${quantityToTransfer}`);
+//       console.log(`[DEBUG] Outlet stock before - Available: ${outletStock.availableQuantity}, InTransit: ${outletStock.inTransitQuantity}, Total: ${outletStock.totalQuantity}`);
+
+//       if (tracksSerialNumbers) {
+//         // Handle serialized products
+//         const currentApprovedSerials = productItem.approvedSerials || [];
+//         let newApprovedSerials = currentApprovedSerials;
+        
+//         if (productApprovals && productApprovals.length > 0) {
+//           const approval = productApprovals.find(
+//             pa => pa.productId.toString() === receipt.productId.toString()
+//           );
+//           if (approval && approval.approvedSerials) {
+//             newApprovedSerials = approval.approvedSerials;
+//           }
+//         }
+        
+//         console.log(`[DEBUG] Current approved serials: ${currentApprovedSerials.length}`);
+//         console.log(`[DEBUG] New approved serials: ${newApprovedSerials.length}`);
+
+//         // If increasing approved quantity (quantityDifference > 0)
+//         if (quantityDifference > 0) {
+//           console.log(`[DEBUG] Need to mark ${quantityDifference} additional serials as in_transit`);
+          
+//           // Get additional serials (the ones beyond current approved)
+//           const additionalSerials = newApprovedSerials.slice(currentApprovedQuantity);
+          
+//           if (additionalSerials.length !== quantityDifference) {
+//             return res.status(400).json({
+//               success: false,
+//               message: `Need ${quantityDifference} additional serial numbers but got ${additionalSerials.length}`,
+//             });
+//           }
+          
+//           // Mark additional serials as in_transit
+//           let newlyMarkedCount = 0;
+//           for (const serialNumber of additionalSerials) {
+//             const serial = outletStock.serialNumbers.find(
+//               sn => sn.serialNumber === serialNumber
+//             );
+
+//             if (serial && serial.status === "available") {
+//               serial.status = "in_transit";
+//               serial.currentLocation = stockRequest.warehouse;
+
+//               serial.transferHistory.push({
+//                 fromCenter: stockRequest.warehouse,
+//                 toCenter: stockRequest.center,
+//                 transferDate: new Date(),
+//                 transferType: "outlet_to_center",
+//                 status: "in_transit",
+//                 remark: "Additional stock for incomplete completion",
+//               });
+
+//               newlyMarkedCount++;
+//               console.log(`[DEBUG] Marked additional serial ${serialNumber} as in_transit`);
+//             } else if (serial && serial.status === "in_transit") {
+//               // Already in transit (from previous incomplete marking)
+//               console.log(`[DEBUG] Serial ${serialNumber} already in_transit`);
+//               newlyMarkedCount++;
+//             }
+//           }
+          
+//           if (newlyMarkedCount > 0) {
+//             outletStock.availableQuantity -= newlyMarkedCount;
+//             outletStock.inTransitQuantity += newlyMarkedCount;
+//             console.log(`[DEBUG] Updated outlet - Available: -${newlyMarkedCount}, InTransit: +${newlyMarkedCount}`);
+//           }
+//         }
+        
+//         // If decreasing approved quantity (quantityDifference < 0)
+//         if (quantityDifference < 0) {
+//           const quantityToRevert = Math.abs(quantityDifference);
+//           console.log(`[DEBUG] Need to revert ${quantityToRevert} serials back to available`);
+          
+//           // Get serials to revert (the ones beyond new approved quantity)
+//           const serialsToRevert = currentApprovedSerials.slice(newApprovedQuantity);
+          
+//           let revertedCount = 0;
+//           for (const serialNumber of serialsToRevert) {
+//             const serial = outletStock.serialNumbers.find(
+//               sn => sn.serialNumber === serialNumber
+//             );
+
+//             if (serial && serial.status === "in_transit") {
+//               serial.status = "available";
+//               serial.currentLocation = stockRequest.warehouse;
+
+//               // Remove the transfer history entry
+//               if (serial.transferHistory.length > 0) {
+//                 const lastTransfer = serial.transferHistory[serial.transferHistory.length - 1];
+//                 if (lastTransfer.status === "in_transit") {
+//                   serial.transferHistory.pop();
+//                 }
+//               }
+
+//               revertedCount++;
+//               console.log(`[DEBUG] Reverted serial ${serialNumber} back to available`);
+//             }
+//           }
+          
+//           if (revertedCount > 0) {
+//             outletStock.availableQuantity += revertedCount;
+//             outletStock.inTransitQuantity -= revertedCount;
+//             console.log(`[DEBUG] Updated outlet - Available: +${revertedCount}, InTransit: -${revertedCount}`);
+//           }
+//         }
+
+//         // Now transfer the received quantity
+//         if (quantityToTransfer > 0) {
+//           const serialsToTransfer = newApprovedSerials.slice(0, quantityToTransfer);
+//           console.log(`[DEBUG] Transferring ${serialsToTransfer.length} serials: ${serialsToTransfer.join(', ')}`);
+
+//           let transferredCount = 0;
+//           for (const serialNumber of serialsToTransfer) {
+//             const serial = outletStock.serialNumbers.find(
+//               sn => sn.serialNumber === serialNumber
+//             );
+
+//             if (serial && serial.status === "in_transit") {
+//               serial.status = "transferred";
+//               serial.currentLocation = stockRequest.center;
+
+//               // Update the last transfer history entry
+//               if (serial.transferHistory.length > 0) {
+//                 const lastTransfer = serial.transferHistory[serial.transferHistory.length - 1];
+//                 if (lastTransfer) {
+//                   lastTransfer.status = "completed";
+//                   lastTransfer.completedAt = new Date();
+//                 }
+//               }
+
+//               transferredCount++;
+//               console.log(`[DEBUG] Marked serial ${serialNumber} as transferred`);
+//             }
+//           }
+
+//           if (transferredCount > 0) {
+//             outletStock.inTransitQuantity -= transferredCount;
+//             outletStock.totalQuantity -= transferredCount;
+
+//             // Add to center stock
+//             await CenterStock.updateStock(
+//               stockRequest.center,
+//               receipt.productId,
+//               transferredCount,
+//               serialsToTransfer,
+//               stockRequest.warehouse,
+//               "inbound_transfer"
+//             );
+
+//             console.log(`[DEBUG] Transferred ${transferredCount} serials to center`);
+//           }
+
+//           productItem.transferredSerials = serialsToTransfer;
+//         }
+
+//       } else {
+//         // Handle non-serialized products
+//         console.log(`[DEBUG] Processing non-serialized product`);
+        
+//         // If increasing approved quantity
+//         if (quantityDifference > 0) {
+//           console.log(`[DEBUG] Need to mark ${quantityDifference} additional units as in_transit`);
+          
+//           // Check availability
+//           if (outletStock.availableQuantity < quantityDifference) {
+//             return res.status(400).json({
+//               success: false,
+//               message: `Insufficient stock in outlet. Available: ${outletStock.availableQuantity}, Needed: ${quantityDifference}`,
+//             });
+//           }
+          
+//           outletStock.availableQuantity -= quantityDifference;
+//           outletStock.inTransitQuantity += quantityDifference;
+//           console.log(`[DEBUG] Updated outlet - Available: -${quantityDifference}, InTransit: +${quantityDifference}`);
+//         }
+        
+//         // If decreasing approved quantity
+//         if (quantityDifference < 0) {
+//           const quantityToRevert = Math.abs(quantityDifference);
+//           console.log(`[DEBUG] Need to revert ${quantityToRevert} units back to available`);
+          
+//           outletStock.availableQuantity += quantityToRevert;
+//           outletStock.inTransitQuantity -= quantityToRevert;
+//           console.log(`[DEBUG] Updated outlet - Available: +${quantityToRevert}, InTransit: -${quantityToRevert}`);
+//         }
+
+//         // Transfer the received quantity
+//         if (quantityToTransfer > 0) {
+//           console.log(`[DEBUG] Transferring ${quantityToTransfer} units to center`);
+          
+//           outletStock.inTransitQuantity -= quantityToTransfer;
+//           outletStock.totalQuantity -= quantityToTransfer;
+
+//           // Add to center stock
+//           await CenterStock.updateStock(
+//             stockRequest.center,
+//             receipt.productId,
+//             quantityToTransfer,
+//             [],
+//             stockRequest.warehouse,
+//             "inbound_transfer"
+//           );
+          
+//           console.log(`[DEBUG] Added ${quantityToTransfer} units to center stock`);
+//         }
+//       }
+
+//       await outletStock.save();
+      
+//       console.log(`[DEBUG] Outlet stock after - Available: ${outletStock.availableQuantity}, InTransit: ${outletStock.inTransitQuantity}, Total: ${outletStock.totalQuantity}`);
+
+//       // Update product item
+//       productItem.receivedQuantity = quantityToTransfer;
+//       productItem.receivedRemark = receipt.receivedRemark || "";
+      
+//       if (productApprovals && productApprovals.length > 0) {
+//         const approval = productApprovals.find(
+//           (pa) => pa.productId.toString() === receipt.productId.toString()
+//         );
+//         if (approval) {
+//           productItem.approvedQuantity = approval.approvedQuantity;
+//           productItem.approvedSerials = approval.approvedSerials || [];
+//         }
+//       }
+//     }
+
+//     // Update stock request with new approvals
+//     if (productApprovals && productApprovals.length > 0) {
+//       stockRequest.products = stockRequest.products.map((productItem) => {
+//         const approval = productApprovals.find(
+//           (pa) => pa.productId.toString() === productItem.product.toString()
+//         );
+
+//         if (approval) {
+//           return {
+//             ...productItem.toObject(),
+//             approvedQuantity: approval.approvedQuantity,
+//             approvedRemark: approval.approvedRemark || "",
+//             approvedSerials: approval.approvedSerials || [],
+//           };
+//         }
+//         return productItem;
+//       });
+//     }
+
+//     stockRequest.status = "Completed";
+//     stockRequest.receivingInfo = {
+//       receivedAt: new Date(),
+//       receivedBy: userId,
+//     };
+//     stockRequest.completionInfo = {
+//       completedOn: new Date(),
+//       completedBy: userId,
+//     };
+//     stockRequest.updatedBy = userId;
+
+//     const updatedRequest = await stockRequest.save();
+
+//     const populatedRequest = await StockRequest.findById(updatedRequest._id)
+//       .populate("warehouse", "_id centerName centerCode centerType")
+//       .populate("center", "_id centerName centerCode centerType")
+//       .populate("products.product", "_id productTitle productCode productImage")
+//       .populate("createdBy", "_id fullName email")
+//       .populate("updatedBy", "_id fullName email")
+//       .populate("approvalInfo.approvedBy", "_id fullName email")
+//       .populate("receivingInfo.receivedBy", "_id fullName email")
+//       .populate("completionInfo.completedBy", "_id fullName email");
+
+//     res.status(200).json({
+//       success: true,
+//       message:
+//         "Incomplete stock request completed successfully and stock transferred to center",
+//       data: populatedRequest,
+//     });
+//   } catch (error) {
+//     console.error("Error completing incomplete stock request:", error);
+
+//     if (error.name === "CastError") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid stock request ID",
+//       });
+//     }
+
+//     if (error.name === "ValidationError") {
+//       const errors = Object.values(error.errors).map((err) => err.message);
+//       return res.status(400).json({
+//         success: false,
+//         message: "Validation error",
+//         errors,
+//       });
+//     }
+
+//     if (
+//       error.message.includes("Insufficient stock") ||
+//       error.message.includes("serial numbers") ||
+//       error.message.includes("No serial numbers assigned") ||
+//       error.message.includes("Approved quantity") ||
+//       error.message.includes("Received quantity") ||
+//       error.message.includes("Product ID") ||
+//       error.message.includes("exceed") ||
+//       error.message.includes("Cannot read properties of undefined")
+//     ) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Validation failed",
+//         error: error.message,
+//       });
+//     }
+
+//     res.status(500).json({
+//       success: false,
+//       message: "Error completing incomplete stock request",
+//       error:
+//         process.env.NODE_ENV === "development"
+//           ? error.message
+//           : "Internal server error",
+//     });
+//   }
+// };
+
+
+///***************************** In below if outlet stock is not presnt then getting isssue then resolve this in below (change approved qty is 0 and not present in outlet stock) */
+
 export const completeIncompleteRequest = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
@@ -5103,7 +5761,14 @@ export const completeIncompleteRequest = async (req, res) => {
           receivedRemark: approval.receivedRemark || approval.approvedRemark || "",
         }));
 
-    for (const receipt of productsToProcess) {
+    // Filter out products with 0 quantity before processing
+    const productsToProcessWithQuantity = productsToProcess.filter(
+      product => product.receivedQuantity > 0
+    );
+
+    console.log(`[DEBUG] Processing ${productsToProcessWithQuantity.length} products with non-zero quantity out of ${productsToProcess.length} total products`);
+
+    for (const receipt of productsToProcessWithQuantity) {
       const productItem = stockRequest.products.find(
         (p) => p.product.toString() === receipt.productId.toString()
       );
@@ -5121,18 +5786,6 @@ export const completeIncompleteRequest = async (req, res) => {
       const currentApprovedQuantity = productItem.approvedQuantity || 0;
       const receivedQuantity = receipt.receivedQuantity || 0;
       
-      const outletStock = await OutletStock.findOne({
-        outlet: stockRequest.warehouse,
-        product: receipt.productId,
-      });
-
-      if (!outletStock) {
-        return res.status(400).json({
-          success: false,
-          message: `No stock found in outlet for product ${receipt.productId}`,
-        });
-      }
-
       // Calculate the DIFFERENCE between new approved quantity and current approved quantity
       let newApprovedQuantity = currentApprovedQuantity;
       if (productApprovals && productApprovals.length > 0) {
@@ -5152,6 +5805,19 @@ export const completeIncompleteRequest = async (req, res) => {
       console.log(`[DEBUG] New approved: ${newApprovedQuantity}`);
       console.log(`[DEBUG] Quantity difference: ${quantityDifference}`);
       console.log(`[DEBUG] Received/Transfer quantity: ${quantityToTransfer}`);
+      
+      const outletStock = await OutletStock.findOne({
+        outlet: stockRequest.warehouse,
+        product: receipt.productId,
+      });
+
+      if (!outletStock) {
+        return res.status(400).json({
+          success: false,
+          message: `No stock found in outlet for product ${receipt.productId}`,
+        });
+      }
+
       console.log(`[DEBUG] Outlet stock before - Available: ${outletStock.availableQuantity}, InTransit: ${outletStock.inTransitQuantity}, Total: ${outletStock.totalQuantity}`);
 
       if (tracksSerialNumbers) {
@@ -5361,7 +6027,6 @@ export const completeIncompleteRequest = async (req, res) => {
       }
 
       await outletStock.save();
-      
       console.log(`[DEBUG] Outlet stock after - Available: ${outletStock.availableQuantity}, InTransit: ${outletStock.inTransitQuantity}, Total: ${outletStock.totalQuantity}`);
 
       // Update product item
@@ -5379,7 +6044,14 @@ export const completeIncompleteRequest = async (req, res) => {
       }
     }
 
-    // Update stock request with new approvals
+    // IMPORTANT: Still update 0 quantity products in the stock request document
+    // Get all product IDs from approvals/receipts
+    const allProductIds = [
+      ...(productApprovals || []).map(p => p.productId),
+      ...(productReceipts || []).map(p => p.productId)
+    ];
+
+    // Update stock request with all approvals (including 0 quantity)
     if (productApprovals && productApprovals.length > 0) {
       stockRequest.products = stockRequest.products.map((productItem) => {
         const approval = productApprovals.find(
@@ -5392,6 +6064,27 @@ export const completeIncompleteRequest = async (req, res) => {
             approvedQuantity: approval.approvedQuantity,
             approvedRemark: approval.approvedRemark || "",
             approvedSerials: approval.approvedSerials || [],
+            // For 0 quantity products, also update received quantity if it's 0
+            receivedQuantity: approval.approvedQuantity === 0 ? 0 : productItem.receivedQuantity,
+            receivedRemark: approval.approvedQuantity === 0 ? (approval.approvedRemark || "") : productItem.receivedRemark
+          };
+        }
+        return productItem;
+      });
+    }
+
+    // Also update received quantities for 0 quantity products from productReceipts
+    if (productReceipts && productReceipts.length > 0) {
+      stockRequest.products = stockRequest.products.map((productItem) => {
+        const receipt = productReceipts.find(
+          (pr) => pr.productId.toString() === productItem.product.toString()
+        );
+
+        if (receipt && receipt.receivedQuantity === 0) {
+          return {
+            ...productItem.toObject(),
+            receivedQuantity: 0,
+            receivedRemark: receipt.receivedRemark || ""
           };
         }
         return productItem;
@@ -5473,8 +6166,10 @@ export const completeIncompleteRequest = async (req, res) => {
     });
   }
 };
-
 /////************ resolve change approved qty and complete request issue */
+
+
+
 
 export const completeStockRequest = async (req, res) => {
   try {
