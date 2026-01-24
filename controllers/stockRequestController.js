@@ -1164,7 +1164,7 @@ export const getAllStockRequests = async (req, res) => {
 //       .populate("shippingInfo.shippedBy", "_id fullName email")
 //       .populate("receivingInfo.receivedBy", "_id fullName email")
 //       .populate("completionInfo.completedBy", "_id fullName email")
-//       .populate("completionInfo.incompleteBy", "_id fullName email")
+//       .populate("incompleteInfo.incompleteBy", "_id fullName email")
 //       .populate("rejectionInfo.rejectedBy", "_id fullName email")
 //       .lean();
 
@@ -1693,7 +1693,6 @@ export const updateStockRequest = async (req, res) => {
     //   await revertStockForRejectedRequest(existingRequest);
     // }
 
-    // Handle rejection with reason separately
     if (status === "Rejected" && existingRequest.status !== "Rejected") {
       if (!rejectionReason || rejectionReason.trim() === '') {
         return res.status(400).json({
@@ -1703,7 +1702,6 @@ export const updateStockRequest = async (req, res) => {
       }
 
       await revertStockForRejectedRequest(existingRequest);
-      // Add rejection info separately (not in completionInfo)
       updateData.rejectionInfo = {
         rejectedAt: new Date(),
         rejectedBy: userId,
@@ -1796,6 +1794,7 @@ export const updateStockRequest = async (req, res) => {
           };
           break;
         case "Rejected":
+          
           // updateData.completionInfo = {
           //   ...existingRequest.completionInfo,
           //   incompleteOn: currentDate,
@@ -1819,7 +1818,7 @@ export const updateStockRequest = async (req, res) => {
       .populate("approvalInfo.approvedBy", "_id fullName email")
       .populate("shippingInfo.shippedBy", "_id fullName email")
       .populate("receivingInfo.receivedBy", "_id fullName email")
-      .populate("completionInfo.incompleteBy", "_id fullName email")
+      .populate("incompleteInfo.incompleteBy", "_id fullName email")
       .populate("rejectionInfo.rejectedBy", "_id fullName email"); 
     res.status(200).json({
       success: true,
@@ -3738,7 +3737,7 @@ export const rejectShipment = async (req, res) => {
 //       .populate("warehouse", "_id centerName centerCode centerType")
 //       .populate("center", "_id centerName centerCode")
 //       .populate("products.product", "_id productTitle productCode productImage")
-//       .populate("completionInfo.incompleteBy", "_id fullName email")
+//       .populate("incompleteInfo.incompleteBy", "_id fullName email")
 //       .populate("createdBy", "_id fullName email")
 //       .populate("updatedBy", "_id fullName email");
 
@@ -6166,10 +6165,9 @@ export const completeIncompleteRequest = async (req, res) => {
     });
   }
 };
+
+
 /////************ resolve change approved qty and complete request issue */
-
-
-
 
 export const completeStockRequest = async (req, res) => {
   try {
@@ -6859,7 +6857,7 @@ export const updateStockRequestStatus = async (req, res) => {
       .populate("approvalInfo.approvedBy", "_id fullName email")
       .populate("shippingInfo.shippedBy", "_id fullName email")
       .populate("receivingInfo.receivedBy", "_id fullName email")
-      .populate("completionInfo.incompleteBy", "_id fullName email")
+      .populate("incompleteInfo.incompleteBy", "_id fullName email")
       .populate("createdBy", "_id fullName email")
       .populate("updatedBy", "_id fullName email");
 
