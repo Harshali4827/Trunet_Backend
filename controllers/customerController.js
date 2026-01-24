@@ -190,6 +190,99 @@ export const getCustomers = async (req, res) => {
   }
 };
 
+
+export const getCustomersWithoutPagination = async (req, res) => {
+  try {
+    const userPermissions = req.user.role?.permissions || [];
+    const customerModule = userPermissions.find(
+      (perm) => perm.module === "Customer"
+    );
+
+    const canViewAll =
+      customerModule &&
+      customerModule.permissions.includes("view_customer_all_center");
+    const canViewOwn =
+      customerModule &&
+      customerModule.permissions.includes("view_customer_own_center");
+
+    if (!canViewAll && !canViewOwn) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. view_customer_own_center or view_customer_all_center permission required.",
+      });
+    }
+
+    const {
+      search,
+      center,
+      sortBy = "createdAt",
+      sortOrder = "desc",
+    } = req.query;
+
+    let filter = {};
+
+    if (canViewOwn && !canViewAll && req.user.center) {
+      const userCenterId = req.user.center._id || req.user.center;
+      filter.center = userCenterId;
+    } else {
+      if (center) {
+        filter.center = center;
+      }
+    }
+
+    if (search?.trim()) {
+      const searchTerm = search.trim();
+      filter.$or = [
+        { username: { $regex: searchTerm, $options: "i" } },
+        { name: { $regex: searchTerm, $options: "i" } },
+        { mobile: { $regex: searchTerm, $options: "i" } },
+        { email: { $regex: searchTerm, $options: "i" } },
+        { city: { $regex: searchTerm, $options: "i" } },
+        { state: { $regex: searchTerm, $options: "i" } },
+      ];
+    }
+
+    const sort = { [sortBy]: sortOrder === "asc" ? 1 : -1 };
+
+    const customers = await Customer.find(filter)
+      .populate({
+        path: "center",
+        select: "centerName centerType area reseller",
+        populate: [
+          {
+            path: "reseller",
+            select: "businessName",
+          },
+          {
+            path: "area",
+            select: "areaName",
+          }
+        ],
+      })
+      .sort(sort)
+      .select("-__v");
+
+    const totalCustomers = customers.length;
+
+    res.json({
+      success: true,
+      data: customers,
+      totalCustomers,
+    });
+  } catch (error) {
+    console.error("Error fetching customers:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching customers",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : "Internal server error",
+    });
+  }
+};
+
 export const getCustomerById = async (req, res) => {
   try {
     const customer = await Customer.findById(req.params.id).populate({

@@ -6,14 +6,18 @@ import {
   createRepairCost,
   updateRepairCost,
   deleteRepairCost,
+  downloadRepairCostTemplate,
+  bulkImportRepairCosts,
 } from "../controllers/repairCostController.js";
 import { protect } from "../middlewares/authMiddleware.js";
+import upload from '../middlewares/upload.js';
 
 const router = express.Router();
 
 router.use(protect);
 
 router.get("/", getAllRepairCosts);
+router.get("/template", downloadRepairCostTemplate);
 
 router.get("/:id", getRepairCostById);
 
@@ -24,5 +28,6 @@ router.post("/", createRepairCost);
 router.put("/:id", updateRepairCost);
 
 router.delete("/:id", deleteRepairCost);
+router.post("/bulk-import", upload.single('file'), bulkImportRepairCosts);
 
 export default router;
