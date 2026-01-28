@@ -1,7 +1,7 @@
 import express from "express";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
-import { approveRaisePO, createRaisePO, deletePO, getAllRaisePO, rejectRaisePO } from "../controllers/raisePOController.js";
+import { approveRaisePO, createRaisePO, deletePO, getAllRaisePO, getLatestVoucherNumber, rejectRaisePO } from "../controllers/raisePOController.js";
 
 const router = express.Router();
 
@@ -37,5 +37,5 @@ router.delete(
 
 router.put('/:id/approve',protect,approveRaisePO)
 router.put('/:id/reject',protect,rejectRaisePO)
-
+router.get('/latest-voucher',protect, getLatestVoucherNumber);
 export default router;

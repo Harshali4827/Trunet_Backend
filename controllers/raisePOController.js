@@ -332,8 +332,6 @@ export const deletePO = async (req, res) => {
   }
 };
 
-
-
 const handleControllerError = (error, res) => {
   console.error("Controller Error:", error);
 
@@ -382,12 +380,9 @@ const handleControllerError = (error, res) => {
   });
 };
 
-
 export const approveRaisePO = async (req, res) => {
   try {
     const { id } = req.params;
-    
-    // Only admin can approve
     if (!isAdmin(req)) {
       return res.status(403).json({
         success: false,
@@ -484,5 +479,43 @@ export const rejectRaisePO = async (req, res) => {
   } catch (error) {
     console.error("Error rejecting purchase order:", error);
     handleControllerError(error, res);
+  }
+};
+
+export const getLatestVoucherNumber = async (req, res) => {
+  try {
+    const { financialYear } = req.query;
+    
+    if (!financialYear) {
+      return res.status(400).json({
+        success: false,
+        message: 'financialYear is required'
+      });
+    }
+    
+    const query = {
+      voucherNo: { 
+        $regex: `^STELE/\\d{2}/${financialYear}$`
+      }
+    };
+    
+    const latestVoucher = await RaisePO.findOne(query)
+      .sort({ createdAt: -1 })
+      .select('voucherNo');
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        voucherNo: latestVoucher?.voucherNo || null,
+        financialYear
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error fetching latest voucher number:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch latest voucher number'
+    });
   }
 };
