@@ -3,6 +3,7 @@
 import Center from "../models/Center.js";
 import Area from "../models/Area.js";
 import Reseller from "../models/Reseller.js";
+import { checkPermission, isSuperAdmin } from "../utils/checkPermissions.js";
 
 export const createCenter = async (req, res) => {
   try {
@@ -11,17 +12,24 @@ export const createCenter = async (req, res) => {
       (perm) => perm.module === "Center"
     );
 
-    if (
-      !centerModule ||
-      !centerModule.permissions.includes("manage_all_center")
-    ) {
+    // if (
+    //   !centerModule ||
+    //   !centerModule.permissions.includes("manage_all_center")
+    // ) {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message:
+    //       "Access denied. manage_all_center permission required to create centers.",
+    //   });
+    // }
+
+    if (!isSuperAdmin(req.user) && !checkPermission(req.user, "Center", "manage_all_center")) {
       return res.status(403).json({
         success: false,
         message:
           "Access denied. manage_all_center permission required to create centers.",
       });
     }
-
     const {
       resellerId,
       areaId,

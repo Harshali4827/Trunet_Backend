@@ -19,7 +19,7 @@ import {
   getStockRequestCount,
   getStockRequestNotifications,
   updateWarehouseChallanApproval,
-  updateCenterChallanApproval,
+  updateCenterChallanApproval
 } from "../controllers/stockRequestController.js";
 import {
   validateCreateStockRequest,

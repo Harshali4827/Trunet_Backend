@@ -121,7 +121,7 @@ export const protect = async (req, res, next) => {
     });
   }
 };
-// Keep other middleware functions as they are...
+
 export const restrictTo = (...roles) => {
   return (req, res, next) => {
     if (!roles.includes(req.user.role.roleTitle)) {
@@ -134,6 +134,75 @@ export const restrictTo = (...roles) => {
   };
 };
 
+// export const authorize = (requiredPermissions = []) => {
+//   return (req, res, next) => {
+//     if (!req.user) {
+//       return res.status(401).json({
+//         success: false,
+//         message: "Not authenticated",
+//       });
+//     }
+//     if (requiredPermissions.length === 0) {
+//       return next();
+//     }
+//     const userPermissions = req.user.role?.permissions || [];
+
+//     const hasPermission = requiredPermissions.some((requiredPerm) => {
+//       return userPermissions.some((modulePerm) => {
+//         return modulePerm.permissions.includes(requiredPerm);
+//       });
+//     });
+
+//     if (!hasPermission) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Access denied. Insufficient permissions.",
+//       });
+//     }
+
+//     next();
+//   };
+// };
+
+// export const authorizeAccess = (module, ...actions) => {
+//   return (req, res, next) => {
+//     if (!req.user) {
+//       return res.status(401).json({
+//         success: false,
+//         message: "Not authenticated",
+//       });
+//     }
+
+//     const userPermissions = req.user.role?.permissions || [];
+
+//     const modulePermissions = userPermissions.find(
+//       (perm) => perm.module.toLowerCase() === module.toLowerCase()
+//     );
+
+//     if (!modulePermissions) {
+//       return res.status(403).json({
+//         success: false,
+//         message: `Access denied. No permissions for ${module} module.`,
+//       });
+//     }
+//     const hasPermission = actions.some((action) =>
+//       modulePermissions.permissions.includes(action)
+//     );
+
+//     if (!hasPermission) {
+//       return res.status(403).json({
+//         success: false,
+//         message: `Access denied. Required one of: ${actions.join(
+//           ", "
+//         )} for ${module} module.`,
+//       });
+//     }
+
+//     next();
+//   };
+// };
+
+
 export const authorize = (requiredPermissions = []) => {
   return (req, res, next) => {
     if (!req.user) {
@@ -142,9 +211,16 @@ export const authorize = (requiredPermissions = []) => {
         message: "Not authenticated",
       });
     }
+
+    // Check if user's role is "Superadmin"
+    if (req.user.role?.roleTitle?.toLowerCase() === "superadmin") {
+      return next(); // Superadmin has access to everything
+    }
+
     if (requiredPermissions.length === 0) {
       return next();
     }
+
     const userPermissions = req.user.role?.permissions || [];
 
     const hasPermission = requiredPermissions.some((requiredPerm) => {
@@ -165,12 +241,15 @@ export const authorize = (requiredPermissions = []) => {
 };
 
 export const authorizeAccess = (module, ...actions) => {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({
         success: false,
         message: "Not authenticated",
       });
+    }
+    if (req.user.role?.roleTitle?.toLowerCase() === "superadmin") {
+      return next();
     }
 
     const userPermissions = req.user.role?.permissions || [];
@@ -185,6 +264,7 @@ export const authorizeAccess = (module, ...actions) => {
         message: `Access denied. No permissions for ${module} module.`,
       });
     }
+
     const hasPermission = actions.some((action) =>
       modulePermissions.permissions.includes(action)
     );

@@ -1,358 +1,3 @@
-// import mongoose from "mongoose";
-
-// const repairTransferSchema = new mongoose.Schema({
-//   date: {
-//     type: Date,
-//     required: true,
-//     default: Date.now
-//   },
-//   faultyStock: {
-//     type: mongoose.Schema.Types.ObjectId,
-//     ref: "FaultyStock",
-//     required: true
-//   },
-//   fromCenter: {
-//     type: mongoose.Schema.Types.ObjectId,
-//     ref: "Center",
-//     required: true
-//   },
-//   toCenter: {
-//     type: mongoose.Schema.Types.ObjectId,
-//     ref: "Center",
-//     required: true
-//   },
-//   product: {
-//     type: mongoose.Schema.Types.ObjectId,
-//     ref: "Product",
-//     required: true
-//   },
-//   quantity: {
-//     type: Number,
-//     required: true,
-//     min: 1
-//   },
-//   repairedQty: {
-//     type: Number,
-//     default: 0,
-//     min: 0
-//   },
-//   irrepairedQty: {
-//     type: Number,
-//     default: 0,
-//     min: 0
-//   },
-//   underRepairQty: {
-//     type: Number,
-//     default: 0,
-//     min: 0
-//   },
-//   returnedQty: {
-//     type: Number,
-//     default: 0
-//   },
-//   isSerialized: {
-//     type: Boolean,
-//     default: true
-//   },
-//   serialNumbers: [{
-//     serialNumber: {
-//       type: String,
-//       required: true
-//     },
-//     status: {
-//       type: String,
-//       enum: ["damaged", "under_repair", "repaired", "irreparable", "disposed", "returned_to_vendor", "returned", "transferred","partially_repaired","pending_under_repair"],
-//       required: true
-//     },
-//     quantity: {
-//       type: Number,
-//       default: 1
-//     },
-//     repairedQty: {
-//       type: Number,
-//       default: 0
-//     },
-//     irrepairedQty: {
-//       type: Number,
-//       default: 0
-//     },
-//     underRepairQty: {
-//       type: Number,
-//       default: 0
-//     },
-//     repairHistory: [{
-//       date: Date,
-//       status: String,
-//       remark: String,
-//       quantity: Number,
-//       repairedQty: Number,
-//       irrepairedQty: Number,
-//       updatedBy: {
-//         type: mongoose.Schema.Types.ObjectId,
-//         ref: "User"
-//       },
-//       cost: Number
-//     }]
-//   }],
-//   transferRemark: {
-//     type: String,
-//     trim: true
-//   },
-//   transferredBy: {
-//     type: mongoose.Schema.Types.ObjectId,
-//     ref: "User",
-//     required: true
-//   },
-//   status: {
-//     type: String,
-//     enum: ["transferred", "in_repair", "repaired", "returned", "cancelled", "partially_repaired", "under_repair", "irreparable","partially_repaired","pending_under_repair"],
-//     default: "transferred"
-//   },
-//   repairUpdates: [{
-//     date: {
-//       type: Date,
-//       default: Date.now
-//     },
-//     status: String,
-//     remark: String,
-//     quantity: Number,
-//     repairedQty: Number,
-//     irrepairedQty: Number,
-//     updatedBy: {
-//       type: mongoose.Schema.Types.ObjectId,
-//       ref: "User"
-//     },
-//     cost: {
-//       type: Number,
-//       default: 0
-//     }
-//   }],
-//   expectedReturnDate: Date,
-//   actualReturnDate: Date,
-//   totalRepairCost: {
-//     type: Number,
-//     default: 0
-//   },
-//   lastRepairUpdate: Date
-// }, { 
-//   timestamps: true,
-//   toJSON: { virtuals: true },
-//   toObject: { virtuals: true }
-// });
-
-// repairTransferSchema.virtual('damagedQty').get(function() {
-//   return this.underRepairQty;
-// });
-
-// repairTransferSchema.methods.updateStatusAndQuantities = function() {
-//   let totalRepaired = 0;
-//   let totalIrrepaired = 0;
-//   let totalUnderRepair = 0;
-//   let totalReturned = 0;
-  
-//   if (!this.isSerialized || this.serialNumbers.length === 0) {
-//     totalRepaired = this.repairedQty || 0;
-//     totalIrrepaired = this.irrepairedQty || 0;
-//     totalUnderRepair = this.underRepairQty || 0;
-//     totalReturned = this.returnedQty || 0;
-
-//     if (totalUnderRepair === 0 && this.quantity > (totalRepaired + totalIrrepaired + totalReturned)) {
-//       totalUnderRepair = this.quantity - totalRepaired - totalIrrepaired - totalReturned;
-//       this.underRepairQty = totalUnderRepair;
-//     }
-//   } else {
-//     this.serialNumbers.forEach(serial => {
-//       const serialQty = serial.quantity || 1;
-      
-//       if (serial.status === "repaired") {
-//         totalRepaired += serialQty;
-//       } else if (serial.status === "irreparable") {
-//         totalIrrepaired += serialQty;
-//       } else if (serial.status === "returned") {
-//         totalReturned += serialQty;
-//       } else {
-//         const processedQty = (serial.repairedQty || 0) + (serial.irrepairedQty || 0);
-//         serial.underRepairQty = Math.max(0, serialQty - processedQty);
-//         totalUnderRepair += serial.underRepairQty;
-//       }
-//     });
-
-//     this.repairedQty = totalRepaired;
-//     this.irrepairedQty = totalIrrepaired;
-//     this.underRepairQty = totalUnderRepair;
-//     this.returnedQty = totalReturned;
-//   }
-//   const calculatedTotal = totalRepaired + totalIrrepaired + totalUnderRepair + totalReturned;
-//   if (calculatedTotal !== this.quantity) {
-//     console.warn(`Quantity mismatch in repair transfer ${this._id}: ${calculatedTotal} vs ${this.quantity}`);
-//     if (Math.abs(calculatedTotal - this.quantity) <= 2) {
-//       this.quantity = calculatedTotal;
-//     }
-//   }
-  
-//   if (totalUnderRepair > 0) {
-//     this.status = "under_repair";
-//   } else if (totalRepaired === this.quantity) {
-//     this.status = "repaired";
-//   } else if (totalIrrepaired === this.quantity) {
-//     this.status = "irreparable";
-//   } else if (totalReturned === this.quantity) {
-//     this.status = "returned";
-//   } else if (totalRepaired > 0 && totalIrrepaired > 0) {
-//     this.status = "partially_repaired";
-//   } else {
-//     this.status = "transferred";
-//   }
-  
-//   this.lastRepairUpdate = new Date();
-// };
-
-// repairTransferSchema.methods.addItemsToTransfer = function(items, transferredBy, remark) {
-//   console.log(`Adding ${items.length} items to existing transfer ${this._id}`);
-  
-//   if (!this.isSerialized) {
-//     const additionalQty = items.reduce((sum, item) => sum + item.quantity, 0);
-
-//     this.quantity += additionalQty;
-//     this.underRepairQty = (this.underRepairQty || 0) + additionalQty;
-    
-//     console.log(`Non-serialized: Added ${additionalQty} items. New total: ${this.quantity}, Under repair: ${this.underRepairQty}`);
-//   } else {
-//     const existingSerials = this.serialNumbers.map(sn => sn.serialNumber);
-//     const newSerials = [];
-    
-//     for (const item of items) {
-//       if (existingSerials.includes(item.serialNumber)) {
-//         throw new Error(`Serial ${item.serialNumber} already exists in this transfer`);
-//       }
-      
-//       newSerials.push({
-//         serialNumber: item.serialNumber,
-//         status: "under_repair",
-//         quantity: item.quantity || 1,
-//         repairedQty: 0,
-//         irrepairedQty: 0,
-//         underRepairQty: item.quantity || 1,
-//         repairHistory: [{
-//           date: new Date(),
-//           status: "under_repair",
-//           remark: remark || "Transferred to repair center",
-//           updatedBy: transferredBy,
-//           cost: 0
-//         }]
-//       });
-//     }
-    
-//     this.serialNumbers.push(...newSerials);
-
-//     this.quantity += newSerials.length;
-//     console.log(`Serialized: Added ${newSerials.length} new serials. New total: ${this.quantity}`);
-//   }
-  
-//   this.repairUpdates.push({
-//     date: new Date(),
-//     status: "under_repair",
-//     remark: remark || `Additional items transferred to repair center`,
-//     quantity: items.length,
-//     updatedBy: transferredBy,
-//     cost: 0
-//   });
-
-//   this.updateStatusAndQuantities();
-  
-//   return {
-//     success: true,
-//     added: items.length,
-//     newTotal: this.quantity,
-//     newStatus: this.status
-//   };
-// };
-
-// repairTransferSchema.methods.updateRepairQuantities = function(serialNumber, repairedQty, irrepairedQty, updatedBy, remark, cost = 0) {
-//   const serial = this.serialNumbers.find(sn => sn.serialNumber === serialNumber);
-//   if (!serial) {
-//     throw new Error(`Serial number ${serialNumber} not found in repair transfer`);
-//   }
-  
-//   const serialQty = serial.quantity || 1;
-//   const currentProcessed = (serial.repairedQty || 0) + (serial.irrepairedQty || 0);
-//   const remainingQty = serialQty - currentProcessed;
-
-//   if (repairedQty + irrepairedQty > remainingQty) {
-//     throw new Error(`Cannot process ${repairedQty + irrepairedQty} items. Only ${remainingQty} remaining for ${serialNumber}`);
-//   }
-  
-//   serial.repairedQty = (serial.repairedQty || 0) + repairedQty;
-//   serial.irrepairedQty = (serial.irrepairedQty || 0) + irrepairedQty;
-//   serial.underRepairQty = Math.max(0, serialQty - serial.repairedQty - serial.irrepairedQty);
-
-//   if (serial.repairedQty === serialQty) {
-//     serial.status = "repaired";
-//   } else if (serial.irrepairedQty === serialQty) {
-//     serial.status = "irreparable";
-//   } else if (serial.underRepairQty > 0) {
-//     serial.status = "under_repair";
-//   } else {
-//     serial.status = "damaged";
-//   }
-
-//   serial.repairHistory.push({
-//     date: new Date(),
-//     status: serial.status,
-//     repairedQty: repairedQty,
-//     irrepairedQty: irrepairedQty,
-//     quantity: repairedQty + irrepairedQty,
-//     remark: remark || `Repair update: ${repairedQty} repaired, ${irrepairedQty} irrepaired`,
-//     updatedBy: updatedBy,
-//     cost: cost * (repairedQty + irrepairedQty)
-//   });
-
-//   this.repairUpdates.push({
-//     date: new Date(),
-//     status: this.status,
-//     remark: remark || `Updated ${serialNumber}: ${repairedQty} repaired, ${irrepairedQty} irrepaired`,
-//     quantity: repairedQty + irrepairedQty,
-//     repairedQty: repairedQty,
-//     irrepairedQty: irrepairedQty,
-//     updatedBy: updatedBy,
-//     cost: cost * (repairedQty + irrepairedQty)
-//   });
-
-//   if (cost > 0) {
-//     this.totalRepairCost = (this.totalRepairCost || 0) + (cost * (repairedQty + irrepairedQty));
-//   }
-//   this.updateStatusAndQuantities();
-// };
-
-// repairTransferSchema.methods.getQuantitySummary = function() {
-//   return {
-//     total: this.quantity,
-//     repaired: this.repairedQty,
-//     irrepaired: this.irrepairedQty,
-//     underRepair: this.underRepairQty,
-//     returned: this.returnedQty,
-//     remaining: this.quantity - (this.repairedQty + this.irrepairedQty + this.returnedQty)
-//   };
-// };
-
-// repairTransferSchema.pre('save', function(next) {
-//   if (this.repairedQty === undefined) this.repairedQty = 0;
-//   if (this.irrepairedQty === undefined) this.irrepairedQty = 0;
-//   if (this.underRepairQty === undefined) this.underRepairQty = 0;
-//   if (this.returnedQty === undefined) this.returnedQty = 0;
-  
-//   if (!this.isSerialized && this.serialNumbers && this.serialNumbers.length > 0) {
-//     console.warn(`Clearing serialNumbers for non-serialized transfer ${this._id}`);
-//     this.serialNumbers = [];
-//   }
-
-//   this.updateStatusAndQuantities();
-  
-//   next();
-// });
-
-// export default mongoose.model("RepairTransfer", repairTransferSchema);
-
 
 
 import mongoose from 'mongoose';
@@ -413,7 +58,6 @@ const repairTransferSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
-  // NEW FIELD: For non-serialized pending transfers
   pendingTransferQty: {
     type: Number,
     default: 0,
@@ -459,7 +103,7 @@ const repairTransferSchema = new mongoose.Schema({
       },
       status: {
         type: String,
-        enum: ["pending_under_repair", "under_repair", "repaired", "irreparable", "returned", "partially_repaired", "transferred","pending_transfer"]
+        enum: ["pending_under_repair", "under_repair", "repaired", "irreparable", "returned", "partially_repaired", "transferred","pending_transfer","partially_repaired"]
       },
       remark: String,
       quantity: {
@@ -482,7 +126,6 @@ const repairTransferSchema = new mongoose.Schema({
         type: Number,
         default: 0
       },
-      // For tracking transfer status
       transferStatus: {
         type: String,
         enum: ["pending", "accepted", "rejected"],
@@ -502,7 +145,6 @@ const repairTransferSchema = new mongoose.Schema({
     technician: String,
     repairRemark: String
   }],
-  // NEW FIELD: For tracking non-serialized pending transfers details
   pendingTransferDetails: [{
     outletId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -562,7 +204,7 @@ const repairTransferSchema = new mongoose.Schema({
   completedAt: Date,
   status: {
     type: String,
-    enum: ["pending_under_repair", "partially_accepted", "under_repair", "repaired", "irreparable", "returned", "cancelled", "completed","transferred","pending_transfer"],
+    enum: ["pending_under_repair", "partially_accepted", "under_repair", "repaired", "irreparable", "returned", "cancelled", "completed","transferred","pending_transfer","partially_repaired"],
     default: "pending_under_repair"
   },
   repairUpdates: [{
@@ -572,7 +214,7 @@ const repairTransferSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ["pending_under_repair", "partially_accepted", "under_repair", "repaired", "irreparable", "returned", "cancelled", "completed", "transferred","pending_transfer"]
+      enum: ["pending_under_repair", "partially_accepted", "under_repair", "repaired", "irreparable", "returned", "cancelled", "completed", "transferred","pending_transfer","partially_repaired"]
     },
     remark: String,
     quantity: {
@@ -587,7 +229,6 @@ const repairTransferSchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
-    // For tracking transfer status
     transferStatus: {
       type: String,
       enum: ["pending", "accepted", "rejected"],
@@ -615,12 +256,10 @@ const repairTransferSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Virtual for accepted quantity
 repairTransferSchema.virtual('acceptedQty').get(function() {
   return this.underRepairQty || 0;
 });
 
-// Virtual for remaining pending quantity
 repairTransferSchema.virtual('remainingPendingQty').get(function() {
   return this.pendingUnderRepairQty || 0;
 });
@@ -629,7 +268,6 @@ repairTransferSchema.methods.markAsPendingTransfer = function(quantity, outletId
   console.log(`Marking ${quantity} items as pending transfer to outlet ${outletId}. IsSerialized: ${this.isSerialized}`);
   
   if (this.isSerialized) {
-    // For SERIALIZED products
     if (!serialNumbers || !Array.isArray(serialNumbers) || serialNumbers.length === 0) {
       throw new Error("Serial numbers are required for serialized products");
     }
@@ -637,8 +275,6 @@ repairTransferSchema.methods.markAsPendingTransfer = function(quantity, outletId
     if (serialNumbers.length !== quantity) {
       throw new Error(`Quantity (${quantity}) doesn't match serial numbers count (${serialNumbers.length})`);
     }
-    
-    // Update each serial from "repaired" to "pending_transfer"
     let updatedCount = 0;
     for (const serialNumber of serialNumbers) {
       const serialIndex = this.serialNumbers.findIndex(sn => 
@@ -667,17 +303,12 @@ repairTransferSchema.methods.markAsPendingTransfer = function(quantity, outletId
     }
     
   } else {
-    // For NON-SERIALIZED products
     if (quantity > this.repairedQty) {
       throw new Error(`Cannot transfer ${quantity} items. Only ${this.repairedQty} repaired items available`);
     }
   }
-  
-  // Update quantities for BOTH types
   this.repairedQty = Math.max(0, this.repairedQty - quantity);
   this.pendingTransferQty = (this.pendingTransferQty || 0) + quantity;
-  
-  // Track destination outlet for this pending transfer
   if (!this.pendingTransferDetails) {
     this.pendingTransferDetails = [];
   }
@@ -692,7 +323,6 @@ repairTransferSchema.methods.markAsPendingTransfer = function(quantity, outletId
     serialNumbers: this.isSerialized ? serialNumbers : []
   });
   
-  // Add to repair updates
   this.repairUpdates.push({
     date: new Date(),
     status: "pending_transfer",
@@ -704,7 +334,6 @@ repairTransferSchema.methods.markAsPendingTransfer = function(quantity, outletId
     serialNumbers: this.isSerialized ? serialNumbers : []
   });
   
-  // Update overall status
   this.updateStatusAndQuantities();
   
   console.log(`After - RepairedQty: ${this.repairedQty}, PendingTransferQty: ${this.pendingTransferQty}`);
@@ -718,9 +347,8 @@ repairTransferSchema.methods.markAsPendingTransfer = function(quantity, outletId
     isSerialized: this.isSerialized
   };
 };
-// Updated updateStatusAndQuantities method
 repairTransferSchema.methods.updateStatusAndQuantities = function() {
-  // For SERIALIZED products
+
   if (this.isSerialized && this.serialNumbers && this.serialNumbers.length > 0) {
     const pendingCount = this.serialNumbers.filter(sn => sn.status === "pending_under_repair").length;
     const underRepairCount = this.serialNumbers.filter(sn => sn.status === "under_repair").length;
@@ -735,9 +363,7 @@ repairTransferSchema.methods.updateStatusAndQuantities = function() {
     this.repairedQty = repairedCount;
     this.irrepairedQty = irrepairedCount;
     this.returnedQty = returnedCount;
-    this.pendingTransferQty = pendingTransferCount; // Now includes serialized pending transfers
-    
-    // Validate quantity matches
+    this.pendingTransferQty = pendingTransferCount;
     const calculatedTotal = pendingCount + underRepairCount + repairedCount + 
                            irrepairedCount + returnedCount + pendingTransferCount + transferredCount;
     if (calculatedTotal !== this.quantity) {
@@ -745,7 +371,6 @@ repairTransferSchema.methods.updateStatusAndQuantities = function() {
     }
   }
   
-  // Determine status
   if (this.quantity === this.returnedQty) {
     this.status = "returned";
   } else if (this.quantity === this.repairedQty) {
@@ -763,14 +388,13 @@ repairTransferSchema.methods.updateStatusAndQuantities = function() {
   } else if (this.repairedQty > 0 || this.irrepairedQty > 0) {
     this.status = "partially_repaired";
   } else if (this.pendingTransferQty > 0) {
-    // For BOTH serialized and non-serialized
+
     this.status = "pending_transfer";
   } else {
     this.status = "pending_under_repair";
   }
 };
 
-// Method to accept pending non-serialized transfer
 repairTransferSchema.methods.acceptPendingTransfer = function(outletId, quantity, acceptedBy, remark) {
   if (this.isSerialized) {
     throw new Error("Use serial-specific methods for serialized products");

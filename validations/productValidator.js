@@ -4,20 +4,35 @@ export const createProductValidator = [
   body("productCategory")
     .notEmpty()
     .withMessage("Product category is required"),
-  body("productTitle")
-    .notEmpty()
-    .withMessage("Product title is required")
-    .custom(async (value, { req }) => {
-      const Product = mongoose.model("Product");
-      const existingProduct = await Product.findOne({ 
-        productTitle: value,
-        ...(req.params.id && { _id: { $ne: req.params.id } })
-      });
-      if (existingProduct) {
-        throw new Error("Product already exists");
-      }
-      return true;
-    }),
+  // body("productTitle")
+  //   .notEmpty()
+  //   .withMessage("Product title is required")
+  //   .custom(async (value, { req }) => {
+  //     const Product = mongoose.model("Product");
+  //     const existingProduct = await Product.findOne({ 
+  //       productTitle: value,
+  //       ...(req.params.id && { _id: { $ne: req.params.id } })
+  //     });
+  //     if (existingProduct) {
+  //       throw new Error("Product already exists");
+  //     }
+  //     return true;
+  //   }),
+body("productTitle")
+  .notEmpty()
+  .withMessage("Product title is required")
+  .custom(async (value, { req }) => {
+    const Product = mongoose.model("Product");
+    // Case-insensitive search
+    const existingProduct = await Product.findOne({ 
+      productTitle: { $regex: new RegExp(`^${value}$`, 'i') },
+      ...(req.params.id && { _id: { $ne: req.params.id } })
+    });
+    if (existingProduct) {
+      throw new Error(`Product title "${value}" already exists`);
+    }
+    return true;
+  }),
   body("productCode")
     .optional({ checkFalsy: true })
     .isString()

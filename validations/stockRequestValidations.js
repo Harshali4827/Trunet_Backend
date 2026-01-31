@@ -139,6 +139,166 @@ const customValidators = {
     return true;
   },
 
+  // Add a new custom validator specifically for markAsIncomplete
+validateProductReceiptsForIncomplete: async (productReceipts, { req }) => {
+  if (
+    !productReceipts ||
+    !Array.isArray(productReceipts) ||
+    productReceipts.length === 0
+  ) {
+    throw new Error("Product receipts are required with received quantities");
+  }
+
+  const { id } = req.params;
+  const stockRequest = await StockRequest.findById(id);
+  if (!stockRequest) {
+    throw new Error("Stock request not found");
+  }
+
+  for (const receipt of productReceipts) {
+    if (!receipt.productId || receipt.receivedQuantity === undefined) {
+      throw new Error(
+        "Each product receipt must have productId and receivedQuantity"
+      );
+    }
+
+    const productExists = stockRequest.products.some(
+      (p) => p.product.toString() === receipt.productId.toString()
+    );
+
+    if (!productExists) {
+      throw new Error(
+        `Product with ID ${receipt.productId} not found in this stock request`
+      );
+    }
+
+    const product = stockRequest.products.find(
+      (p) => p.product.toString() === receipt.productId.toString()
+    );
+
+    if (receipt.receivedQuantity < 0) {
+      throw new Error(
+        `Received quantity cannot be negative for product ${receipt.productId}`
+      );
+    }
+  }
+  return true;
+},
+
+// Add this to your customValidators object
+validateProductApprovalsForIncomplete: async (productApprovals, { req }) => {
+  if (
+    !productApprovals ||
+    !Array.isArray(productApprovals) ||
+    productApprovals.length === 0
+  ) {
+    throw new Error(
+      "Product approvals are required with approved quantities"
+    );
+  }
+
+  const { id } = req.params;
+  const stockRequest = await StockRequest.findById(id);
+  if (!stockRequest) {
+    throw new Error("Stock request not found");
+  }
+
+  for (const approval of productApprovals) {
+    if (!approval.productId || approval.approvedQuantity === undefined) {
+      throw new Error(
+        "Each product approval must have productId and approvedQuantity"
+      );
+    }
+
+    const productExists = stockRequest.products.some(
+      (p) => p.product.toString() === approval.productId.toString()
+    );
+
+    if (!productExists) {
+      throw new Error(
+        `Product with ID ${approval.productId} not found in this stock request`
+      );
+    }
+
+    const product = stockRequest.products.find(
+      (p) => p.product.toString() === approval.productId.toString()
+    );
+
+    // REMOVED: The check that prevents approved quantity > requested quantity
+    // if (approval.approvedQuantity > product.quantity) {
+    //   throw new Error(
+    //     `Approved quantity (${approval.approvedQuantity}) cannot be greater than requested quantity (${product.quantity}) for product ${approval.productId}`
+    //   );
+    // }
+
+    if (approval.approvedQuantity < 0) {
+      throw new Error(
+        `Approved quantity cannot be negative for product ${approval.productId}`
+      );
+    }
+  }
+  return true;
+},
+
+// Also add a validator for receipts that doesn't check received > approved
+validateProductReceiptsForIncompleteCompletion: async (productReceipts, { req }) => {
+  if (
+    !productReceipts ||
+    !Array.isArray(productReceipts) ||
+    productReceipts.length === 0
+  ) {
+    throw new Error("Product receipts are required with received quantities");
+  }
+
+  const { id } = req.params;
+  const stockRequest = await StockRequest.findById(id);
+  if (!stockRequest) {
+    throw new Error("Stock request not found");
+  }
+
+  for (const receipt of productReceipts) {
+    if (!receipt.productId || receipt.receivedQuantity === undefined) {
+      throw new Error(
+        "Each product receipt must have productId and receivedQuantity"
+      );
+    }
+
+    const productExists = stockRequest.products.some(
+      (p) => p.product.toString() === receipt.productId.toString()
+    );
+
+    if (!productExists) {
+      throw new Error(
+        `Product with ID ${receipt.productId} not found in this stock request`
+      );
+    }
+
+    const product = stockRequest.products.find(
+      (p) => p.product.toString() === receipt.productId.toString()
+    );
+
+    // REMOVED: The check that prevents received quantity > approved quantity
+    // if (
+    //   receipt.receivedQuantity >
+    //   (product.approvedQuantity || product.quantity)
+    // ) {
+    //   throw new Error(
+    //     `Received quantity (${
+    //       receipt.receivedQuantity
+    //     }) cannot be greater than approved quantity (${
+    //       product.approvedQuantity || product.quantity
+    //     }) for product ${receipt.productId}`
+    //   );
+    // }
+
+    if (receipt.receivedQuantity < 0) {
+      throw new Error(
+        `Received quantity cannot be negative for product ${receipt.productId}`
+      );
+    }
+  }
+  return true;
+},
   validateProductReceipts: async (productReceipts, { req }) => {
     if (
       !productReceipts ||
@@ -249,9 +409,28 @@ const customValidators = {
   },
 };
 
+// export const handleValidationErrors = (req, res, next) => {
+//   const errors = validationResult(req);
+//   if (!errors.isEmpty()) {
+//     return res.status(400).json({
+//       success: false,
+//       message: firstError.msg,
+//       errors: errors.array().map((error) => ({
+//         field: error.path,
+//         message: error.msg,
+//         value: error.value,
+//       })),
+//     });
+//   }
+//   next();
+// };
+
+
+
 export const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    const firstError = errors.array()[0]; // Add this line
     return res.status(400).json({
       success: false,
       message: firstError.msg,
@@ -264,6 +443,7 @@ export const handleValidationErrors = (req, res, next) => {
   }
   next();
 };
+
 
 export const validateIdParam = [
   param("id")
@@ -568,7 +748,8 @@ export const validateCompleteIncompleteRequest = [
     .optional()
     .isArray({ min: 1 })
     .withMessage("Product approvals array must contain at least one item")
-    .custom(customValidators.validateProductApprovals)
+    // .custom(customValidators.validateProductApprovals)
+    .custom(customValidators.validateProductApprovalsForIncomplete)  
     .withMessage("Product approval validation failed"),
 
   body("productApprovals.*.productId")
@@ -599,7 +780,8 @@ export const validateCompleteIncompleteRequest = [
     .optional()
     .isArray({ min: 1 })
     .withMessage("Product receipts array must contain at least one item")
-    .custom(customValidators.validateProductReceipts)
+    // .custom(customValidators.validateProductReceipts)
+    .custom(customValidators.validateProductReceiptsForIncompleteCompletion)
     .withMessage("Product receipt validation failed"),
 
   body("productReceipts.*.productId")
@@ -651,7 +833,8 @@ export const validateMarkAsIncomplete = [
     .optional()
     .isArray({ min: 1 })
     .withMessage("Received products must be an array with at least one item")
-    .custom(customValidators.validateProductReceipts)
+    // .custom(customValidators.validateProductReceipts)
+    .custom(customValidators.validateProductReceiptsForIncomplete)
     .withMessage("Received products validation failed"),
 
   body("receivedProducts.*.productId")

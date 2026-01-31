@@ -30,6 +30,7 @@ router.get("/me", protect, getMe);
 router.get("/", protect, getAllUsers);
 router.get("/login-history", protect, getLoginHistory);
 router.get("/refresh-token",refreshToken);
+
 router.put(
   "/update-password",
   protect,

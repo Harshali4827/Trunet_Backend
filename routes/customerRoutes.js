@@ -7,6 +7,7 @@ import {
   updateCustomer,
   deleteCustomer,
   importCustomers,
+  getCustomersWithoutPagination,
   
 } from "../controllers/customerController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
@@ -33,6 +34,12 @@ router.get(
   protect,
   authorizeAccess(MODULE, "view_customer_own_center","view_customer_all_center"),
   getCustomers
+);
+router.get(
+  "/all",
+  protect,
+  authorizeAccess(MODULE, "view_customer_own_center","view_customer_all_center"),
+  getCustomersWithoutPagination
 );
 
 router.get(
