@@ -7604,6 +7604,12 @@ export const updateApprovedQuantities = async (req, res) => {
       }
 
       const productDoc = await Product.findById(approval.productId);
+      
+      // Skip validation if approved quantity is 0 (product is not being approved)
+      if (approval.approvedQuantity === 0) {
+        continue;
+      }
+
       const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
 
       if (tracksSerialNumbers && approval.approvedSerials && approval.approvedSerials.length > 0) {
@@ -7676,6 +7682,71 @@ export const updateApprovedQuantities = async (req, res) => {
 
       const currentApprovedQuantity = productItem.approvedQuantity || 0;
       const newApprovedQuantity = approval.approvedQuantity;
+
+      // SKIP processing if approved quantity is 0
+      // This means the product is not being approved
+      if (newApprovedQuantity === 0) {
+        console.log(`[DEBUG] Skipping product ${approval.productId} - approved quantity is 0`);
+        // If there was previously approved quantity, we need to restore it
+        if (currentApprovedQuantity > 0) {
+          console.log(`[DEBUG] Restoring ${currentApprovedQuantity} units for product ${approval.productId}`);
+          
+          const outletStock = await OutletStock.findOne({
+            outlet: stockRequest.warehouse,
+            product: approval.productId,
+          });
+
+          if (outletStock) {
+            const productDoc = await Product.findById(approval.productId);
+            const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
+
+            if (tracksSerialNumbers) {
+              // Restore serial numbers for serialized product
+              const currentApprovedSerials = productItem.approvedSerials || [];
+              console.log(`[DEBUG] Restoring ${currentApprovedSerials.length} serials for product ${approval.productId}`);
+              
+              let restoredCount = 0;
+              for (const serialNumber of currentApprovedSerials) {
+                const serial = outletStock.serialNumbers.find(
+                  (sn) => sn.serialNumber === serialNumber
+                );
+
+                if (serial && serial.status === "in_transit") {
+                  serial.status = "available";
+                  serial.currentLocation = stockRequest.warehouse;
+                  restoredCount++;
+
+                  // Remove the transfer history for this center
+                  serial.transferHistory = serial.transferHistory.filter(
+                    (history) =>
+                      !(
+                        history.toCenter?.toString() ===
+                        stockRequest.center.toString() &&
+                        history.transferType === "outlet_to_center"
+                      )
+                  );
+
+                  console.log(`[DEBUG] Restored serial ${serialNumber} to available`);
+                }
+              }
+
+              if (restoredCount > 0) {
+                outletStock.availableQuantity += restoredCount;
+                outletStock.inTransitQuantity -= restoredCount;
+                await outletStock.save();
+                console.log(`[DEBUG] Updated outlet: Available +${restoredCount}, InTransit -${restoredCount}`);
+              }
+            } else {
+              // Restore non-serialized product quantity
+              outletStock.availableQuantity += currentApprovedQuantity;
+              outletStock.inTransitQuantity -= currentApprovedQuantity;
+              await outletStock.save();
+              console.log(`[DEBUG] Restored ${currentApprovedQuantity} units to available stock`);
+            }
+          }
+        }
+        continue; // Skip to next product
+      }
 
       const outletStock = await OutletStock.findOne({
         outlet: stockRequest.warehouse,
