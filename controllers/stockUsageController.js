@@ -9,6 +9,7 @@ import mongoose from "mongoose";
 import User from "../models/User.js";
 import EntityStockUsage from "../models/EntityStockUsage.js";
 import ReturnRecord from "../models/ReturnRecord.js";
+import ReplacementRecord from "../models/ReplacementRecord.js";
 // import FaultyStock from "../models/FaultyStock.js";
 
 const checkStockUsagePermissions = (req, requiredPermissions = []) => {
