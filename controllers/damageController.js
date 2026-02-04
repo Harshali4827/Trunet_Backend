@@ -211,7 +211,6 @@ export const createDamageReturn = async (req, res) => {
   }
 };
 
-// ... rest of your controller functions remain the same
 export const approveDamageReturn = async (req, res) => {
     try {
       const { hasAccess } = checkStockUsagePermissions(req, ["accept_damage_return"]);
@@ -404,7 +403,6 @@ const markSpecificSerialAsDamaged = async (centerId, productId, specificSerialNu
       throw new Error("Center stock not found");
     }
   
-    // FIX: Look for serial number with 'damage_pending' status
     const serial = centerStock.serialNumbers.find(
       sn => sn.serialNumber === specificSerialNumber && sn.status === "damage_pending"
     );

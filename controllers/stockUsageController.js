@@ -452,7 +452,6 @@ const validateAndCalculateStock = async (item, center) => {
 };
 
 const processStockDeduction = async (stockUsage) => {
-    // Skip stock deduction for damage type as it's handled separately
   if (stockUsage.usageType === "Damage") {
     console.log("Skipping stock deduction for damage type - handled in faulty stock");
     return;
@@ -621,11 +620,6 @@ const addStockToUsageEntity = async (stockUsage) => {
     }
   }
 };
-
-
-/**
- * Update center stock for damaged items
- */
 
 const updateCenterStockForDamage = async (centerId, item, product) => {
   const CenterStock = mongoose.model("CenterStock");
@@ -1204,7 +1198,6 @@ export const getAllStockUsage = async (req, res) => {
     });
   }
 };
-
 
 export const getStockUsageById = async (req, res) => {
   try {
@@ -2340,9 +2333,6 @@ export const rejectDamageRequest = async (req, res) => {
   }
 };
 
-/**
- * Get pending damage requests
- */
 export const getPendingDamageRequests = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
@@ -2419,15 +2409,6 @@ export const getPendingDamageRequests = async (req, res) => {
   }
 };
 
-/**
- * Process damage approval - mark items as damaged in center stock
- */
-/**
- * Process damage approval - mark items as damaged in center stock
- */
-/**
- * Process damage approval - mark items as damaged in center stock
- */
 const processDamageApproval = async (
   stockUsage,
   approvedBy,
@@ -2526,9 +2507,6 @@ const processDamageApproval = async (
   console.log("=== DAMAGE APPROVAL PROCESSING COMPLETED ===");
 };
 
-/**
- * Process damage rejection - restore items to available status
- */
 const processDamageRejection = async (
   stockUsage,
   rejectedBy,
@@ -2613,9 +2591,7 @@ const processDamageRejection = async (
 
   console.log("=== DAMAGE REJECTION PROCESSING COMPLETED ===");
 };
-/**
- * Get damage requests by status (for reporting)
- */
+
 export const getDamageRequestsByStatus = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
@@ -2715,10 +2691,6 @@ export const getDamageRequestsByStatus = async (req, res) => {
   }
 };
 
-/**
- * Reserve stock for damage requests without consuming it
- * This marks serial numbers as 'consumed' temporarily until approval
- */
 const reserveStockForDamage = async (stockUsage) => {
   const CenterStock = mongoose.model("CenterStock");
   const Product = mongoose.model("Product");
@@ -3004,9 +2976,6 @@ export const getStockUsageByCustomer = async (req, res) => {
   }
 };
 
-/**
- * Get stock usage by building - AUTHENTICATED WITH USER CENTER
- */
 export const getStockUsageByBuilding = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
@@ -3162,9 +3131,6 @@ export const getStockUsageByBuilding = async (req, res) => {
   }
 };
 
-/**
- * Get stock usage by control room - AUTHENTICATED WITH USER CENTER
- */
 export const getStockUsageByControlRoom = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
@@ -3292,10 +3258,6 @@ export const getStockUsageByControlRoom = async (req, res) => {
     });
   }
 };
-
-/**
- * Get stock usage by center - ONLY ALLOW ACCESS TO USER'S OWN CENTER
- */
 
 export const getStockUsageByCenter = async (req, res) => {
   try {
@@ -3446,7 +3408,6 @@ export const getStockUsageByCenter = async (req, res) => {
     });
   }
 };
-
 
 export const getProductDevicesByCustomer = async (req, res) => {
   try {
@@ -4277,7 +4238,6 @@ export const getProductDevicesByControlRoom = async (req, res) => {
   }
 };
 
-
 const getConnectionOption = (connectionType, reason) => {
   if (connectionType === "NC") return "New Connection";
   if (connectionType === "Convert") return "Conversion";
@@ -4300,12 +4260,7 @@ const getConnectionTypeSummary = (data) => {
   return summary;
 };
 
-
-
-
-
 /********************** DAMAGE RETURN ****************************/
-
 
 export const changeToDamageReturn = async (req, res) => {
   try {
@@ -4391,10 +4346,6 @@ export const changeToDamageReturn = async (req, res) => {
   }
 };
 
-
-/**
- * Get all Damage Return records with statistics
- */
 export const getDamageReturnRecordsWithStats = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockUsagePermissions(
