@@ -524,14 +524,24 @@ const buildSortOptions = (sortBy = "createdAt", sortOrder = "desc") => {
 const populateOptions = [
   { path: "warehouse", select: "_id centerName centerCode centerType" },
   { path: "center", select: "_id centerName centerCode centerType",
-    populate: {
-      path: "reseller",
-      select: "_id businessName contactNumber name mobile email gstNumber panNumber address1 address2 city state "
-    },
-    populate: {
-      path: "area",
-      select: "_id areaName"
-    }
+    // populate: {
+    //   path: "reseller",
+    //   select: "_id businessName contactNumber name mobile email gstNumber panNumber address1 address2 city state "
+    // },
+    // populate: {
+    //   path: "area",
+    //   select: "_id areaName"
+    // }
+    populate: [
+      {
+        path: "reseller",
+        select: "_id businessName contactNumber name mobile email gstNumber panNumber address1 address2 city state "
+      },
+      {
+        path: "area",
+        select: "_id areaName"
+      }
+    ]
    },
   {
     path: "products.product",

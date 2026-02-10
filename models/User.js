@@ -11,7 +11,6 @@ const userSchema = new mongoose.Schema(
     center: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Center",
-      // Make it optional during registration, will be set after login
     },
     accessibleCenters: [{ 
       type: mongoose.Schema.Types.ObjectId,
