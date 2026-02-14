@@ -955,6 +955,9 @@ const populateOptions = [
 // };
 
 
+//******************* resolve live reseller stock issue *********************
+
+
 export const getAllStockRequests = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(

@@ -1672,7 +1672,6 @@ const buildResellerStockFilter = async (query, permissions, userCenter) => {
     }
   }
 
-  // Handle explicit reseller filter
   if (resellerId || reseller) {
     const resellerFilterValue = resellerId || reseller;
     const resellerFilter = buildArrayFilter(resellerFilterValue);
