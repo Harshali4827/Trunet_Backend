@@ -682,23 +682,202 @@ const populateOptions = [
 //     }
 
 //     const stockMap = await getBulkCenterStock(stockRequests);
+    
+//     // NEW: Get reseller stock data for all centers
+//     const resellerStockMap = new Map();
+//     const centerToResellerMap = new Map(); // Moved outside if block
+    
+//     // Collect all center IDs and product IDs for batch reseller stock lookup
+//     const centerIds = stockRequests.map(req => req.center?._id).filter(Boolean);
+//     const allProductIds = [];
+    
+//     stockRequests.forEach(request => {
+//       request.products.forEach(product => {
+//         if (product.product?._id) {
+//           allProductIds.push(product.product._id.toString());
+//         }
+//       });
+//     });
+    
+//     // Get unique product IDs
+//     const uniqueProductIds = [...new Set(allProductIds)];
+    
+//     if (centerIds.length > 0 && uniqueProductIds.length > 0) {
+//       // Get centers with their reseller information
+//       const centersWithResellers = await Center.find({
+//         _id: { $in: centerIds }
+//       }).populate('reseller', '_id businessName').select('_id reseller');
+      
+//       // Create map of center ID to reseller ID
+//       centersWithResellers.forEach(center => {
+//         if (center.reseller) {
+//           centerToResellerMap.set(center._id.toString(), center.reseller._id);
+//         }
+//       });
+      
+//       // Get all unique reseller IDs
+//       const uniqueResellerIds = [...new Set([...centerToResellerMap.values()])];
+      
+//       if (uniqueResellerIds.length > 0) {
+//         // Fetch reseller stock data in bulk
+//         const ResellerStock = mongoose.model("ResellerStock");
+//         const resellerStocks = await ResellerStock.find({
+//           reseller: { $in: uniqueResellerIds },
+//           product: { $in: uniqueProductIds.map(id => new mongoose.Types.ObjectId(id)) }
+//         }).lean();
+        
+//         // Create a map for quick lookup: key = "resellerId_productId"
+//         resellerStocks.forEach(stock => {
+//           const key = `${stock.reseller}_${stock.product}`;
+          
+//           // Calculate damage repair and center return quantities from serials
+//           let damageRepairCount = 0;
+//           let centerReturnCount = 0;
+//           let availableSerials = [];
+          
+//           if (stock.serialNumbers && stock.serialNumbers.length > 0) {
+//             // Count by source type from serial numbers
+//             const availableSerialsArray = stock.serialNumbers.filter(sn => 
+//               sn.status === "available"
+//             );
+            
+//             availableSerials = availableSerialsArray.map(sn => sn.serialNumber);
+            
+//             damageRepairCount = availableSerialsArray.filter(
+//               sn => sn.sourceType === "damage_repair"
+//             ).length;
+            
+//             centerReturnCount = availableSerialsArray.filter(
+//               sn => sn.sourceType === "center_return"
+//             ).length;
+//           } else {
+//             // For non-serialized products, use sourceBreakdown
+//             damageRepairCount = stock.sourceBreakdown?.damageRepairQuantity || 0;
+//             centerReturnCount = stock.sourceBreakdown?.centerReturnQuantity || 0;
+//           }
+          
+//           resellerStockMap.set(key, {
+//             totalQuantity: stock.totalQuantity || 0,
+//             availableQuantity: stock.availableQuantity || 0,
+//             consumedQuantity: stock.consumedQuantity || 0,
+//             damagedQuantity: stock.damagedQuantity || 0,
+//             repairQuantity: stock.repairQuantity || 0,
+//             sourceBreakdown: stock.sourceBreakdown || {
+//               damageRepairQuantity: damageRepairCount,
+//               centerReturnQuantity: centerReturnCount,
+//               directPurchaseQuantity: stock.availableQuantity - damageRepairCount - centerReturnCount
+//             },
+//             availableSerials: availableSerials,
+//             availableSerialsCount: availableSerials.length,
+//             damageRepairSerialsCount: damageRepairCount,
+//             centerReturnSerialsCount: centerReturnCount
+//           });
+//         });
+//       }
+//     }
 
-//     const stockRequestsWithCenterStock = stockRequests.map((request) => {
-//       const productsWithStock = request.products.map((product) => {
+//     const stockRequestsWithEnhancedData = stockRequests.map((request) => {
+//       const centerId = request.center?._id?.toString();
+//       const resellerId = centerId ? centerToResellerMap.get(centerId) : null;
+      
+//       const productsWithEnhancedData = request.products.map((product) => {
 //         if (!product.product?._id || !request.center?._id) return product;
 
 //         const stockKey = `${request.center._id}_${product.product._id}`;
 //         const centerStockQuantity = stockMap.get(stockKey) || 0;
+        
+//         // Get reseller stock data
+//         let resellerStockInfo = null;
+//         if (resellerId) {
+//           const resellerStockKey = `${resellerId}_${product.product._id}`;
+//           resellerStockInfo = resellerStockMap.get(resellerStockKey);
+//         }
 
 //         return {
 //           ...product,
 //           centerStockQuantity,
+//           resellerStock: resellerStockInfo ? {
+//             totalQuantity: resellerStockInfo.totalQuantity,
+//             availableQuantity: resellerStockInfo.availableQuantity,
+//             availableBreakdown: {
+//               damageRepair: resellerStockInfo.sourceBreakdown.damageRepairQuantity,
+//               centerReturn: resellerStockInfo.sourceBreakdown.centerReturnQuantity,
+//               directPurchase: resellerStockInfo.sourceBreakdown.directPurchaseQuantity,
+//               total: resellerStockInfo.availableQuantity
+//             },
+//             sourceBreakdown: resellerStockInfo.sourceBreakdown,
+//             availableSerials: resellerStockInfo.availableSerials,
+//             availableSerialsCount: resellerStockInfo.availableSerialsCount,
+//             damageRepairCount: resellerStockInfo.damageRepairSerialsCount,
+//             centerReturnCount: resellerStockInfo.centerReturnSerialsCount,
+//             hasResellerStock: true
+//           } : {
+//             totalQuantity: 0,
+//             availableQuantity: 0,
+//             availableBreakdown: {
+//               damageRepair: 0,
+//               centerReturn: 0,
+//               directPurchase: 0,
+//               total: 0
+//             },
+//             sourceBreakdown: {
+//               damageRepairQuantity: 0,
+//               centerReturnQuantity: 0,
+//               directPurchaseQuantity: 0
+//             },
+//             availableSerials: [],
+//             availableSerialsCount: 0,
+//             damageRepairCount: 0,
+//             centerReturnCount: 0,
+//             hasResellerStock: false
+//           }
 //         };
+//       });
+
+//       // Calculate totals for the request
+//       const resellerStockTotals = productsWithEnhancedData.reduce((totals, product) => {
+//         totals.totalAvailable += product.resellerStock.availableQuantity;
+//         totals.damageRepair += product.resellerStock.availableBreakdown.damageRepair;
+//         totals.centerReturn += product.resellerStock.availableBreakdown.centerReturn;
+//         totals.directPurchase += product.resellerStock.availableBreakdown.directPurchase;
+//         return totals;
+//       }, {
+//         totalAvailable: 0,
+//         damageRepair: 0,
+//         centerReturn: 0,
+//         directPurchase: 0
 //       });
 
 //       return {
 //         ...request,
-//         products: productsWithStock,
+//         products: productsWithEnhancedData,
+//         stockSummary: {
+//           centerStock: productsWithEnhancedData.reduce((sum, product) => 
+//             sum + product.centerStockQuantity, 0
+//           ),
+//           resellerStock: {
+//             totalAvailable: resellerStockTotals.totalAvailable,
+//             breakdown: {
+//               damageRepair: resellerStockTotals.damageRepair,
+//               centerReturn: resellerStockTotals.centerReturn,
+//               directPurchase: resellerStockTotals.directPurchase,
+//               percentage: {
+//                 damageRepair: resellerStockTotals.totalAvailable > 0 ? 
+//                   Math.round((resellerStockTotals.damageRepair / resellerStockTotals.totalAvailable) * 100) : 0,
+//                 centerReturn: resellerStockTotals.totalAvailable > 0 ? 
+//                   Math.round((resellerStockTotals.centerReturn / resellerStockTotals.totalAvailable) * 100) : 0,
+//                 directPurchase: resellerStockTotals.totalAvailable > 0 ? 
+//                   Math.round((resellerStockTotals.directPurchase / resellerStockTotals.totalAvailable) * 100) : 0
+//               }
+//             }
+//           },
+//           resellerInfo: resellerId ? {
+//             hasReseller: true,
+//             resellerId: resellerId
+//           } : {
+//             hasReseller: false
+//           }
+//         }
 //       };
 //     });
 
@@ -707,10 +886,33 @@ const populateOptions = [
 //       return acc;
 //     }, {});
 
+//     // Calculate overall statistics across all requests
+//     const overallStats = stockRequestsWithEnhancedData.reduce((stats, request) => {
+//       stats.totalRequests += 1;
+//       stats.totalResellerAvailable += request.stockSummary.resellerStock.totalAvailable;
+//       stats.totalDamageRepair += request.stockSummary.resellerStock.breakdown.damageRepair;
+//       stats.totalCenterReturn += request.stockSummary.resellerStock.breakdown.centerReturn;
+//       stats.totalDirectPurchase += request.stockSummary.resellerStock.breakdown.directPurchase;
+      
+//       // Count requests with reseller stock
+//       if (request.stockSummary.resellerInfo.hasReseller) {
+//         stats.requestsWithReseller += 1;
+//       }
+      
+//       return stats;
+//     }, {
+//       totalRequests: 0,
+//       totalResellerAvailable: 0,
+//       totalDamageRepair: 0,
+//       totalCenterReturn: 0,
+//       totalDirectPurchase: 0,
+//       requestsWithReseller: 0
+//     });
+
 //     res.status(200).json({
 //       success: true,
 //       message: "Stock requests retrieved successfully",
-//       data: stockRequestsWithCenterStock,
+//       data: stockRequestsWithEnhancedData,
 //       pagination: {
 //         currentPage: parseInt(page),
 //         totalPages: Math.ceil(total / limit),
@@ -721,6 +923,26 @@ const populateOptions = [
 //         status: statusStats,
 //         total: total,
 //       },
+//       summary: {
+//         overallResellerStock: {
+//           totalAvailable: overallStats.totalResellerAvailable,
+//           breakdown: {
+//             damageRepair: overallStats.totalDamageRepair,
+//             centerReturn: overallStats.totalCenterReturn,
+//             directPurchase: overallStats.totalDirectPurchase
+//           },
+//           percentage: {
+//             damageRepair: overallStats.totalResellerAvailable > 0 ? 
+//               Math.round((overallStats.totalDamageRepair / overallStats.totalResellerAvailable) * 100) : 0,
+//             centerReturn: overallStats.totalResellerAvailable > 0 ? 
+//               Math.round((overallStats.totalCenterReturn / overallStats.totalResellerAvailable) * 100) : 0,
+//             directPurchase: overallStats.totalResellerAvailable > 0 ? 
+//               Math.round((overallStats.totalDirectPurchase / overallStats.totalResellerAvailable) * 100) : 0
+//           }
+//         },
+//         requestsWithResellerStock: overallStats.requestsWithReseller,
+//         totalRequestsWithReseller: overallStats.totalRequests
+//       }
 //     });
 //   } catch (error) {
 //     console.error("Error retrieving stock requests:", error);
@@ -731,8 +953,6 @@ const populateOptions = [
 //     });
 //   }
 // };
-
-
 
 
 export const getAllStockRequests = async (req, res) => {
@@ -787,7 +1007,6 @@ export const getAllStockRequests = async (req, res) => {
                 centerIds.some(matchingId => matchingId.toString() === centerId.toString())
               );
             } else {
-    
               if (!centerIds.some(id => id.toString() === filter.center.toString())) {
                 filter.center = { $in: [] };
               }
@@ -859,9 +1078,9 @@ export const getAllStockRequests = async (req, res) => {
 
     const stockMap = await getBulkCenterStock(stockRequests);
     
-    // NEW: Get reseller stock data for all centers
+    // Get reseller stock data for all centers
     const resellerStockMap = new Map();
-    const centerToResellerMap = new Map(); // Moved outside if block
+    const centerToResellerMap = new Map();
     
     // Collect all center IDs and product IDs for batch reseller stock lookup
     const centerIds = stockRequests.map(req => req.center?._id).filter(Boolean);
@@ -941,7 +1160,7 @@ export const getAllStockRequests = async (req, res) => {
             sourceBreakdown: stock.sourceBreakdown || {
               damageRepairQuantity: damageRepairCount,
               centerReturnQuantity: centerReturnCount,
-              directPurchaseQuantity: stock.availableQuantity - damageRepairCount - centerReturnCount
+              directPurchaseQuantity: (stock.availableQuantity || 0) - damageRepairCount - centerReturnCount
             },
             availableSerials: availableSerials,
             availableSerialsCount: availableSerials.length,
@@ -969,6 +1188,28 @@ export const getAllStockRequests = async (req, res) => {
           resellerStockInfo = resellerStockMap.get(resellerStockKey);
         }
 
+        // Default reseller stock object to prevent undefined errors
+        const defaultResellerStock = {
+          totalQuantity: 0,
+          availableQuantity: 0,
+          availableBreakdown: {
+            damageRepair: 0,
+            centerReturn: 0,
+            directPurchase: 0,
+            total: 0
+          },
+          sourceBreakdown: {
+            damageRepairQuantity: 0,
+            centerReturnQuantity: 0,
+            directPurchaseQuantity: 0
+          },
+          availableSerials: [],
+          availableSerialsCount: 0,
+          damageRepairCount: 0,
+          centerReturnCount: 0,
+          hasResellerStock: false
+        };
+
         return {
           ...product,
           centerStockQuantity,
@@ -976,46 +1217,34 @@ export const getAllStockRequests = async (req, res) => {
             totalQuantity: resellerStockInfo.totalQuantity,
             availableQuantity: resellerStockInfo.availableQuantity,
             availableBreakdown: {
-              damageRepair: resellerStockInfo.sourceBreakdown.damageRepairQuantity,
-              centerReturn: resellerStockInfo.sourceBreakdown.centerReturnQuantity,
-              directPurchase: resellerStockInfo.sourceBreakdown.directPurchaseQuantity,
-              total: resellerStockInfo.availableQuantity
+              damageRepair: resellerStockInfo.sourceBreakdown?.damageRepairQuantity || 0,
+              centerReturn: resellerStockInfo.sourceBreakdown?.centerReturnQuantity || 0,
+              directPurchase: resellerStockInfo.sourceBreakdown?.directPurchaseQuantity || 0,
+              total: resellerStockInfo.availableQuantity || 0
             },
-            sourceBreakdown: resellerStockInfo.sourceBreakdown,
-            availableSerials: resellerStockInfo.availableSerials,
-            availableSerialsCount: resellerStockInfo.availableSerialsCount,
-            damageRepairCount: resellerStockInfo.damageRepairSerialsCount,
-            centerReturnCount: resellerStockInfo.centerReturnSerialsCount,
-            hasResellerStock: true
-          } : {
-            totalQuantity: 0,
-            availableQuantity: 0,
-            availableBreakdown: {
-              damageRepair: 0,
-              centerReturn: 0,
-              directPurchase: 0,
-              total: 0
-            },
-            sourceBreakdown: {
+            sourceBreakdown: resellerStockInfo.sourceBreakdown || {
               damageRepairQuantity: 0,
               centerReturnQuantity: 0,
               directPurchaseQuantity: 0
             },
-            availableSerials: [],
-            availableSerialsCount: 0,
-            damageRepairCount: 0,
-            centerReturnCount: 0,
-            hasResellerStock: false
-          }
+            availableSerials: resellerStockInfo.availableSerials || [],
+            availableSerialsCount: resellerStockInfo.availableSerialsCount || 0,
+            damageRepairCount: resellerStockInfo.damageRepairSerialsCount || 0,
+            centerReturnCount: resellerStockInfo.centerReturnSerialsCount || 0,
+            hasResellerStock: true
+          } : defaultResellerStock
         };
       });
 
-      // Calculate totals for the request
+      // Calculate totals for the request with safe access
       const resellerStockTotals = productsWithEnhancedData.reduce((totals, product) => {
-        totals.totalAvailable += product.resellerStock.availableQuantity;
-        totals.damageRepair += product.resellerStock.availableBreakdown.damageRepair;
-        totals.centerReturn += product.resellerStock.availableBreakdown.centerReturn;
-        totals.directPurchase += product.resellerStock.availableBreakdown.directPurchase;
+        const resellerStock = product.resellerStock || defaultResellerStock;
+        const availableBreakdown = resellerStock.availableBreakdown || defaultResellerStock.availableBreakdown;
+        
+        totals.totalAvailable += resellerStock.availableQuantity || 0;
+        totals.damageRepair += availableBreakdown.damageRepair || 0;
+        totals.centerReturn += availableBreakdown.centerReturn || 0;
+        totals.directPurchase += availableBreakdown.directPurchase || 0;
         return totals;
       }, {
         totalAvailable: 0,
@@ -1029,7 +1258,7 @@ export const getAllStockRequests = async (req, res) => {
         products: productsWithEnhancedData,
         stockSummary: {
           centerStock: productsWithEnhancedData.reduce((sum, product) => 
-            sum + product.centerStockQuantity, 0
+            sum + (product.centerStockQuantity || 0), 0
           ),
           resellerStock: {
             totalAvailable: resellerStockTotals.totalAvailable,
@@ -1062,16 +1291,20 @@ export const getAllStockRequests = async (req, res) => {
       return acc;
     }, {});
 
-    // Calculate overall statistics across all requests
+    // Calculate overall statistics across all requests with safe access
     const overallStats = stockRequestsWithEnhancedData.reduce((stats, request) => {
       stats.totalRequests += 1;
-      stats.totalResellerAvailable += request.stockSummary.resellerStock.totalAvailable;
-      stats.totalDamageRepair += request.stockSummary.resellerStock.breakdown.damageRepair;
-      stats.totalCenterReturn += request.stockSummary.resellerStock.breakdown.centerReturn;
-      stats.totalDirectPurchase += request.stockSummary.resellerStock.breakdown.directPurchase;
       
-      // Count requests with reseller stock
-      if (request.stockSummary.resellerInfo.hasReseller) {
+      const stockSummary = request.stockSummary || { resellerStock: { totalAvailable: 0, breakdown: {} } };
+      const resellerStock = stockSummary.resellerStock || { totalAvailable: 0, breakdown: {} };
+      const breakdown = resellerStock.breakdown || {};
+      
+      stats.totalResellerAvailable += resellerStock.totalAvailable || 0;
+      stats.totalDamageRepair += breakdown.damageRepair || 0;
+      stats.totalCenterReturn += breakdown.centerReturn || 0;
+      stats.totalDirectPurchase += breakdown.directPurchase || 0;
+      
+      if (stockSummary.resellerInfo?.hasReseller) {
         stats.requestsWithReseller += 1;
       }
       
@@ -1129,6 +1362,7 @@ export const getAllStockRequests = async (req, res) => {
     });
   }
 };
+
 // export const getStockRequestById = async (req, res) => {
 //   try {
 //     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
