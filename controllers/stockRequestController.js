@@ -1171,6 +1171,28 @@ export const getAllStockRequests = async (req, res) => {
       }
     }
 
+    // Define default reseller stock object at a higher scope so it can be reused
+    const defaultResellerStock = {
+      totalQuantity: 0,
+      availableQuantity: 0,
+      availableBreakdown: {
+        damageRepair: 0,
+        centerReturn: 0,
+        directPurchase: 0,
+        total: 0
+      },
+      sourceBreakdown: {
+        damageRepairQuantity: 0,
+        centerReturnQuantity: 0,
+        directPurchaseQuantity: 0
+      },
+      availableSerials: [],
+      availableSerialsCount: 0,
+      damageRepairCount: 0,
+      centerReturnCount: 0,
+      hasResellerStock: false
+    };
+
     const stockRequestsWithEnhancedData = stockRequests.map((request) => {
       const centerId = request.center?._id?.toString();
       const resellerId = centerId ? centerToResellerMap.get(centerId) : null;
@@ -1188,34 +1210,12 @@ export const getAllStockRequests = async (req, res) => {
           resellerStockInfo = resellerStockMap.get(resellerStockKey);
         }
 
-        // Default reseller stock object to prevent undefined errors
-        const defaultResellerStock = {
-          totalQuantity: 0,
-          availableQuantity: 0,
-          availableBreakdown: {
-            damageRepair: 0,
-            centerReturn: 0,
-            directPurchase: 0,
-            total: 0
-          },
-          sourceBreakdown: {
-            damageRepairQuantity: 0,
-            centerReturnQuantity: 0,
-            directPurchaseQuantity: 0
-          },
-          availableSerials: [],
-          availableSerialsCount: 0,
-          damageRepairCount: 0,
-          centerReturnCount: 0,
-          hasResellerStock: false
-        };
-
         return {
           ...product,
           centerStockQuantity,
           resellerStock: resellerStockInfo ? {
-            totalQuantity: resellerStockInfo.totalQuantity,
-            availableQuantity: resellerStockInfo.availableQuantity,
+            totalQuantity: resellerStockInfo.totalQuantity || 0,
+            availableQuantity: resellerStockInfo.availableQuantity || 0,
             availableBreakdown: {
               damageRepair: resellerStockInfo.sourceBreakdown?.damageRepairQuantity || 0,
               centerReturn: resellerStockInfo.sourceBreakdown?.centerReturnQuantity || 0,
