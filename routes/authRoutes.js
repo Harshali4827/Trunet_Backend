@@ -1,4 +1,5 @@
 import express from "express";
+import upload from '../middlewares/upload.js';
 import {
   login,
   register,
@@ -16,6 +17,7 @@ import {
 } from "../controllers/authController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 import { verifyCenterSelectToken } from "../middlewares/centerSelectionMiddleware.js";
+import { bulkUploadUsersEnhanced, downloadSampleCSV } from "../controllers/bulkUsersController.js";
 
 const router = express.Router();
 const MODULE = "Settings";
@@ -59,4 +61,8 @@ router.delete(
   authorizeAccess(MODULE, "manage_user"),
   deleteUser
 )
+
+// Bulk upload routes
+router.post('/users/bulk-upload', upload.single('file'), bulkUploadUsersEnhanced);
+router.get('/users/sample-csv', downloadSampleCSV);
 export default router;

@@ -9,6 +9,7 @@ import {
   getCentersByReseller,
   getAllCentersBasic,
   getCentersByResellerId,
+  downloadCentersCSV,
 } from "../controllers/centerController.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
 
@@ -29,6 +30,7 @@ router.get(
   authorizeAccess(MODULE, "view_own_center", "view_all_center"),
   getCenters
 );
+router.get('/download/csv', downloadCentersCSV);
 router.get(
   "/main-warehouse",
   protect,

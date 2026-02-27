@@ -4,7 +4,7 @@ import Center from "../models/Center.js";
 import Area from "../models/Area.js";
 import Reseller from "../models/Reseller.js";
 import { checkPermission, isSuperAdmin } from "../utils/checkPermissions.js";
-
+import { Parser } from 'json2csv';
 export const createCenter = async (req, res) => {
   try {
     const userPermissions = req.user.role?.permissions || [];
@@ -369,7 +369,6 @@ export const deleteCenter = async (req, res) => {
   }
 };
 
-
 export const getCentersByReseller = async (req, res) => {
   try {
     const isAdmin = req.user.role?.roleTitle?.toLowerCase().includes('admin');
@@ -479,12 +478,10 @@ export const getAllCentersBasic = async (req, res) => {
 };
 
 
-// Basic version without extra filters
 export const getCentersByResellerId = async (req, res) => {
   try {
     const { resellerId } = req.params;
 
-    // Validate resellerId
     if (!resellerId) {
       return res.status(400).json({
         success: false,
@@ -556,3 +553,116 @@ export const getCentersByResellerId = async (req, res) => {
   }
 };
 
+/**
+ * Download all centers data as CSV
+ */
+export const downloadCentersCSV = async (req, res) => {
+  try {
+    // Check permissions
+    const userPermissions = req.user.role?.permissions || [];
+    const centerModule = userPermissions.find(
+      (perm) => perm.module === "Center"
+    );
+
+    const canViewAll = centerModule && centerModule.permissions.includes("view_all_center");
+    const canViewOwn = centerModule && centerModule.permissions.includes("view_own_center");
+
+    if (!canViewAll && !canViewOwn) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. view_own_center or view_all_center permission required."
+      });
+    }
+
+    // Build filter based on permissions
+    const filter = {};
+    if (canViewOwn && !canViewAll && req.user.center) {
+      filter._id = req.user.center._id || req.user.center;
+    }
+
+    // Get centers with populated data
+    const centers = await Center.find(filter)
+      .populate("reseller", "businessName name email mobile contactNumber")
+      .populate("area", "areaName")
+      .lean()
+      .sort({ centerName: 1 });
+
+    if (centers.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No centers found to export"
+      });
+    }
+
+    // Prepare data for CSV
+    const csvData = centers.map(center => ({
+      'Center ID': center._id.toString(),
+      'Center Name': center.centerName || '',
+      'Center Code': center.centerCode || '',
+      'Center Type': center.centerType || '',
+      'Status': center.status || '',
+      'Email': center.email || '',
+      'Mobile': center.mobile || '',
+      'Address Line 1': center.addressLine1 || '',
+      'Address Line 2': center.addressLine2 || '',
+      'City': center.city || '',
+      'State': center.state || '',
+      'Stock Verified': center.stockVerified || '',
+      'Reseller ID': center.reseller?._id?.toString() || '',
+      'Reseller Business Name': center.reseller?.businessName || '',
+      'Reseller Name': center.reseller?.name || '',
+      'Reseller Email': center.reseller?.email || '',
+      'Reseller Mobile': center.reseller?.mobile || '',
+      'Reseller Contact': center.reseller?.contactNumber || '',
+      'Area ID': center.area?._id?.toString() || '',
+      'Area Name': center.area?.areaName || '',
+      'Created At': center.createdAt ? new Date(center.createdAt).toLocaleString() : '',
+      'Updated At': center.updatedAt ? new Date(center.updatedAt).toLocaleString() : ''
+    }));
+
+    // Define CSV fields
+    const fields = [
+      'Center ID',
+      'Center Name',
+      'Center Code',
+      'Center Type',
+      'Status',
+      'Email',
+      'Mobile',
+      'Address Line 1',
+      'Address Line 2',
+      'City',
+      'State',
+      'Stock Verified',
+      'Reseller ID',
+      'Reseller Business Name',
+      'Reseller Name',
+      'Reseller Email',
+      'Reseller Mobile',
+      'Reseller Contact',
+      'Area ID',
+      'Area Name',
+      'Created At',
+      'Updated At'
+    ];
+
+    // Convert to CSV
+    const json2csvParser = new Parser({ fields });
+    const csv = json2csvParser.parse(csvData);
+
+    // Set headers for file download
+    const filename = `centers_export_${new Date().toISOString().split('T')[0]}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    res.status(200).send(csv);
+
+  } catch (error) {
+    console.error('Download centers CSV error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting centers data',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};

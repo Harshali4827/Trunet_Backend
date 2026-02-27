@@ -4,7 +4,8 @@ import {
   getResellers,
   getResellerById,
   updateReseller,
-  deleteReseller
+  deleteReseller,
+  downloadResellersCSV
 } from "../controllers/resellerController.js";
 import { createResellerValidator, updateResellerValidator } from "../validations/resellerValidator.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
@@ -16,6 +17,7 @@ const router = express.Router();
 
 router.post("/",protect, createResellerValidator,createReseller);
 router.get("/",protect, getResellers);
+router.get('/download/csv',protect, downloadResellersCSV);
 router.get("/:id",protect, getResellerById);
 router.put("/:id",protect, updateResellerValidator,updateReseller);
 router.delete("/:id",protect, deleteReseller);

@@ -1,6 +1,7 @@
 
 import Center from "../models/Center.js";
 import Reseller from "../models/Reseller.js";
+import { Parser } from 'json2csv';
 
 const buildResellerSearchFilters = ({ search, city, state }) => {
   const filters = {};
@@ -170,5 +171,105 @@ export const deleteReseller = async (req, res) => {
     res.status(200).json({ success: true, message: "Reseller deleted successfully" });
   } catch (error) {
     res.status(500).json({ success: false, message: "Error deleting reseller", error });
+  }
+};
+
+
+/**
+ * Download all resellers data as CSV
+ */
+export const downloadResellersCSV = async (req, res) => {
+  try {
+    const {
+      search,
+      city,
+      state,
+    } = req.query;
+
+    const filters = buildResellerSearchFilters({ search, city, state });
+
+    // Get all resellers without pagination
+    const resellers = await Reseller.find(filters)
+      .sort({ businessName: 1 })
+      .lean();
+
+    if (resellers.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No resellers found to export"
+      });
+    }
+
+    // Get center counts for each reseller
+    const resellerIds = resellers.map(r => r._id);
+    const centerCounts = await Center.aggregate([
+      { $match: { reseller: { $in: resellerIds } } },
+      { $group: { _id: "$reseller", count: { $sum: 1 } } }
+    ]);
+
+    // Create a map of reseller ID to center count
+    const centerCountMap = {};
+    centerCounts.forEach(item => {
+      centerCountMap[item._id.toString()] = item.count;
+    });
+
+    // Prepare data for CSV
+    const csvData = resellers.map(reseller => ({
+      'Reseller ID': reseller._id.toString(),
+      'Business Name': reseller.businessName || '',
+      'Contact Person Name': reseller.name || '',
+      'Contact Number': reseller.contactNumber || '',
+      'Mobile': reseller.mobile || '',
+      'Email': reseller.email || '',
+      'GST Number': reseller.gstNumber || '',
+      'PAN Number': reseller.panNumber || '',
+      'Address Line 1': reseller.address1 || '',
+      'Address Line 2': reseller.address2 || '',
+      'City': reseller.city || '',
+      'State': reseller.state || '',
+      'Logo': reseller.logo || '',
+      'Total Centers': centerCountMap[reseller._id.toString()] || 0,
+      'Created At': reseller.createdAt ? new Date(reseller.createdAt).toLocaleString() : '',
+      'Updated At': reseller.updatedAt ? new Date(reseller.updatedAt).toLocaleString() : ''
+    }));
+
+    // Define CSV fields
+    const fields = [
+      'Reseller ID',
+      'Business Name',
+      'Contact Person Name',
+      'Contact Number',
+      'Mobile',
+      'Email',
+      'GST Number',
+      'PAN Number',
+      'Address Line 1',
+      'Address Line 2',
+      'City',
+      'State',
+      'Logo',
+      'Total Centers',
+      'Created At',
+      'Updated At'
+    ];
+
+    // Convert to CSV
+    const json2csvParser = new Parser({ fields });
+    const csv = json2csvParser.parse(csvData);
+
+    // Set headers for file download
+    const filename = `resellers_export_${new Date().toISOString().split('T')[0]}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    res.status(200).send(csv);
+
+  } catch (error) {
+    console.error('Download resellers CSV error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting resellers data',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
   }
 };
