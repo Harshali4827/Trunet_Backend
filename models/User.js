@@ -31,7 +31,11 @@ const userSchema = new mongoose.Schema(
       trim: true,
       minlength: [3, "Username must be at least 3 characters"],
       maxlength: [30, "Username cannot exceed 30 characters"],
-      match: [/^[a-zA-Z0-9_]+$/, "Username can only contain letters, numbers and underscores"],
+      // match: [/^[a-zA-Z0-9_]+$/, "Username can only contain letters, numbers and underscores"],
+      match: [
+        /^[a-zA-Z0-9]+([._]?[a-zA-Z0-9]+)*$/,
+        "Username can only contain letters, numbers, dot and underscore"
+      ],
     },
     email: {
       type: String,
@@ -132,7 +136,8 @@ userSchema.methods.incrementLoginAttempts = async function () {
 };
 
 userSchema.statics.findByCredentials = async function (username, password) {
-  const isUsername = /^[a-zA-Z0-9_]+$/.test(username);
+  // const isUsername = /^[a-zA-Z0-9_]+$/.test(username);
+  const isUsername = /^[a-zA-Z0-9]+([._]?[a-zA-Z0-9]+)*$/.test(username);
 
   if (!isUsername) {
     throw new Error("Invalid username format");
