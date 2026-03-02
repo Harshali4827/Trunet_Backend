@@ -1107,19 +1107,6 @@ export const deleteCustomer = async (req, res) => {
 
 export const importCustomers = async (req, res) => {
   try {
-    const { hasAccess, permissions, userCenter, isSuperAdmin } = checkCustomerPermissions(
-      req,
-      ["manage_customer_own_center", "manage_customer_all_center"]
-    );
-
-    if (!hasAccess) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Access denied. manage_customer_own_center or manage_customer_all_center permission required.",
-      });
-    }
-
     if (!req.file) {
       return res.status(400).json({
         success: false,
@@ -1281,9 +1268,6 @@ export const importCustomers = async (req, res) => {
 
     const defaultMobileRows = [];
 
-    const userCenterId = req.user.center?._id || req.user.center;
-    const canImportToAllCenters = isSuperAdmin || permissions.manage_customer_all_center;
-
     for (let i = 0; i < customersData.length; i++) {
       const row = customersData[i];
       const rowNumber = i + 2; 
@@ -1382,19 +1366,6 @@ export const importCustomers = async (req, res) => {
             row: rowNumber,
             username,
             error: `Center not found or disabled: "${centerIdentifier}". Please check the center name.`
-          });
-          failedCount++;
-          continue;
-        }
-        if (
-          !canImportToAllCenters &&
-          userCenterId &&
-          center._id.toString() !== userCenterId.toString()
-        ) {
-          errors.push({
-            row: rowNumber,
-            username,
-            error: `Access denied. You can only import customers to your own center (${userCenterId}). Found center: ${center.centerName}`
           });
           failedCount++;
           continue;
@@ -1501,7 +1472,6 @@ export const importCustomers = async (req, res) => {
       importInfo: {
         importedBy: req.user.fullName || req.user.username,
         userRole: req.user.role?.roleTitle || 'User',
-        isSuperAdmin,
         timestamp: new Date().toISOString()
       }
     };
@@ -1538,11 +1508,9 @@ export const importCustomers = async (req, res) => {
       `Mobile numbers that were missing or invalid were normalized. ${defaultMobileRows.length} rows received default mobile number.`,
       "Center names are matched against enabled centers only.",
       "Duplicate usernames are prevented but duplicate mobile numbers are allowed.",
-      `Processed ${customersData.length} records in total.`,
-      isSuperAdmin ? "Superadmin: Import allowed to all centers" : 
-        (permissions.manage_customer_all_center ? "Admin: Import allowed to all centers" : 
-        "Limited to own center only")
+      `Processed ${customersData.length} records in total.`
     ];
+
     res.status(200).json(response);
 
   } catch (error) {
