@@ -36,6 +36,8 @@ import {
   validateUpdateShippingInfo,
 } from "../validations/stockRequestValidations.js";
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
+import { bulkUploadStockRequests, downloadStockRequestSampleCSV } from "../controllers/bulkStockRequestController.js";
+import upload from "../middlewares/upload.js";
 
 const router = express.Router();
 
@@ -244,5 +246,10 @@ router.patch(
   validateIdParam,
   updateStockRequestStatus
 );
+
+///************************/
+
+router.post('/bulk-upload',protect, upload.single('file'), bulkUploadStockRequests);
+router.get('/download/sample', downloadStockRequestSampleCSV);
 
 export default router;

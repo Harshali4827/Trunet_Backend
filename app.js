@@ -39,6 +39,7 @@ import acceptRoutes from './routes/acceptRoutes.js';
 import testingRoutes from './routes/testingMaterialRoutes.js';
 import invoiceRoutes from './routes/invoiceRoutes.js';
 import resellerQtyRoutes from './routes/resellerQtyRoutes.js';
+import centerStockRoutes from './routes/centerStockRoutes.js';
 
 import "./models/EntityStockUsage.js";
 dotenv.config();
@@ -93,6 +94,7 @@ app.use("/api", acceptRoutes);
 app.use("/api/testing-material", testingRoutes);
 app.use("/api/invoice", invoiceRoutes);
 app.use("/api/resellerStock", resellerQtyRoutes);
+app.use("/api/centerStock", centerStockRoutes);
 app.use(errorHandler);
 
 export default app;

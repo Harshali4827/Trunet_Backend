@@ -135,8 +135,53 @@ userSchema.methods.incrementLoginAttempts = async function () {
   return await this.updateOne(updates);
 };
 
+// userSchema.statics.findByCredentials = async function (username, password) {
+//   const isUsername = /^[a-zA-Z0-9]+([._]?[a-zA-Z0-9]+)*$/.test(username);
+
+//   if (!isUsername) {
+//     throw new Error("Invalid username format");
+//   }
+
+//   const user = await this.findOne({ username: username.toLowerCase() })
+//     .select("+password +loginAttempts +lockUntil")
+//     .populate("role", "roleTitle")
+//     .populate("accessibleCenters", "centerName centerCode centerType");
+
+//   if (!user) {
+//     throw new Error("Invalid login credentials");
+//   }
+
+//   if (user.status === "Disable") {
+//     throw new Error("Account is disabled. Please contact administrator.");
+//   }
+
+//   if (user.isLocked()) {
+//     throw new Error(
+//       "Account locked due to too many failed attempts. Try again later."
+//     );
+//   }
+
+//   const isPasswordCorrect = await user.correctPassword(password, user.password);
+
+//   if (!isPasswordCorrect) {
+//     await user.incrementLoginAttempts();
+//     throw new Error("Invalid login credentials");
+//   }
+
+//   if (user.loginAttempts > 0 || user.lockUntil) {
+//     await user.updateOne({
+//       $set: { loginAttempts: 0 },
+//       $unset: { lockUntil: 1 },
+//     });
+//   }
+
+//   user.lastLogin = Date.now();
+//   await user.save();
+
+//   return user;
+// };
+
 userSchema.statics.findByCredentials = async function (username, password) {
-  // const isUsername = /^[a-zA-Z0-9_]+$/.test(username);
   const isUsername = /^[a-zA-Z0-9]+([._]?[a-zA-Z0-9]+)*$/.test(username);
 
   if (!isUsername) {
@@ -157,8 +202,13 @@ userSchema.statics.findByCredentials = async function (username, password) {
   }
 
   if (user.isLocked()) {
+    // Calculate remaining time
+    const remainingTime = user.lockUntil - Date.now();
+    const remainingHours = Math.floor(remainingTime / (60 * 60 * 1000));
+    const remainingMinutes = Math.floor((remainingTime % (60 * 60 * 1000)) / (60 * 1000));
+    
     throw new Error(
-      "Account locked due to too many failed attempts. Try again later."
+      `Account locked due to too many failed attempts. Try again in ${remainingHours} hours and ${remainingMinutes} minutes.`
     );
   }
 
@@ -166,6 +216,14 @@ userSchema.statics.findByCredentials = async function (username, password) {
 
   if (!isPasswordCorrect) {
     await user.incrementLoginAttempts();
+    
+    // If this attempt just locked the account, inform the user
+    if (user.loginAttempts + 1 >= 5) {
+      throw new Error(
+        "Too many failed attempts. Your account has been locked for 2 hours. Try again later."
+      );
+    }
+    
     throw new Error("Invalid login credentials");
   }
 
