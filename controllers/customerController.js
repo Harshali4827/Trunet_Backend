@@ -1543,39 +1543,10 @@ export const importCustomers = async (req, res) => {
         (permissions.manage_customer_all_center ? "Admin: Import allowed to all centers" : 
         "Limited to own center only")
     ];
-
-    await AuditLogService.log({
-      user: req.user,
-      action: "IMPORT",
-      entity: "Customer",
-      entityId: null,
-      details: `Imported ${successCount} customers from CSV. Success: ${successCount}, Failed: ${failedCount}`,
-      changes: {
-        totalProcessed: customersData.length,
-        successCount,
-        failedCount,
-        fileName: file.originalname,
-        fileSize: file.size
-      },
-      ipAddress: req.ipAddress,
-      userAgent: req.userAgent,
-    });
-
     res.status(200).json(response);
 
   } catch (error) {
     console.error('Error importing customers:', error);
-    await AuditLogService.log({
-      user: req.user,
-      action: "IMPORT",
-      entity: "Customer",
-      entityId: null,
-      details: "Failed to import customers from CSV",
-      ipAddress: req.ipAddress,
-      userAgent: req.userAgent,
-      status: "FAILED",
-      errorMessage: error.message,
-    });
     res.status(500).json({
       success: false,
       message: "Error importing customers",
