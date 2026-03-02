@@ -1135,7 +1135,7 @@ export const importCustomers = async (req, res) => {
                 username: row.username,
                 name: row.name || '',
                 mobile: row.mobile,
-                email: row.email, // Added email field
+                email: row.email, // ONLY ADD THIS LINE - just map the email
                 address1: row.address1 || '',
                 address2: row.address2 || '',
                 city: row.city || '',
@@ -1234,20 +1234,26 @@ export const importCustomers = async (req, res) => {
       if (!mobile || mobile.toString().trim() === '') {
         return '0000000000';
       }
+      
+      // Remove any non-digit characters
       const cleaned = mobile.toString().replace(/\D/g, '');
       
+      // If after cleaning it's empty, return default
       if (cleaned === '') {
         return '0000000000';
       }
       
+      // If it's already 10 digits, return as is
       if (cleaned.length === 10) {
         return cleaned;
       }
       
+      // If it's less than 10 digits, pad with zeros at the end
       if (cleaned.length < 10) {
         return cleaned.padEnd(10, '0');
       }
       
+      // If it's more than 10 digits, take first 10 digits
       if (cleaned.length > 10) {
         return cleaned.substring(0, 10);
       }
@@ -1266,6 +1272,7 @@ export const importCustomers = async (req, res) => {
       console.log(`Found ${existingUsernames.size} existing usernames in database`);
     }
 
+    // Track rows where default mobile was added
     const defaultMobileRows = [];
 
     for (let i = 0; i < customersData.length; i++) {
@@ -1286,12 +1293,13 @@ export const importCustomers = async (req, res) => {
         const username = processedRow.username;
         const name = processedRow.name;
         let mobile = normalizeMobileNumber(processedRow.mobile);
-        const email = processedRow.email; // Extract email from row
+        const email = processedRow.email; // Just get the email from CSV
         const address1 = processedRow.address1;
         const address2 = processedRow.address2;
         const city = processedRow.city;
         const state = processedRow.state;
 
+        // Track if default mobile was added
         if (!processedRow.mobile || processedRow.mobile.toString().trim() === '') {
           defaultMobileRows.push({
             row: rowNumber,
@@ -1300,6 +1308,8 @@ export const importCustomers = async (req, res) => {
             defaultMobile: mobile
           });
         }
+
+        // Check for required fields (mobile is now optional)
         if (!username || !centerIdentifier) {
           errors.push({
             row: rowNumber,
@@ -1309,6 +1319,8 @@ export const importCustomers = async (req, res) => {
           failedCount++;
           continue;
         }
+
+        // Check for duplicate usernames in the same import file
         if (processedUsernames.has(username)) {
           errors.push({
             row: rowNumber,
@@ -1358,6 +1370,7 @@ export const importCustomers = async (req, res) => {
             continue;
           }
         } else {
+          // Find center by name
           center = await findCenterByName(centerIdentifier);
         }
 
@@ -1371,42 +1384,27 @@ export const importCustomers = async (req, res) => {
           continue;
         }
 
-        // Handle email - use from CSV if present and valid, otherwise generate
+        // SIMPLE EMAIL HANDLING - just use what's in CSV or generate if empty
         let customerEmail;
-        const emailRegex = /^\S+@\S+\.\S+$/;
-        
-        if (email && emailRegex.test(email)) {
-          // Email exists in CSV and is valid - use it
-          customerEmail = email;
-          
-          // Check for duplicate email (optional - you can remove this if not needed)
-          const existingEmail = await Customer.findOne({ email: customerEmail });
-          if (existingEmail) {
-            errors.push({
-              row: rowNumber,
-              username,
-              error: `Email '${customerEmail}' already exists in database.`
-            });
-            failedCount++;
-            continue;
-          }
+        if (email && email.trim() !== '') {
+          // Use email from CSV if provided
+          customerEmail = email.trim();
         } else {
-          // No valid email in CSV - generate one (existing functionality)
-          const generatedEmail = `${username}@example.com`;
+          // Generate email only if CSV email is empty
+          customerEmail = `${username}@example.com`;
           
+          // Make it unique if needed (keep your existing logic)
           if (customersData.length > 10000) {
             customerEmail = `${username}${Date.now()}${i}@example.com`;
           } else {
-            const existingEmail = await Customer.findOne({ email: generatedEmail });
-            
+            const existingEmail = await Customer.findOne({ email: customerEmail });
             if (existingEmail) {
               customerEmail = `${username}${Date.now()}${i}@example.com`;
-            } else {
-              customerEmail = generatedEmail;
             }
           }
         }
 
+        // Validate mobile format (should always be 10 digits after normalization)
         const mobileRegex = /^[0-9]{10}$/;
         if (!mobileRegex.test(mobile)) {
           errors.push({
@@ -1418,11 +1416,12 @@ export const importCustomers = async (req, res) => {
           continue;
         }
 
+        // Create customer
         const customer = new Customer({
           username,
           name: name || '',
           mobile,
-          email: customerEmail,
+          email: customerEmail, // Use the email (either from CSV or generated)
           center: center._id,
           address1: address1 || '',
           address2: address2 || '',
@@ -1434,6 +1433,7 @@ export const importCustomers = async (req, res) => {
         await customer.save();
         successCount++;
         
+        // Add to existing usernames set for subsequent checks in this import
         existingUsernames.add(username);
 
       } catch (error) {
@@ -1453,12 +1453,14 @@ export const importCustomers = async (req, res) => {
         });
         failedCount++;
       }
-
+      
+      // Progress logging for large imports
       if (customersData.length > 10000 && i % 1000 === 0) {
         console.log(`Processed ${i} of ${customersData.length} rows...`);
       }
     }
 
+    // Prepare response
     const response = {
       success: true,
       message: `Import completed. Successfully imported ${successCount} customers, ${failedCount} failed.`,
@@ -1468,18 +1470,13 @@ export const importCustomers = async (req, res) => {
         failedCount,
         successPercentage: customersData.length > 0 ? 
           Math.round((successCount / customersData.length) * 100) : 0
-      },
-      importInfo: {
-        importedBy: req.user.fullName || req.user.username,
-        userRole: req.user.role?.roleTitle || 'User',
-        timestamp: new Date().toISOString()
       }
     };
 
     if (errors.length > 0) {
       response.errors = errors;
       response.totalErrors = errors.length;
-
+      
       const errorTypes = {};
       errors.forEach(error => {
         const errorKey = error.error.split(':')[0] || error.error;
