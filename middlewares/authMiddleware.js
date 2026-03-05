@@ -438,15 +438,22 @@ export const authorizeAccess = (module, ...actions) => {
       modulePermissions.permissions.includes(action)
     );
 
+    // if (!hasPermission) {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: `Access denied. Required one of: ${actions.join(
+    //       ", "
+    //     )} for ${module} module.`,
+    //   });
+    // }
+
     if (!hasPermission) {
       return res.status(403).json({
         success: false,
-        message: `Access denied. Required one of: ${actions.join(
-          ", "
-        )} for ${module} module.`,
+        message: `Access denied. You need at least one of these permissions: ${actions.join(", ")} for the ${module} module.`,
       });
     }
-
+    
     next();
   };
 };
