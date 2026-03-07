@@ -403,22 +403,18 @@ export const getAllStockRequestsReports = async (req, res) => {
       center, centerId, product, productId, startDate, endDate
     });
 
-    // Center filtering with permission check
     if (permissions.view_own_report && !permissions.view_all_report) {
       const userCenterId = userCenter?._id || userCenter;
       if (userCenterId) {
         filter.center = userCenterId;
       }
     } else if (permissions.view_all_report && (center || centerId)) {
-      // Support both center and centerId parameters
       const centerFilterValue = center || centerId;
       filter.center = centerFilterValue;
     }
 
-    // Product filtering - use regular find approach
     const productFilterValue = product || productId;
 
-    // Status filtering
     if (status) {
       filter.status = status;
     }
@@ -434,7 +430,6 @@ export const getAllStockRequestsReports = async (req, res) => {
       filter.warehouse = warehouse;
     }
 
-    // Date range filtering with proper time boundaries
     if (startDate || endDate) {
       filter[dateField] = {};
       if (startDate) {
@@ -449,7 +444,6 @@ export const getAllStockRequestsReports = async (req, res) => {
       }
     }
 
-    // User filtering
     if (createdBy) {
       filter.createdBy = createdBy;
     }
@@ -470,7 +464,6 @@ export const getAllStockRequestsReports = async (req, res) => {
       filter.stockTransferStatus = stockTransferStatus;
     }
 
-    // Search filtering
     if (search) {
       filter.$or = [
         { orderNumber: { $regex: search, $options: "i" } },
@@ -483,10 +476,8 @@ export const getAllStockRequestsReports = async (req, res) => {
 
     console.log('Final filter:', JSON.stringify(filter, null, 2));
 
-    // Use regular find with populate for better compatibility
     let query = StockRequest.find(filter);
 
-    // Populate options
     const populateOptions = [
       {
         path: "createdBy",
@@ -531,7 +522,6 @@ export const getAllStockRequestsReports = async (req, res) => {
       }
     }
 
-    // Sort options
     const sort = {};
     const validSortFields = [
       "createdAt",
@@ -561,7 +551,6 @@ export const getAllStockRequestsReports = async (req, res) => {
 
     console.log(`Found ${stockRequests.length} records out of ${total} total`);
 
-    // Post-process to filter products array if product filter is applied
     let processedRequests = stockRequests;
     if (productFilterValue) {
       processedRequests = stockRequests.map(request => {

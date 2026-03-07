@@ -1734,10 +1734,10 @@ export const getResellerAvailableStock = async (req, res) => {
       forCenter,
       showCenterReturnsOnly = false,
       sourceCenter,
+      export: isExport = false,
       ...filterParams
     } = req.query;
 
-    // Build filter for reseller stock
     const filter = await buildResellerStockFilter(
       { 
         resellerId, 
@@ -1756,7 +1756,6 @@ export const getResellerAvailableStock = async (req, res) => {
       userCenter
     );
 
-    // Check if user has no access (center without reseller)
     if (filter.noAccess) {
       const centerInfo = userCenter ? await Center.findById(userCenter._id || userCenter)
         .select("centerName centerCode centerType")
@@ -1815,11 +1814,9 @@ export const getResellerAvailableStock = async (req, res) => {
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
 
-    // SIMPLIFIED AGGREGATION PIPELINE
     const aggregationPipeline = [
       { $match: filter },
       
-      // Lookup reseller details
       {
         $lookup: {
           from: "resellers",
@@ -1835,7 +1832,6 @@ export const getResellerAvailableStock = async (req, res) => {
         },
       },
       
-      // Lookup product details
       {
         $lookup: {
           from: "products",
@@ -1851,7 +1847,6 @@ export const getResellerAvailableStock = async (req, res) => {
         },
       },
       
-      // Lookup product category details
       {
         $lookup: {
           from: "productcategories",
@@ -1866,8 +1861,6 @@ export const getResellerAvailableStock = async (req, res) => {
           preserveNullAndEmptyArrays: true,
         },
       },
-      
-      // Calculate if product tracks serial numbers
       {
         $addFields: {
           tracksSerial: {
@@ -1880,7 +1873,6 @@ export const getResellerAvailableStock = async (req, res) => {
         }
       },
       
-      // Calculate basic serial counts
       {
         $addFields: {
           availableSerialsCount: {
@@ -1937,8 +1929,7 @@ export const getResellerAvailableStock = async (req, res) => {
               },
             },
           },
-          
-          // Get all center return serials
+
           centerReturnSerials: {
             $filter: {
               input: "$serialNumbers",
@@ -1958,8 +1949,6 @@ export const getResellerAvailableStock = async (req, res) => {
           }
         }
       },
-      
-      // Calculate center return serials count
       {
         $addFields: {
           centerReturnSerialsCount: {
@@ -1967,8 +1956,6 @@ export const getResellerAvailableStock = async (req, res) => {
           }
         }
       },
-      
-      // Calculate effective available quantity
       {
         $addFields: {
           effectiveAvailableQuantity: {
@@ -1995,8 +1982,6 @@ export const getResellerAvailableStock = async (req, res) => {
           },
         },
       },
-      
-      // Calculate stock status
       {
         $addFields: {
           stockStatus: {
@@ -2037,8 +2022,6 @@ export const getResellerAvailableStock = async (req, res) => {
         },
       }
     ];
-
-    // Add search filter if search exists
     if (search) {
       aggregationPipeline.unshift({
         $match: {
@@ -2054,7 +2037,6 @@ export const getResellerAvailableStock = async (req, res) => {
       });
     }
 
-    // Projection stage
     aggregationPipeline.push({
       $project: {
         _id: 1,
@@ -2070,16 +2052,14 @@ export const getResellerAvailableStock = async (req, res) => {
         lastUpdated: 1,
         createdAt: 1,
         updatedAt: 1,
-        
-        // Product Details
+
         productName: "$productDetails.productTitle",
         productCode: "$productDetails.productCode",
         productDescription: "$productDetails.description",
         productPrice: "$productDetails.productPrice",
         productImage: "$productDetails.productImage",
         trackSerialNumber: "$productDetails.trackSerialNumber",
-        
-        // Category Details
+      
         productCategory: {
           _id: "$categoryDetails._id",
           name: "$categoryDetails.productCategory",
@@ -2087,7 +2067,6 @@ export const getResellerAvailableStock = async (req, res) => {
           description: "$categoryDetails.description",
         },
         
-        // Reseller Details
         resellerName: "$resellerDetails.businessName",
         resellerCode: "$resellerDetails.code",
         resellerContactPerson: "$resellerDetails.contactPerson",
@@ -2096,7 +2075,6 @@ export const getResellerAvailableStock = async (req, res) => {
         resellerAddress: "$resellerDetails.address",
         resellerStatus: "$resellerDetails.status",
         
-        // Serial counts
         availableSerialsCount: 1,
         consumedSerialsCount: 1,
         damagedSerialsCount: 1,
@@ -2104,21 +2082,17 @@ export const getResellerAvailableStock = async (req, res) => {
         repairedSerialsCount: 1,
         irreparableSerialsCount: 1,
         
-        // Center return tracking
         centerReturnSerials: 1,
         centerReturnSerialsCount: 1,
         
-        // Calculated fields
         effectiveAvailableQuantity: 1,
         stockStatus: 1,
         tracksSerial: 1,
         
-        // Include serial numbers if requested
         serialNumbers: includeSerials === "true" ? "$serialNumbers" : undefined,
       }
     });
 
-    // Create count pipeline
     const countPipeline = [
       { $match: filter },
       {
@@ -2133,7 +2107,6 @@ export const getResellerAvailableStock = async (req, res) => {
       { $count: "total" }
     ];
 
-    // Add sorting
     const sortConfig = {};
     const validSortFields = [
       "productName", "productCode", "resellerName", "resellerCode", 
@@ -2145,13 +2118,18 @@ export const getResellerAvailableStock = async (req, res) => {
     
     aggregationPipeline.push({ $sort: sortConfig });
 
-    // Add pagination
-    aggregationPipeline.push(
-      { $skip: skip },
-      { $limit: limitNum }
-    );
+    // aggregationPipeline.push(
+    //   { $skip: skip },
+    //   { $limit: limitNum }
+    // );
 
-    // Get stock data and count
+    if (!isExport) {
+      aggregationPipeline.push(
+        { $skip: skip },
+        { $limit: limitNum }
+      );
+    }
+
     const [stockData, countResult] = await Promise.all([
       ResellerStock.aggregate(aggregationPipeline),
       ResellerStock.aggregate(countPipeline),
@@ -2477,6 +2455,7 @@ export const getResellerAvailableStock = async (req, res) => {
     handleControllerError(error, res);
   }
 };
+
 export const getResellerProductsWithStock = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } =

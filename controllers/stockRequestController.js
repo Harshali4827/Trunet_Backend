@@ -1601,10 +1601,10 @@ export const getStockRequestById = async (req, res) => {
     const { id } = req.params;
 
     const stockRequest = await StockRequest.findById(id)
-      .populate("warehouse", "_id centerName centerCode centerType")
+      .populate("warehouse", "_id centerName centerCode centerType email addressLine1 addressLine2 city state")
       .populate({
         path: "center",
-        select: "_id centerName centerCode centerType",
+        select: "_id centerName centerCode centerType email addressLine1 addressLine2 city state",
         populate: [
           {
             path: "reseller",
@@ -1618,7 +1618,7 @@ export const getStockRequestById = async (req, res) => {
       })
       .populate(
         "products.product",
-        "_id productTitle productCode productImage trackSerialNumber"
+        "_id productTitle productCode salePrice trackSerialNumber"
       )
       .populate("createdBy", "_id fullName email")
       .populate("updatedBy", "_id fullName email")

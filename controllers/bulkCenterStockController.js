@@ -258,8 +258,10 @@ export const bulkUploadCenterStock = async (req, res) => {
             serials: stockEntry.serialNumbers.length
           };
 
-          stockEntry.totalQuantity = availableQuantity;
-          stockEntry.availableQuantity = availableQuantity;
+          // stockEntry.totalQuantity = availableQuantity;
+          // stockEntry.availableQuantity = availableQuantity;
+             stockEntry.totalQuantity += availableQuantity;
+             stockEntry.availableQuantity += availableQuantity;
           stockEntry.inTransitQuantity = 0;
           stockEntry.consumedQuantity = 0;
 
