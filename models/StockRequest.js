@@ -118,8 +118,6 @@ const stockRequestSchema = new mongoose.Schema(
             trim: true,
           },
         ],
-
-        // NEW: Track source of approved stock
         sourceBreakdown: {
           fromReseller: {
             quantity: { 
@@ -130,7 +128,7 @@ const stockRequestSchema = new mongoose.Schema(
             serials: [{ 
               type: String,
               trim: true 
-            }], // For serialized products
+            }],
           },
           fromOutlet: {
             quantity: { 
@@ -141,7 +139,7 @@ const stockRequestSchema = new mongoose.Schema(
             serials: [{ 
               type: String,
               trim: true 
-            }], // For serialized products
+            }],
           },
           totalApproved: {
             type: Number,
@@ -329,7 +327,12 @@ invoiceInfo: {
   invoiceRaisedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User"
-  }
+  },
+  invoiceCancelled: { type: Boolean, default: false },
+  invoiceCancelledAt: Date,
+  invoiceCancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  invoiceCancellationReason: String
+  
 }
   },
   {

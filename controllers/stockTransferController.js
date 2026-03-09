@@ -3210,10 +3210,6 @@ export const completeIncompleteStockTransfer = async (req, res) => {
               });
             }
           }
-
-          // CRITICAL: Add the FULL received quantity to destination
-          // When marking as incomplete, any received stock was returned to source
-          // So we need to add all new received quantity to destination
           destStock.totalQuantity += newReceivedQty;
           destStock.availableQuantity += newReceivedQty;
           
@@ -3221,7 +3217,6 @@ export const completeIncompleteStockTransfer = async (req, res) => {
           console.log(`[DEBUG] Added ${serialsToAdd.length} serials to destination, total now: ${destStock.totalQuantity}`);
 
         } else {
-          // For non-serialized products - SIMPLE: Just add the received quantity
           const updateData = {
             $inc: {
               totalQuantity: newReceivedQty,
@@ -3241,8 +3236,6 @@ export const completeIncompleteStockTransfer = async (req, res) => {
     }
 
     console.log('[DEBUG] Destination stock processing complete. Updating transfer status...');
-
-    // Update transfer status
     stockTransfer.status = "Completed";
     stockTransfer.completionInfo = {
       completedOn: new Date(),
@@ -3332,7 +3325,6 @@ export const completeIncompleteStockTransfer = async (req, res) => {
     console.error("Error completing incomplete stock transfer:", error);
     console.error("Error stack:", error.stack);
     
-    // Handle specific validation errors
     if (error.name === "ValidationError") {
       const errors = Object.values(error.errors).map((err) => err.message);
       return res.status(400).json({
@@ -3349,7 +3341,6 @@ export const completeIncompleteStockTransfer = async (req, res) => {
       });
     }
 
-    // Handle specific business logic errors
     if (
       error.message.includes("serial numbers") ||
       error.message.includes("Insufficient stock") ||
@@ -4017,8 +4008,6 @@ const buildDateFilter = (
 // };
 
 
-
-
 export const getAllStockTransfers = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } =
@@ -4131,7 +4120,6 @@ export const getAllStockTransfers = async (req, res) => {
   }
 };
 
-
 export const getStockTransferById = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } =
@@ -4151,11 +4139,11 @@ export const getStockTransferById = async (req, res) => {
     const { id } = req.params;
 
     const stockTransfer = await StockTransfer.findById(id)
-      .populate("fromCenter", "_id centerName centerCode")
-      .populate("toCenter", "_id centerName centerCode")
+      .populate("fromCenter", "_id centerName centerCode centerType email addressLine1 addressLine2 city state")
+      .populate("toCenter", "_id centerName centerCode centerType email addressLine1 addressLine2 city state")
       .populate(
         "products.product",
-        "_id productTitle productCode trackSerialNumber"
+        "_id productTitle salePrice trackSerialNumber"
       )
       .populate("createdBy", "_id fullName email")
       .populate("updatedBy", "_id fullName email")

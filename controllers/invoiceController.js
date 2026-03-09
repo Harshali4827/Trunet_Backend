@@ -299,7 +299,8 @@ export const getInvoice = async (req, res) => {
         .populate('stockRequestIds', 'orderNumber challanNo date')
         .populate('reseller', 'businessName gstNumber address1 address2 city state')
         .populate('centers', 'centerName centerCode')
-        .populate('createdBy', 'fullName email');
+        .populate('createdBy', 'fullName email')
+        .populate('cancellationDetails.cancelledBy', 'fullName email');
       
       if (!invoice) {
         return res.status(404).json({
@@ -340,8 +341,9 @@ export const getAllInvoices = async (req, res) => {
       }
       
       const invoices = await Invoice.find(filter)
-        .populate('reseller', 'businessName')
+        .populate('reseller', 'businessName gstNumber')
         .populate('centers', 'centerName')
+        .populate('cancellationDetails.cancelledBy', 'fullName email')
         .sort({ invoiceDate: -1 })
         .skip((page - 1) * limit)
         .limit(parseInt(limit));
@@ -363,6 +365,149 @@ export const getAllInvoices = async (req, res) => {
         success: false,
         message: "Error fetching invoices",
         error: error.message,
+      });
+    }
+  };
+
+export const cancelInvoice = async (req, res) => {
+    try {
+      const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
+        req,
+        ["manage_indent"]
+      );
+  
+      if (!hasAccess) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. manage_indent permission required.",
+        });
+      }
+  
+      const { invoiceId } = req.params;
+      const { 
+        cancelReason,
+        cancelWithCreditNote 
+      } = req.body;
+  
+      // Validation
+      if (!cancelReason || cancelReason.trim() === "") {
+        return res.status(400).json({
+          success: false,
+          message: "Cancel reason is required for cancelling invoice",
+        });
+      }
+  
+      if (cancelWithCreditNote === undefined || cancelWithCreditNote === null) {
+        return res.status(400).json({
+          success: false,
+          message: "Please specify whether to cancel with credit note",
+        });
+      }
+  
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: "User authentication required",
+        });
+      }
+  
+      // Find the invoice
+      const invoice = await Invoice.findById(invoiceId);
+      
+      if (!invoice) {
+        return res.status(404).json({
+          success: false,
+          message: "Invoice not found",
+        });
+      }
+  
+      // Check if invoice is already cancelled
+      if (invoice.status === 'cancelled') {
+        return res.status(400).json({
+          success: false,
+          message: "Invoice is already cancelled",
+        });
+      }
+  
+      // Check center access permissions for the invoice
+      if (!permissions.indent_all_center) {
+        // Get all stock requests to check centers
+        const stockRequests = await StockRequest.find({
+          _id: { $in: invoice.stockRequestIds }
+        }).populate('center');
+  
+        let hasCenterAccess = false;
+        for (const request of stockRequests) {
+          if (checkCenterAccess(request, userCenter, permissions)) {
+            hasCenterAccess = true;
+            break;
+          }
+        }
+  
+        if (!hasCenterAccess) {
+          return res.status(403).json({
+            success: false,
+            message: "Access denied. You don't have permission to cancel this invoice.",
+          });
+        }
+      }
+  
+      // Update invoice status to cancelled with cancellation details
+      invoice.status = 'cancelled';
+      invoice.cancellationDetails = {
+        cancelledAt: new Date(),
+        cancelledBy: userId,
+        cancelReason: cancelReason,
+        cancelWithCreditNote: cancelWithCreditNote
+      };
+      invoice.updatedAt = new Date();
+  
+      await invoice.save();
+  
+      // Update all associated stock requests - set invoiceRaised to false
+      const stockRequestUpdatePromises = invoice.stockRequestIds.map(stockRequestId =>
+        StockRequest.findByIdAndUpdate(
+          stockRequestId,
+          {
+            $set: {
+              "invoiceInfo.invoiceRaised": false,
+              "invoiceInfo.invoiceCancelled": true,
+              "invoiceInfo.invoiceCancelledAt": new Date(),
+              "invoiceInfo.invoiceCancelledBy": userId,
+              "invoiceInfo.invoiceCancellationReason": cancelReason,
+              updatedBy: userId
+            }
+          },
+          { new: true }
+        )
+      );
+  
+      await Promise.all(stockRequestUpdatePromises);
+  
+      const populatedInvoice = await Invoice.findById(invoice._id)
+        .populate('reseller', 'businessName gstNumber')
+        .populate('centers', 'centerName centerCode')
+        .populate('stockRequestIds', 'orderNumber challanNo')
+        .populate('createdBy', 'fullName email')
+        .populate('cancellationDetails.cancelledBy', 'fullName email');
+  
+      res.status(200).json({
+        success: true,
+        message: `Invoice ${invoice.invoiceNumber} cancelled successfully${cancelWithCreditNote ? ' with credit note' : ''}`,
+        data: {
+          invoice: populatedInvoice,
+          creditNoteGenerated: cancelWithCreditNote
+        }
+      });
+  
+    } catch (error) {
+      console.error("Error cancelling invoice:", error);
+      
+      res.status(500).json({
+        success: false,
+        message: "Error cancelling invoice",
+        error: process.env.NODE_ENV === "development" ? error.message : "Internal server error"
       });
     }
   };

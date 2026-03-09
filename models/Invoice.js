@@ -76,6 +76,15 @@ const invoiceSchema = new mongoose.Schema({
   }],
   invoiceHtml: String,
   invoicePdfPath: String,
+cancellationDetails: {
+  cancelledAt: Date,
+  cancelledBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  cancelReason: String,
+  cancelWithCreditNote: Boolean
+},
   status: {
     type: String,
     enum: ['generated', 'sent', 'paid', 'cancelled'],

@@ -53,6 +53,7 @@ const checkCenterAccess = (stockRequest, userCenter, permissions) => {
 
   return false;
 };
+
 const getOutletStockForRequests = async (warehouseId, productIds) => {
   try {
     const OutletStock = mongoose.model("OutletStock");
@@ -1581,8 +1582,6 @@ export const getAllStockRequests = async (req, res) => {
 //   }
 // };
 
-
-
 export const getStockRequestById = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
@@ -1857,7 +1856,6 @@ export const getStockRequestById = async (req, res) => {
     });
   }
 };
-
 
 export const updateStockRequest = async (req, res) => {
   try {
@@ -2234,8 +2232,6 @@ export const updateStockRequest = async (req, res) => {
 //   }
 // }
 
-
-
 async function revertStockForRejectedRequest(stockRequest) {
   try {
     const OutletStock = mongoose.model("OutletStock");
@@ -2389,7 +2385,6 @@ async function revertStockForRejectedRequest(stockRequest) {
     throw new Error(`Failed to revert stock: ${error.message}`);
   }
 }
-
 
 export const deleteStockRequest = async (req, res) => {
   try {
@@ -3203,8 +3198,6 @@ export const validateSerialNumbers = async (req, res) => {
 //     });
 //   }
 // };
-
-
 
 export const approveStockRequest = async (req, res) => {
   try {
@@ -4422,6 +4415,7 @@ export const rejectShipment = async (req, res) => {
 //     });
 //   }
 // };
+
 export const markAsIncomplete = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
@@ -7795,8 +7789,6 @@ export const updateStockRequestStatus = async (req, res) => {
 //   }
 // };
 
-
-
 export const updateApprovedQuantities = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
@@ -8553,9 +8545,6 @@ export const getCenterSerialNumbers = async (req, res) => {
   }
 };
 
-
-
-
 export const getStockRequestCount = async (req, res) => {
   try {
     const match = {};
@@ -8683,7 +8672,6 @@ export const getStockRequestNotifications = async (req, res) => {
   }
 };
 
-
 const formatStockRequestToNotification = (stockRequest) => {
   const formatDate = (date) => {
     return new Date(date).toLocaleDateString('en-GB', {
@@ -8771,9 +8759,7 @@ const formatStockRequestToNotification = (stockRequest) => {
   };
 };
 
-
 //Challan Approval
-
 export const updateWarehouseChallanApproval = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
@@ -8885,7 +8871,6 @@ export const updateWarehouseChallanApproval = async (req, res) => {
     });
   }
 };
-
 
 export const updateCenterChallanApproval = async (req, res) => {
   try {

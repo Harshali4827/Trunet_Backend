@@ -1,10 +1,7 @@
 import express from "express";
-
 import { protect } from "../middlewares/authMiddleware.js";
-import { getAllInvoices, getInvoice, markAsInvoiced } from "../controllers/invoiceController.js";
-
+import { cancelInvoice, getAllInvoices, getInvoice, markAsInvoiced} from "../controllers/invoiceController.js";
 const router = express.Router();
-
 router.post(
   "/mark-invoiced",
   protect,
@@ -20,5 +17,5 @@ router.get(
     protect,
     getInvoice
 );
-
+router.put('/:invoiceId/cancel',protect, cancelInvoice);
 export default router;
