@@ -884,18 +884,38 @@ export const validateUpdateApprovedQuantities = [
     .isArray({ min: 1 })
     .withMessage("Product approvals are required")
     .custom(async (productApprovals, { req }) => {
+      console.log("========== START VALIDATION DEBUG ==========");
+      console.log("Request body:", JSON.stringify(req.body, null, 2));
+      console.log("Stock Request ID:", req.params.id);
+      
       const { id } = req.params;
       const stockRequest = await StockRequest.findById(id);
       
       if (!stockRequest) {
+        console.log("❌ Stock request not found for ID:", id);
         throw new Error("Stock request not found");
       }
+      
+      console.log("✅ Stock request found. Status:", stockRequest.status);
+      console.log("Products in stock request:", stockRequest.products.map(p => ({
+        productId: p.product.toString(),
+        quantity: p.quantity,
+        approvedQuantity: p.approvedQuantity || 0
+      })));
 
-      for (const approval of productApprovals) {
-        if (!approval.productId || approval.approvedQuantity === undefined) {
-          throw new Error(
-            "Each product approval must have productId and approvedQuantity"
-          );
+      for (let i = 0; i < productApprovals.length; i++) {
+        const approval = productApprovals[i];
+        console.log(`\n--- Validating product ${i + 1}/${productApprovals.length} ---`);
+        console.log("Approval data:", JSON.stringify(approval, null, 2));
+
+        if (!approval.productId) {
+          console.log("❌ Missing productId at index", i);
+          throw new Error(`Product ID is required at index ${i}`);
+        }
+
+        if (approval.approvedQuantity === undefined) {
+          console.log("❌ Missing approvedQuantity for product:", approval.productId);
+          throw new Error(`Approved quantity is required for product ${approval.productId}`);
         }
 
         const productExists = stockRequest.products.some(
@@ -903,26 +923,83 @@ export const validateUpdateApprovedQuantities = [
         );
 
         if (!productExists) {
+          console.log("❌ Product not found in stock request:", approval.productId);
+          console.log("Available products:", stockRequest.products.map(p => p.product.toString()));
           throw new Error(
             `Product with ID ${approval.productId} not found in this stock request`
           );
         }
 
+        console.log("✅ Product exists in stock request");
+
         const product = stockRequest.products.find(
           (p) => p.product.toString() === approval.productId.toString()
         );
+
+        console.log(`Product details:`, {
+          requestedQuantity: product.quantity,
+          currentApprovedQuantity: product.approvedQuantity || 0,
+          newApprovedQuantity: approval.approvedQuantity
+        });
+
+        // Check if approved quantity exceeds requested quantity
         if (approval.approvedQuantity > product.quantity) {
+          console.log(`❌ Approved quantity (${approval.approvedQuantity}) exceeds requested quantity (${product.quantity})`);
           throw new Error(
             `Approved quantity (${approval.approvedQuantity}) cannot be greater than requested quantity (${product.quantity}) for product ${approval.productId}`
           );
         }
 
         if (approval.approvedQuantity < 0) {
+          console.log(`❌ Negative approved quantity: ${approval.approvedQuantity}`);
           throw new Error(
             `Approved quantity cannot be negative for product ${approval.productId}`
           );
         }
+
+        // Check if product tracks serial numbers
+        const Product = mongoose.model("Product");
+        const productDoc = await Product.findById(approval.productId);
+        const tracksSerialNumbers = productDoc?.trackSerialNumber === "Yes";
+        
+        console.log(`Product "${productDoc?.productTitle}" tracks serial numbers: ${tracksSerialNumbers}`);
+
+        // For serialized products with approvedQuantity > 0, check serial numbers
+        if (tracksSerialNumbers && approval.approvedQuantity > 0) {
+          if (!approval.approvedSerials || approval.approvedSerials.length === 0) {
+            console.log(`❌ No serials provided for serialized product with approved quantity ${approval.approvedQuantity}`);
+            throw new Error(
+              `Serial numbers are required for product ${productDoc?.productTitle} as it tracks serial numbers`
+            );
+          }
+
+          if (approval.approvedSerials.length !== approval.approvedQuantity) {
+            console.log(`❌ Serial count mismatch: ${approval.approvedSerials.length} serials for ${approval.approvedQuantity} quantity`);
+            throw new Error(
+              `Number of serial numbers (${approval.approvedSerials.length}) must match approved quantity (${approval.approvedQuantity}) for product ${productDoc?.productTitle}`
+            );
+          }
+
+          // Check for duplicate serials
+          const uniqueSerials = new Set(approval.approvedSerials);
+          if (uniqueSerials.size !== approval.approvedSerials.length) {
+            console.log(`❌ Duplicate serials found:`, approval.approvedSerials);
+            throw new Error(
+              `Duplicate serial numbers found for product ${productDoc?.productTitle}`
+            );
+          }
+
+          console.log(`✅ Serial validation passed for product ${productDoc?.productTitle}`);
+        } else if (tracksSerialNumbers && approval.approvedQuantity === 0) {
+          console.log(`✅ Approved quantity is 0 for serialized product - skipping serial validation`);
+        } else if (!tracksSerialNumbers) {
+          console.log(`✅ Non-serialized product - skipping serial validation`);
+        }
+
+        console.log(`✅ All validations passed for product ${approval.productId}`);
       }
+
+      console.log("========== END VALIDATION DEBUG ==========");
       return true;
     })
     .withMessage("Product approval validation failed"),
