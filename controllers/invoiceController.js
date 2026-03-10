@@ -38,7 +38,7 @@ const checkStockRequestPermissions = (req, requiredPermissions = []) => {
     };
   };
 
-  const checkCenterAccess = (stockRequest, userCenter, permissions) => {
+const checkCenterAccess = (stockRequest, userCenter, permissions) => {
     if (permissions.indent_all_center) {
       return true;
     }
@@ -52,7 +52,7 @@ const checkStockRequestPermissions = (req, requiredPermissions = []) => {
     return false;
   };
 
-  export const markAsInvoiced = async (req, res) => {
+export const markAsInvoiced = async (req, res) => {
     try {
       const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
         req,
@@ -325,7 +325,7 @@ export const getInvoice = async (req, res) => {
   
 export const getAllInvoices = async (req, res) => {
     try {
-      const { page = 1, limit = 10, startDate, endDate, resellerId } = req.query;
+      const { page = 1, limit = 100, startDate, endDate, resellerId } = req.query;
       
       const filter = {};
       

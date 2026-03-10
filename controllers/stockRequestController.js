@@ -7095,6 +7095,7 @@ export const completeStockRequest = async (req, res) => {
     });
   }
 };
+
 export const updateStockRequestStatus = async (req, res) => {
   try {
     const { hasAccess, permissions, userCenter } = checkStockRequestPermissions(
@@ -7833,7 +7834,6 @@ export const updateApprovedQuantities = async (req, res) => {
     const OutletStock = mongoose.model("OutletStock");
     const Product = mongoose.model("Product");
 
-    // Validate product approvals
     for (const approval of productApprovals) {
       if (!approval.productId) {
         return res.status(400).json({

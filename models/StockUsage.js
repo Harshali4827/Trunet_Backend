@@ -63,6 +63,9 @@ const stockUsageSchema = new mongoose.Schema(
       type: String,
       enum: ["NC", "Convert", "Shifting", "Repair"],
     },
+    damageReason: {
+      type: String,
+    },
     shiftingAmount: {
       type: Number,
       default: 0,
@@ -215,6 +218,11 @@ stockUsageSchema.pre("save", function (next) {
       if (!this.toCenter) {
         return next(
           new Error("To Center is required for damage usage type")
+        );
+      }
+      if (!this.damageReason) {
+        return next(
+          new Error("Damage reason is required for damage usage type")
         );
       }
       break;

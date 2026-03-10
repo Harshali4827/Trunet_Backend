@@ -864,13 +864,67 @@ export const validateMarkAsIncomplete = [
   handleValidationErrors,
 ];
 
+// export const validateUpdateApprovedQuantities = [
+//   ...validateIdParam,
+
+//   body("productApprovals")
+//     .isArray({ min: 1 })
+//     .withMessage("Product approvals are required")
+//     .custom(customValidators.validateProductApprovals)
+//     .withMessage("Product approval validation failed"),
+
+//   handleValidationErrors,
+// ];
+
+
 export const validateUpdateApprovedQuantities = [
   ...validateIdParam,
 
   body("productApprovals")
     .isArray({ min: 1 })
     .withMessage("Product approvals are required")
-    .custom(customValidators.validateProductApprovals)
+    .custom(async (productApprovals, { req }) => {
+      const { id } = req.params;
+      const stockRequest = await StockRequest.findById(id);
+      
+      if (!stockRequest) {
+        throw new Error("Stock request not found");
+      }
+
+      for (const approval of productApprovals) {
+        if (!approval.productId || approval.approvedQuantity === undefined) {
+          throw new Error(
+            "Each product approval must have productId and approvedQuantity"
+          );
+        }
+
+        const productExists = stockRequest.products.some(
+          (p) => p.product.toString() === approval.productId.toString()
+        );
+
+        if (!productExists) {
+          throw new Error(
+            `Product with ID ${approval.productId} not found in this stock request`
+          );
+        }
+
+        const product = stockRequest.products.find(
+          (p) => p.product.toString() === approval.productId.toString()
+        );
+        if (approval.approvedQuantity > product.quantity) {
+          throw new Error(
+            `Approved quantity (${approval.approvedQuantity}) cannot be greater than requested quantity (${product.quantity}) for product ${approval.productId}`
+          );
+        }
+
+        if (approval.approvedQuantity < 0) {
+          throw new Error(
+            `Approved quantity cannot be negative for product ${approval.productId}`
+          );
+        }
+      }
+      return true;
+    })
     .withMessage("Product approval validation failed"),
 
   handleValidationErrors,
