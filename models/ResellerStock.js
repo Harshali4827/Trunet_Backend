@@ -16,6 +16,38 @@ const resellerStockSchema = new mongoose.Schema({
   consumedQuantity: { type: Number, default: 0 },
   damagedQuantity: { type: Number, default: 0 },
   repairQuantity: { type: Number, default: 0 },
+
+  pendingReturns: [{
+    returnId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "CenterReturn",
+      required: true
+    },
+    returnNumber: String,
+    center: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Center",
+      required: true
+    },
+    product: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Product",
+      required: true
+    },
+    quantity: {
+      type: Number,
+      required: true
+    },
+    serialNumbers: [String],
+    returnDate: Date,
+    remark: String
+  }],
+  
+  pendingReturnQuantity: {
+    type: Number,
+    default: 0
+  },
+
   centerReturns: [{
     center: { 
       type: mongoose.Schema.Types.ObjectId, 

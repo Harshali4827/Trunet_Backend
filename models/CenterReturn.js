@@ -1,14 +1,11 @@
+
 import mongoose from "mongoose";
 
 const centerReturnSchema = new mongoose.Schema({
-  date: {
-    type: Date,
-    required: true,
-    default: Date.now
-  },
-  remark: {
+  returnNumber: {
     type: String,
-    trim: true
+    required: true,
+    unique: true
   },
   center: {
     type: mongoose.Schema.Types.ObjectId,
@@ -31,49 +28,45 @@ const centerReturnSchema = new mongoose.Schema({
       required: true,
       min: 1
     },
-    serialNumbers: [{
-      type: String,
-      trim: true
-    }],
-    centerStockBefore: {
-      totalQuantity: Number,
-      availableQuantity: Number,
-      consumedQuantity: Number
+    serialNumbers: [String],
+    accepted: {
+      type: Boolean,
+      default: false
     },
-    centerStockAfter: {
-      totalQuantity: Number,
-      availableQuantity: Number,
-      consumedQuantity: Number
-    },
-    resellerStockAfter: {
-      totalQuantity: Number,
-      availableQuantity: Number,
-      consumedQuantity: Number
-    }
+    acceptedAt: Date
   }],
-  
-  processedBy: {
+  status: {
+    type: String,
+    enum: ["pending", "accepted"],
+    default: "pending"
+  },
+  remark: String,
+  returnDate: {
+    type: Date,
+    default: Date.now
+  },
+  requestedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
     required: true
   },
-  
-  status: {
-    type: String,
-    enum: ["pending", "completed", "cancelled"],
-    default: "completed"
-  },
-  
-  type: {
-    type: String,
-    enum: ["center_return", "damage_return", "repair_return"],
-    default: "center_return"
+  acceptedAt: Date,
+  acceptedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User"
   }
 }, { timestamps: true });
 
-centerReturnSchema.index({ center: 1, date: -1 });
-centerReturnSchema.index({ reseller: 1 });
-centerReturnSchema.index({ "processedBy": 1 });
-centerReturnSchema.index({ type: 1 });
+
+centerReturnSchema.pre('save', async function(next) {
+  if (!this.returnNumber) {
+    const date = new Date();
+    const year = date.getFullYear().toString().slice(-2);
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const count = await mongoose.model('CenterReturn').countDocuments();
+    this.returnNumber = `CR${year}${month}${(count + 1).toString().padStart(4, '0')}`;
+  }
+  next();
+});
 
 export default mongoose.model("CenterReturn", centerReturnSchema);

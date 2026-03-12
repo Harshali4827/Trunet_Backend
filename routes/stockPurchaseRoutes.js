@@ -9,7 +9,6 @@ import {
   getPurchasesByVendor,
   getAvailableStock,
   getOutletStockSummary,
-  getCenterStockSummary,
   getOutletSerialNumbers,
   updateOutletSerialNumber,
   deleteOutletSerialNumber,
@@ -69,6 +68,18 @@ router.get(
 );
 
 router.get(
+  "/stock/available/:productId",
+  protect,
+  authorizeAccess(
+    MODULE,
+    "view_own_purchase_stock",
+    "view_all_purchase_stock"
+  ),
+  validateStockAvailabilityParams,
+  getAvailableStock
+);
+
+router.get(
   "/:id",
   protect,
   authorizeAccess(
@@ -107,18 +118,6 @@ router.get(
 );
 
 router.get(
-  "/stock/available/:productId",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "view_own_purchase_stock",
-    "view_all_purchase_stock"
-  ),
-  validateStockAvailabilityParams,
-  getAvailableStock
-);
-
-router.get(
   "/stock/outlet-summary",
   protect,
   authorizeAccess(
@@ -127,18 +126,6 @@ router.get(
     "view_all_purchase_stock"
   ),
   getOutletStockSummary
-);
-
-router.get(
-  "/stock/center-summary/:centerId",
-  protect,
-  authorizeAccess(
-    MODULE,
-    "view_own_purchase_stock",
-    "view_all_purchase_stock"
-  ),
-  validateCenterIdParam,
-  getCenterStockSummary
 );
 
 router.get(

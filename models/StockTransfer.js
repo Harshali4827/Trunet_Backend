@@ -201,16 +201,28 @@ const stockTransferSchema = new mongoose.Schema(
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
       },
+      // shippedDate: {
+      //   type: Date,
+      //   validate: {
+      //     validator: function (value) {
+      //       return !this.date || value >= this.date;
+      //     },
+      //     message: "Shipped date cannot be before transfer date",
+      //   },
+      // },
+       
       shippedDate: {
         type: Date,
         validate: {
           validator: function (value) {
-            return !this.date || value >= this.date;
+            if (this.status === "Shipped" && value) {
+              return !this.date || value >= this.date;
+            }
+            return true;
           },
           message: "Shipped date cannot be before transfer date",
         },
       },
-
       expectedDeliveryDate: {
         type: Date,
         validate: {

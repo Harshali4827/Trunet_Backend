@@ -323,51 +323,234 @@ export const getInvoice = async (req, res) => {
     }
   };
   
+// export const getAllInvoices = async (req, res) => {
+//     try {
+//       const { page = 1, limit = 100, startDate, endDate, resellerId } = req.query;
+      
+//       const filter = {};
+      
+//       if (startDate && endDate) {
+//         filter.invoiceDate = {
+//           $gte: new Date(startDate),
+//           $lte: new Date(endDate)
+//         };
+//       }
+      
+//       if (resellerId) {
+//         filter.reseller = resellerId;
+//       }
+      
+//       const invoices = await Invoice.find(filter)
+//         .populate('reseller', 'businessName gstNumber')
+//         .populate('centers', 'centerName')
+//         .populate('cancellationDetails.cancelledBy', 'fullName email')
+//         .sort({ invoiceDate: -1 })
+//         .skip((page - 1) * limit)
+//         .limit(parseInt(limit));
+      
+//       const total = await Invoice.countDocuments(filter);
+      
+//       res.status(200).json({
+//         success: true,
+//         data: invoices,
+//         pagination: {
+//           currentPage: parseInt(page),
+//           totalPages: Math.ceil(total / limit),
+//           totalItems: total
+//         }
+//       });
+//     } catch (error) {
+//       console.error("Error fetching invoices:", error);
+//       res.status(500).json({
+//         success: false,
+//         message: "Error fetching invoices",
+//         error: error.message,
+//       });
+//     }
+//   };
+
+
+
 export const getAllInvoices = async (req, res) => {
-    try {
-      const { page = 1, limit = 100, startDate, endDate, resellerId } = req.query;
-      
-      const filter = {};
-      
-      if (startDate && endDate) {
-        filter.invoiceDate = {
-          $gte: new Date(startDate),
-          $lte: new Date(endDate)
-        };
+  try {
+    const { 
+      page = 1, 
+      limit = 100, 
+      startDate, 
+      endDate, 
+      resellerId,
+      status,
+      cancelWithCreditNote,
+      invoiceNumber,
+      sortBy = 'invoiceDate',
+      sortOrder = 'desc'
+    } = req.query;
+    
+    // Build filter object
+    const filter = {};
+    
+    // Date range filter
+    if (startDate && endDate) {
+      filter.invoiceDate = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      };
+    } else if (startDate) {
+      filter.invoiceDate = { $gte: new Date(startDate) };
+    } else if (endDate) {
+      filter.invoiceDate = { $lte: new Date(endDate) };
+    }
+    
+    // Reseller filter
+    if (resellerId) {
+      filter.reseller = resellerId;
+    }
+    
+    // Invoice number filter (partial match)
+    if (invoiceNumber) {
+      filter.invoiceNumber = { $regex: invoiceNumber, $options: 'i' };
+    }
+    
+    // Status filter
+    if (status) {
+      if (status === 'cancelled') {
+        filter.status = 'cancelled';
+      } else if (status === 'active') {
+        // Active means not cancelled
+        filter.status = { $ne: 'cancelled' };
+      } else if (status) {
+        // For specific status values like 'generated', 'sent', 'paid'
+        filter.status = status;
       }
+    }
+    
+    // Cancel with credit note filter
+    if (cancelWithCreditNote !== undefined && cancelWithCreditNote !== '') {
+      // This filter only applies to cancelled invoices
+      const cancelWithCreditNoteBool = cancelWithCreditNote === 'true' || cancelWithCreditNote === true;
       
-      if (resellerId) {
-        filter.reseller = resellerId;
-      }
-      
-      const invoices = await Invoice.find(filter)
-        .populate('reseller', 'businessName gstNumber')
-        .populate('centers', 'centerName')
-        .populate('cancellationDetails.cancelledBy', 'fullName email')
-        .sort({ invoiceDate: -1 })
-        .skip((page - 1) * limit)
-        .limit(parseInt(limit));
-      
-      const total = await Invoice.countDocuments(filter);
-      
-      res.status(200).json({
-        success: true,
-        data: invoices,
-        pagination: {
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(total / limit),
-          totalItems: total
+      if (cancelWithCreditNoteBool) {
+        // Find invoices that are cancelled AND have cancelWithCreditNote = true
+        filter['cancellationDetails.cancelWithCreditNote'] = true;
+        // If status filter isn't already set to include cancelled, add it
+        if (!filter.status) {
+          filter.status = 'cancelled';
         }
-      });
-    } catch (error) {
-      console.error("Error fetching invoices:", error);
-      res.status(500).json({
-        success: false,
-        message: "Error fetching invoices",
-        error: error.message,
+      } else {
+        // Find invoices that are cancelled AND have cancelWithCreditNote = false
+        filter['cancellationDetails.cancelWithCreditNote'] = false;
+        // If status filter isn't already set to include cancelled, add it
+        if (!filter.status) {
+          filter.status = 'cancelled';
+        }
+      }
+    }
+    
+    // Build sort options
+    const sortOptions = {};
+    sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    
+    // Execute query with pagination
+    const invoices = await Invoice.find(filter)
+      .populate('reseller', 'businessName gstNumber email phone')
+      .populate('centers', 'centerName centerCode')
+      .populate('stockRequestIds', 'orderNumber challanNo date')
+      .populate('createdBy', 'fullName email')
+      .populate('cancellationDetails.cancelledBy', 'fullName email')
+      .sort(sortOptions)
+      .skip((page - 1) * limit)
+      .limit(parseInt(limit))
+      .lean(); // Use lean() for better performance
+    
+    // Get total count for pagination
+    const total = await Invoice.countDocuments(filter);
+    
+    // Get summary statistics
+    const summary = await Invoice.aggregate([
+      {
+        $facet: {
+          statusCounts: [
+            { $group: { _id: "$status", count: { $sum: 1 } } }
+          ],
+          creditNoteStats: [
+            { $match: { status: 'cancelled' } },
+            { 
+              $group: { 
+                _id: "$cancellationDetails.cancelWithCreditNote", 
+                count: { $sum: 1 } 
+              } 
+            }
+          ],
+          totalAmount: [
+            { $group: { _id: null, total: { $sum: "$totalAmount" } } }
+          ]
+        }
+      }
+    ]);
+    
+    const statusCounts = {};
+    if (summary[0]?.statusCounts) {
+      summary[0].statusCounts.forEach(item => {
+        statusCounts[item._id] = item.count;
       });
     }
-  };
+    
+    const creditNoteStats = {
+      withCreditNote: 0,
+      withoutCreditNote: 0
+    };
+    if (summary[0]?.creditNoteStats) {
+      summary[0].creditNoteStats.forEach(item => {
+        if (item._id === true) {
+          creditNoteStats.withCreditNote = item.count;
+        } else if (item._id === false) {
+          creditNoteStats.withoutCreditNote = item.count;
+        }
+      });
+    }
+    
+    const totalInvoiceAmount = summary[0]?.totalAmount[0]?.total || 0;
+    
+    res.status(200).json({
+      success: true,
+      data: invoices,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        itemsPerPage: parseInt(limit)
+      },
+      filters: {
+        applied: {
+          startDate: startDate || null,
+          endDate: endDate || null,
+          resellerId: resellerId || null,
+          status: status || null,
+          cancelWithCreditNote: cancelWithCreditNote || null,
+          invoiceNumber: invoiceNumber || null
+        },
+        available: {
+          statuses: Object.keys(statusCounts),
+          creditNoteOptions: ['true', 'false']
+        }
+      },
+      summary: {
+        statusCounts,
+        creditNoteStats,
+        totalInvoiceAmount,
+        totalInvoices: total
+      }
+    });
+  } catch (error) {
+    console.error("Error fetching invoices:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching invoices",
+      error: error.message,
+    });
+  }
+};
+
 
 export const cancelInvoice = async (req, res) => {
     try {

@@ -105,68 +105,53 @@ export const getAllData = async (req, res) => {
     const canViewOwnBuildings = settingsModule && 
       settingsModule.permissions.includes("view_building_own_center");
 
-    // Check if user has at least one permission for each module they're trying to access
     const hasCustomerPermission = canViewAllCustomers || canViewOwnCustomers;
     const hasCenterPermission = canViewAllCenters || canViewOwnCenters;
     const hasBuildingPermission = canViewAllBuildings || canViewOwnBuildings;
 
-    // Initialize filter objects
     const buildingFilter = {};
     const customerFilter = {};
     const centerFilter = {};
 
-    // Get user's center ID if available
     const userCenterId = req.user.center?._id || req.user.center;
 
-    // Apply filters based on permissions
-    // For Buildings
     if (hasBuildingPermission) {
       if (canViewOwnBuildings && !canViewAllBuildings && userCenterId) {
         buildingFilter.center = userCenterId;
       }
-      // If can view all, no filter needed (show all)
     }
 
-    // For Customers
     if (hasCustomerPermission) {
       if (canViewOwnCustomers && !canViewAllCustomers && userCenterId) {
         customerFilter.center = userCenterId;
       }
-      // If can view all, no filter needed (show all)
     }
 
-    // For Centers
     if (hasCenterPermission) {
       if (canViewOwnCenters && !canViewAllCenters && userCenterId) {
         centerFilter._id = userCenterId;
       }
-      // If can view all, no filter needed (show all)
     }
 
-    // Fetch data with appropriate filters
     const [buildings, customers, centers] = await Promise.all([
-      // Only fetch buildings if user has permission
       hasBuildingPermission ? 
         Building.find(buildingFilter)
           .select('buildingName _id center')
           .populate('center', 'centerName centerCode _id')
           .lean() : Promise.resolve([]),
 
-      // Only fetch customers if user has permission
       hasCustomerPermission ? 
         Customer.find(customerFilter)
           .select('username name _id center')
           .populate('center', 'centerName centerCode _id')
           .lean() : Promise.resolve([]),
       
-      // Only fetch centers if user has permission
       hasCenterPermission ? 
         Center.find(centerFilter)
           .select('centerName centerCode _id')
           .lean() : Promise.resolve([])
     ]);
 
-    // Transform data
     const transformedData = {
       buildings: buildings.map(building => ({
         id: building._id,
@@ -193,8 +178,6 @@ export const getAllData = async (req, res) => {
         code: center.centerCode
       }))
     };
-
-    // Check if user has any data access at all
     const hasAnyData = hasBuildingPermission || hasCustomerPermission || hasCenterPermission;
     
     if (!hasAnyData) {

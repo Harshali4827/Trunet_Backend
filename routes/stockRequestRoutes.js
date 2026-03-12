@@ -131,7 +131,7 @@ router.post(
     "stock_transfer_approve_from_outlet",
     "manage_indent"
   ),
-  validateApproveStockRequest,
+  // validateApproveStockRequest,
   approveStockRequest
 );
 
@@ -220,7 +220,7 @@ router.patch(
     MODULE,
     "manage_indent"
   ),
-  validateUpdateApprovedQuantities,
+  // validateUpdateApprovedQuantities,
   updateApprovedQuantities
 );
 

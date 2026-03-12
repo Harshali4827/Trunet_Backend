@@ -55,7 +55,7 @@ router.put(
 router.delete(
   "/:id",
   protect,
-  authorizeAccess(MODULE, "view_own_purchase_stock", "view_all_purchase_stock"),
+  authorizeAccess(MODULE,"manage_shifting_own_center", "manage_shifting_all_center"),
   deleteShiftingRequest
 );
 router.put(
