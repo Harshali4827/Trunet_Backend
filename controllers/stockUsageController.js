@@ -180,14 +180,6 @@ export const createStockUsage = async (req, res) => {
         message: "User must be associated with a center",
       });
     }
-
-    // if (usageType === "Damage" && !toCenter) {
-    //   return res.status(400).json({
-    //     success: false,
-    //     message: "To Center is required for damage usage type",
-    //   });
-    // }
-
     if (usageType === "Damage") {
       if (!toCenter) {
         return res.status(400).json({
@@ -4605,8 +4597,6 @@ export const replaceProductSerial = async (req, res) => {
   }
 };
 
-
-
 export const returnProductSerial = async (req, res) => {
   try {
     const { hasAccess } = checkStockUsagePermissions(
@@ -5141,6 +5131,303 @@ export const getAllFaultyStock = async (req, res) => {
       success: false,
       message: "Failed to fetch faulty stock records",
       error: process.env.NODE_ENV === "development" ? error.message : "Internal server error"
+    });
+  }
+};
+
+///////************************ REVERT DAMAGE  ***************************/
+
+
+export const revertDamageEntry = async (req, res) => {
+  try {
+    const { hasAccess, permissions } = checkStockUsagePermissions(
+      req,
+      ["manage_usage_own_center", "manage_usage_all_center", "accept_damage_return"]
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. Required permission: manage_usage_own_center, manage_usage_all_center, or accept_damage_return",
+      });
+    }
+
+    const { id } = req.params;
+    const { revertRemark } = req.body;
+    const revertedBy = req.user.id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid stock usage ID",
+      });
+    }
+
+    // Check center access
+    const { userCenter } = checkStockUsagePermissions(req, []);
+    const filter = { _id: id };
+
+    if (
+      permissions.manage_usage_own_center &&
+      !permissions.manage_usage_all_center &&
+      userCenter
+    ) {
+      filter.center = userCenter._id || userCenter;
+    }
+
+    const stockUsage = await StockUsage.findById(id)
+      .populate("center", "name centerType centerName")
+      .populate("toCenter", "name centerType centerName")
+      .populate({
+        path: "items.product",
+        select: "productTitle productCode trackSerialNumber"
+      });
+
+    if (!stockUsage) {
+      return res.status(404).json({
+        success: false,
+        message: "Stock usage record not found",
+      });
+    }
+
+    // Verify it's a damage entry
+    if (stockUsage.usageType !== "Damage") {
+      return res.status(400).json({
+        success: false,
+        message: "Only damage entries can be reverted",
+      });
+    }
+
+    // Verify it's completed
+    if (stockUsage.status !== "completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Only completed damage entries can be reverted",
+      });
+    }
+
+    // Check if the user has permission for this center
+    if (
+      permissions.manage_usage_own_center &&
+      !permissions.manage_usage_all_center &&
+      userCenter
+    ) {
+      const userCenterId = userCenter._id || userCenter;
+      if (stockUsage.center._id.toString() !== userCenterId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only revert damage entries from your own center",
+        });
+      }
+    }
+
+    // PRE-VALIDATION: Check faulty stock status before attempting reversion
+    const FaultyStock = mongoose.model("FaultyStock");
+    
+    for (const item of stockUsage.items) {
+      const faultyStock = await FaultyStock.findOne({
+        usageReference: stockUsage._id,
+        product: item.product,
+        center: stockUsage.center,
+      });
+
+      if (faultyStock) {
+        // Check if product has been processed (not in pending state)
+        if (faultyStock.overallStatus !== "pending_damage") {
+          let errorMessage = `Cannot revert product "${item.product?.productTitle || item.product}" `;
+          errorMessage += `because it is in "${faultyStock.overallStatus}" status in faulty stock. `;
+          errorMessage += `Only items with "pending_damage" status can be reverted.`;
+          
+          // For serialized products, provide more detail
+          if (item.serialNumbers && item.serialNumbers.length > 0) {
+            const processedSerials = [];
+            for (const serialNumber of item.serialNumbers) {
+              const serialInFaulty = faultyStock.serialNumbers.find(
+                sn => sn.serialNumber === serialNumber
+              );
+              if (serialInFaulty && serialInFaulty.status !== "pending_damage") {
+                processedSerials.push(`${serialNumber} (${serialInFaulty.status})`);
+              }
+            }
+            
+            if (processedSerials.length > 0) {
+              errorMessage = `Cannot revert the following serial numbers: ${processedSerials.join(', ')}. `;
+              errorMessage += `They have already been processed in faulty stock.`;
+            }
+          }
+          
+          return res.status(400).json({
+            success: false,
+            message: errorMessage,
+            details: {
+              productId: item.product,
+              faultyStockStatus: faultyStock.overallStatus,
+              faultyStockId: faultyStock._id
+            }
+          });
+        }
+      }
+    }
+
+    // If validation passes, proceed with reversion
+    const result = await stockUsage.revertDamage(revertedBy, revertRemark);
+
+    // Fetch the updated record for response
+    const updatedStockUsage = await StockUsage.findById(stockUsage._id)
+      .populate("center", "name centerType")
+      .populate("toCenter", "name centerType")
+      .populate({
+        path: "items.product",
+        select: "productTitle productCode trackSerialNumber",
+      })
+      .populate("createdBy", "name email")
+      .populate("revertedBy", "name email");
+
+    res.json({
+      success: true,
+      message: result.message || "Damage entry reverted successfully",
+      data: updatedStockUsage,
+    });
+  } catch (error) {
+    console.error("Revert damage entry error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to revert damage entry",
+    });
+  }
+};
+
+export const checkRevertEligibility = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid stock usage ID",
+      });
+    }
+
+    const stockUsage = await StockUsage.findById(id)
+      .populate("items.product", "productTitle productCode trackSerialNumber");
+
+    if (!stockUsage) {
+      return res.status(404).json({
+        success: false,
+        message: "Stock usage record not found",
+      });
+    }
+
+    if (stockUsage.usageType !== "Damage") {
+      return res.json({
+        success: true,
+        eligible: false,
+        message: "Only damage entries can be reverted",
+        reason: "wrong_type"
+      });
+    }
+
+    if (stockUsage.status !== "completed") {
+      return res.json({
+        success: true,
+        eligible: false,
+        message: "Only completed damage entries can be reverted",
+        reason: "not_completed"
+      });
+    }
+    const FaultyStock = mongoose.model("FaultyStock");
+    const eligibilityDetails = [];
+    let canRevert = true;
+
+    for (const item of stockUsage.items) {
+      const product = await mongoose.model("Product").findById(item.product);
+      
+      const faultyStock = await FaultyStock.findOne({
+        usageReference: stockUsage._id,
+        product: item.product,
+        center: stockUsage.center,
+      });
+
+      if (faultyStock) {
+        if (product.trackSerialNumber === "Yes" && item.serialNumbers) {
+          const serialStatuses = [];
+          let allSerialsPending = true;
+          
+          for (const serialNumber of item.serialNumbers) {
+            const serialInFaulty = faultyStock.serialNumbers.find(
+              sn => sn.serialNumber === serialNumber
+            );
+            
+            if (serialInFaulty) {
+              serialStatuses.push({
+                serial: serialNumber,
+                status: serialInFaulty.status
+              });
+              
+              if (serialInFaulty.status !== "pending_damage") {
+                allSerialsPending = false;
+              }
+            } else {
+              serialStatuses.push({
+                serial: serialNumber,
+                status: "not_in_faulty"
+              });
+            }
+          }
+          
+          if (!allSerialsPending) {
+            canRevert = false;
+          }
+          
+          eligibilityDetails.push({
+            product: product?.productTitle || item.product,
+            status: allSerialsPending ? "pending_damage" : "processed",
+            message: allSerialsPending ? 
+              "All serials in pending state - eligible for revert" : 
+              "Some serials have been processed in faulty stock",
+            serialStatuses: serialStatuses
+          });
+        } else {
+          if (faultyStock.overallStatus !== "pending_damage") {
+            canRevert = false;
+            eligibilityDetails.push({
+              product: product?.productTitle || item.product,
+              status: faultyStock.overallStatus,
+              message: `Product is in "${faultyStock.overallStatus}" status - cannot revert`
+            });
+          } else {
+            eligibilityDetails.push({
+              product: product?.productTitle || item.product,
+              status: "pending_damage",
+              message: "Eligible for revert"
+            });
+          }
+        }
+      } else {
+        eligibilityDetails.push({
+          product: product?.productTitle || item.product,
+          status: "no_faulty_record",
+          message: "No faulty stock record found - eligible for revert"
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      eligible: canRevert,
+      message: canRevert ? "This damage entry can be reverted" : "This damage entry cannot be reverted",
+      details: {
+        usageId: id,
+        usageType: stockUsage.usageType,
+        status: stockUsage.status,
+        items: eligibilityDetails
+      }
+    });
+  } catch (error) {
+    console.error("Check revert eligibility error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to check revert eligibility",
     });
   }
 };

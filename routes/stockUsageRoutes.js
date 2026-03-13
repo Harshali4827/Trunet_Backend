@@ -20,6 +20,8 @@ import {
   replaceProductSerial,
   returnProductSerial,
   getAllFaultyStock,
+  revertDamageEntry,
+  checkRevertEligibility,
 } from "../controllers/stockUsageController.js";
 
 import { authorizeAccess, protect } from "../middlewares/authMiddleware.js";
@@ -152,5 +154,7 @@ router.patch(
 
 router.post('/replace-serial', protect, replaceProductSerial);
 
+router.put("/:id/revert-damage", protect, revertDamageEntry);
+router.get("/:id/check-revert", protect, checkRevertEligibility);
 
 export default router;

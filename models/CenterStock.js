@@ -109,7 +109,8 @@ const centerStockSchema = new mongoose.Schema(
                 "damage_return_request",
                 "return_from_field",
                 "damage_reported",
-                "center_to_reseller_return"
+                "center_to_reseller_return",
+                "damage_reverted"
               ],
             },
           },
