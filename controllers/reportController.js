@@ -33,64 +33,6 @@ const checkReportPermissions = (req, requiredPermissions = []) => {
   };
 };
 
-const checkStockCenterAccess = async (userId, targetCenterId, permissions) => {
-  if (!userId) {
-    throw new Error("User authentication required");
-  }
-
-  const user = await User.findById(userId).populate(
-    "center",
-    "centerName centerCode centerType"
-  );
-
-  if (!user) {
-    throw new Error("User not found");
-  }
-
-  if (!user.center) {
-    throw new Error("User is not associated with any center");
-  }
-
-  if (permissions.view_all_report) {
-    return targetCenterId || user.center._id;
-  }
-
-  if (permissions.view_own_report) {
-    const userCenterId = user.center._id || user.center;
-
-    if (
-      targetCenterId &&
-      targetCenterId.toString() !== userCenterId.toString()
-    ) {
-      throw new Error(
-        "Access denied. You can only access your own center's stock data."
-      );
-    }
-
-    return userCenterId;
-  }
-
-  throw new Error("Insufficient permissions to access stock data");
-};
-
-const validateUserOutletAccess = async (userId) => {
-  if (!userId) {
-    throw new Error("User ID is required");
-  }
-
-  const user = await User.findById(userId).populate("center");
-
-  if (!user) {
-    throw new Error("User not found");
-  }
-
-  if (!user.center) {
-    throw new Error("User center information not found");
-  }
-
-  return user.center._id || user.center;
-};
-
 const handleControllerError = (error, res) => {
   console.error("Controller Error:", error);
 
